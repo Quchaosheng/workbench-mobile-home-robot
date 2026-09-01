@@ -1,4 +1,5 @@
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -83,6 +84,33 @@ def test_close_clears_pending_events_and_rejects_future_access() -> None:
         gpio.read_event()
     with pytest.raises(GPIOProviderClosed):
         gpio.write("enable", True)
+
+
+def test_public_configure_waits_for_provider_lock() -> None:
+    gpio = provider()
+    lock_held = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+
+    def hold_provider_lock() -> None:
+        with gpio._lock:
+            lock_held.set()
+            release.wait(1.0)
+
+    def configure_line() -> None:
+        gpio.configure("status")
+        completed.set()
+
+    holder = threading.Thread(target=hold_provider_lock)
+    reader = threading.Thread(target=configure_line)
+    holder.start()
+    assert lock_held.wait(1.0)
+    reader.start()
+    assert not completed.wait(0.05)
+    release.set()
+    holder.join(1.0)
+    reader.join(1.0)
+    assert completed.is_set()
 
 
 def test_config_rejects_edge_subscription_on_output() -> None:

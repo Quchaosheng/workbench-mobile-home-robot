@@ -105,11 +105,12 @@ class FakeGPIOProvider:
             self._events.clear()
 
     def configure(self, name: str) -> GPIOConfig:
-        self._ensure_open()
-        try:
-            return self._configs[name]
-        except KeyError as exc:
-            raise GPIOError(f"unknown GPIO line: {name}") from exc
+        with self._lock:
+            self._ensure_open()
+            try:
+                return self._configs[name]
+            except KeyError as exc:
+                raise GPIOError(f"unknown GPIO line: {name}") from exc
 
     def read(self, name: str) -> bool:
         with self._lock:
