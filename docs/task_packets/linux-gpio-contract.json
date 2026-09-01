@@ -7,6 +7,7 @@
     "hardware/linux_drivers/README.md",
     "tests/unit/test_gpio_contract.py",
     "Makefile",
+    "docs/architecture/linux-drivers.md",
     "docs/task_packets/linux-gpio-contract.json"
   ],
   "read_only_paths": [
