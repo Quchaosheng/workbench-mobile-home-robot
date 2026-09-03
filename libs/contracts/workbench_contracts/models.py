@@ -13,6 +13,8 @@ from pydantic import (
 )
 from pydantic.json_schema import SkipJsonSchema
 
+from .observed_attributes import AttributeUpdateMode, ObservedAttributes, validate_observed_attributes
+
 
 class ActionType(StrEnum):
     OBSERVE = "observe"
@@ -244,6 +246,44 @@ class Observation(_CanonicalRuntimeModel):
     clock_id: ClockId = ClockId.MONOTONIC
     source: str
     evidence_refs: list[str] = Field(min_length=1)
+    attributes: ObservedAttributes | SkipJsonSchema[None] = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
+    attributes_mode: AttributeUpdateMode | SkipJsonSchema[None] = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def reject_explicit_null_attributes(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("attributes may be omitted but cannot be null")
+        return value
+
+    @field_validator("attributes_mode", mode="before")
+    @classmethod
+    def normalize_attributes_mode(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("attributes_mode may be omitted but cannot be null")
+        if isinstance(value, AttributeUpdateMode):
+            return value
+        if type(value) is not str:
+            raise ValueError("attributes_mode must be a string enum value")
+        try:
+            return AttributeUpdateMode(value)
+        except ValueError as error:
+            raise ValueError("attributes_mode must be 'complete' or 'partial'") from error
+
+    @model_validator(mode="after")
+    def validate_attribute_semantics(self) -> "Observation":
+        if self.attributes is None:
+            if self.attributes_mode is not None:
+                raise ValueError("attributes_mode requires attributes")
+            return self
+        validate_observed_attributes(self.attributes, entity_type=self.entity_type)
+        return self
 
 
 class EmotionState(StrEnum):
@@ -417,6 +457,10 @@ class WorldEntity(_CanonicalRuntimeModel):
     )
     last_observed_at: str | None = None
     evidence_refs: list[str] = Field(default_factory=list)
+    attributes: ObservedAttributes | SkipJsonSchema[None] = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
 
     @field_validator("pose", "confidence", mode="before")
     @classmethod
@@ -424,6 +468,19 @@ class WorldEntity(_CanonicalRuntimeModel):
         if info.mode == "json" and value is None:
             raise ValueError("optional WorldEntity fields must be omitted instead of null")
         return value
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def reject_json_null_attributes(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("attributes may be omitted but cannot be null")
+        return value
+
+    @model_validator(mode="after")
+    def validate_entity_attributes(self) -> "WorldEntity":
+        if self.attributes is not None:
+            validate_observed_attributes(self.attributes, entity_type=self.entity_type)
+        return self
 
 
 class WorldRelation(_CanonicalRuntimeModel):

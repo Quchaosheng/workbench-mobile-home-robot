@@ -17,7 +17,7 @@ from threading import Lock
 from typing import Any, Literal
 
 from pydantic import ValidationError
-from workbench_contracts import ClockId, Observation, WorldEvent, WorldEventType
+from workbench_contracts import AttributeUpdateMode, ClockId, Observation, WorldEvent, WorldEventType
 
 _REQUIRED_OBSERVATION_KEYS = frozenset(
     {
@@ -180,24 +180,33 @@ class ObservationIngestionAdapter:
         _validate_observation_values(observation)
         transformed_pose = _transform_pose(observation, calibration)
 
+        payload: dict[str, object] = {
+            "entity_id": observation.entity_id,
+            "entity_type": observation.entity_type,
+            "pose": transformed_pose,
+            "confidence": observation.confidence,
+            "observed_at": observation.observed_at,
+            "clock_id": observation.clock_id.value,
+            "source": observation.source,
+            "detector": observation.detector.value,
+            "camera_id": camera_id,
+            "calibration_revision": calibration_revision,
+            "pose_units": pose_units,
+            "raw_observation": raw_record,
+        }
+        if observation.attributes is not None:
+            payload["attributes"] = dict(observation.attributes)
+            payload["attributes_mode"] = (
+                observation.attributes_mode or AttributeUpdateMode.COMPLETE
+            ).value
+
         event = WorldEvent(
             event_id=f"observation:{observation.observation_id}",
             run_id=observation.run_id,
             sequence_no=sequence_no,
             event_type=WorldEventType.OBSERVATION,
             occurred_at=observation.observed_at,
-            payload={
-                "entity_id": observation.entity_id,
-                "entity_type": observation.entity_type,
-                "pose": transformed_pose,
-                "confidence": observation.confidence,
-                "detector": observation.detector.value,
-                "camera_id": camera_id,
-                "calibration_revision": calibration_revision,
-                "pose_units": pose_units,
-                "clock_id": observation.clock_id.value,
-                "raw_observation": raw_record,
-            },
+            payload=payload,
             evidence_refs=list(observation.evidence_refs),
         )
 

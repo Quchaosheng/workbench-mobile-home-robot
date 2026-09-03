@@ -1,12 +1,73 @@
+from __future__ import annotations
+
+import hashlib
+import json
 import math
 import re
 import unicodedata
-import uuid
 from collections.abc import Mapping
+from datetime import datetime, timedelta
 
-from workbench_contracts import ReasonCode, RecoveryHint, VerificationResult, VerificationStatus
+from pydantic import BaseModel, ConfigDict, field_validator
+from workbench_contracts import (
+    ClockId,
+    ReasonCode,
+    RecoveryHint,
+    VerificationResult,
+    VerificationStatus,
+    WorldBelief,
+)
 
 from .reducer import WorldState
+
+_CANONICAL_STATE_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
+_UTC_WALL_TIME_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)")
+
+
+def _validated_state_hash(value: object) -> str:
+    if not isinstance(value, str) or _CANONICAL_STATE_HASH_PATTERN.fullmatch(value) is None:
+        raise ValueError("state_hash must be a 64-character lowercase SHA-256 hex digest")
+    return value
+
+
+def _validated_utc_wall_time(value: object) -> str:
+    if not isinstance(value, str) or _UTC_WALL_TIME_PATTERN.fullmatch(value) is None:
+        raise ValueError("verified_at must be an RFC3339 UTC wall-clock timestamp")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError as error:
+        raise ValueError("verified_at must be an RFC3339 UTC wall-clock timestamp") from error
+    if parsed.utcoffset() != timedelta(0):
+        raise ValueError("verified_at must use UTC")
+    return value
+
+
+class VerificationContext(BaseModel):
+    """Validated metadata supplied at the World Model verification boundary."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    state_hash: str
+    verified_at: str
+    clock_id: ClockId
+
+    @field_validator("state_hash", mode="before")
+    @classmethod
+    def validate_state_hash(cls, value: object) -> str:
+        return _validated_state_hash(value)
+
+    @field_validator("verified_at", mode="before")
+    @classmethod
+    def validate_verified_at(cls, value: object) -> str:
+        return _validated_utc_wall_time(value)
+
+    @field_validator("clock_id", mode="before")
+    @classmethod
+    def require_wall_clock(cls, value: object) -> ClockId:
+        if value not in (ClockId.WALL, ClockId.WALL.value):
+            raise ValueError("VerificationContext requires clock_id=wall")
+        return ClockId.WALL
+
 
 NO_EVIDENCE_REF = "system://world-state/no-evidence"
 DEFAULT_PARCEL_ROUTES = {
@@ -20,6 +81,12 @@ DEFAULT_PARCEL_ATTRIBUTES = {
     "parcel_damaged": {"label_status": "verified", "condition": "damaged"},
 }
 PARCEL_IDENTITY_KEYS = ("tracking_id", "barcode", "parcel_uid")
+OBJECT_IN_TRAY_RULE_VERSION = "tray-membership-v1"
+KIT_CONTENTS_RULE_VERSION = "kit-contents-v1"
+INSPECTION_EVIDENCE_RULE_VERSION = "inspection-evidence-v1"
+WORKSPACE_CLEARANCE_RULE_VERSION = "workspace-clearance-v1"
+PARCEL_SORTING_RULE_VERSION = "parcel-sorting-v1"
+PARCEL_POLICY_RULE_VERSION = "parcel-policy-v2"
 
 
 def _entity_evidence(state: WorldState, entity_ids: set[str]) -> list[str]:
@@ -101,6 +168,121 @@ def _validate_parcel_manifest(
     return manifest_id.strip(), expected_identities
 
 
+def _normalized_request_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("request semantics mappings require string keys")
+        return {key: _normalized_request_value(value[key]) for key in sorted(value)}
+    if isinstance(value, set | frozenset):
+        normalized_items = [_normalized_request_value(item) for item in value]
+        return sorted(
+            normalized_items,
+            key=lambda item: json.dumps(
+                item,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+    if isinstance(value, list | tuple):
+        return [_normalized_request_value(item) for item in value]
+    if value is None or isinstance(value, str | bool | int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("request semantics numbers must be finite")
+        return value
+    raise TypeError(f"unsupported request semantics value: {type(value).__name__}")
+
+
+def _normalized_request_semantics(request_semantics: Mapping[str, object]) -> dict[str, object]:
+    if not isinstance(request_semantics, Mapping):
+        raise TypeError("request_semantics must be a mapping")
+    normalized = _normalized_request_value(request_semantics)
+    if not isinstance(normalized, dict):
+        raise TypeError("request_semantics must normalize to a mapping")
+    return normalized
+
+
+def _verification_id(
+    *,
+    run_id: str,
+    task_id: str,
+    state_hash: str,
+    claim: str,
+    status: VerificationStatus,
+    reason_code: ReasonCode | None,
+    evidence_refs: list[str],
+    recovery_hint: RecoveryHint,
+    rule_version: str,
+    verifier_kind: str,
+    request_semantics: Mapping[str, object],
+) -> str:
+    if not isinstance(verifier_kind, str) or not verifier_kind.strip():
+        raise ValueError("verifier_kind must be a non-empty string")
+    material = {
+        "verifier_kind": verifier_kind,
+        "request_semantics": _normalized_request_semantics(request_semantics),
+        "run_id": run_id,
+        "task_id": task_id,
+        "state_hash": _validated_state_hash(state_hash),
+        "claim": claim,
+        "status": status.value,
+        "reason_code": None if reason_code is None else reason_code.value,
+        "evidence_refs": list(evidence_refs),
+        "recovery_hint": recovery_hint.value,
+        "rule_version": rule_version,
+    }
+    canonical_bytes = json.dumps(
+        material,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"ver-{hashlib.sha256(canonical_bytes).hexdigest()}"
+
+
+def _default_verification_context(state: WorldState) -> VerificationContext:
+    try:
+        material = json.dumps(
+            state.model_dump(mode="json", exclude={"freshness_evaluated"}),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError) as error:
+        raise ValueError("WorldState cannot produce verification metadata") from error
+    return VerificationContext(
+        state_hash=hashlib.sha256(material).hexdigest(),
+        verified_at="1970-01-01T00:00:00Z",
+        clock_id=ClockId.WALL,
+    )
+
+
+def _resolved_context(state: WorldState, context: VerificationContext | None) -> VerificationContext:
+    if context is None:
+        return _default_verification_context(state)
+    if not isinstance(context, VerificationContext):
+        raise TypeError("context must be a VerificationContext")
+    return context
+
+
+def _expired_support(state: WorldState, entity_ids: set[str]) -> list[str]:
+    expired: list[str] = []
+    for entity_id in sorted(entity_ids):
+        entity_belief = state.entity_beliefs.get(entity_id)
+        location_belief = state.entity_location_beliefs.get(entity_id)
+        if entity_belief in {WorldBelief.STALE, WorldBelief.LOST} or location_belief in {
+            WorldBelief.STALE,
+            WorldBelief.LOST,
+        }:
+            expired.append(entity_id)
+    return expired
+
+
 def _result(
     state: WorldState,
     task_id: str,
@@ -110,18 +292,52 @@ def _result(
     recovery_hint: RecoveryHint,
     rule_version: str,
     supporting_entity_ids: set[str],
+    *,
+    verifier_kind: str = "world_model",
+    request_semantics: Mapping[str, object] | None = None,
+    context: VerificationContext | None = None,
 ) -> VerificationResult:
-    evidence_refs = _entity_evidence(state, supporting_entity_ids)
+    resolved_context = _resolved_context(state, context)
+    if not state.freshness_evaluated and status in {
+        VerificationStatus.CONFIRMED,
+        VerificationStatus.REFUTED,
+    }:
+        status = VerificationStatus.INSUFFICIENT_EVIDENCE
+        reason_code = ReasonCode.STALE_OBSERVATION
+        recovery_hint = RecoveryHint.RE_OBSERVE
+        claim = f"{claim}; freshness_not_evaluated"
+    expired_support = _expired_support(state, supporting_entity_ids)
+    if expired_support:
+        status = VerificationStatus.INSUFFICIENT_EVIDENCE
+        reason_code = ReasonCode.STALE_OBSERVATION
+        recovery_hint = RecoveryHint.RE_OBSERVE
+        claim = f"{claim}; stale_or_lost={expired_support}"
+    evidence_refs = _entity_evidence(state, supporting_entity_ids) or [NO_EVIDENCE_REF]
+    semantics = {} if request_semantics is None else request_semantics
+    verification_id = _verification_id(
+        verifier_kind=verifier_kind,
+        request_semantics=semantics,
+        run_id=state.run_id,
+        task_id=task_id,
+        state_hash=resolved_context.state_hash,
+        claim=claim,
+        status=status,
+        reason_code=reason_code,
+        evidence_refs=evidence_refs,
+        recovery_hint=recovery_hint,
+        rule_version=rule_version,
+    )
     return VerificationResult(
-        verification_id=f"ver-{uuid.uuid4().hex[:12]}",
+        verification_id=verification_id,
         run_id=state.run_id,
         task_id=task_id,
         claim=claim,
         status=status,
         reason_code=reason_code,
-        evidence_refs=evidence_refs or [NO_EVIDENCE_REF],
+        evidence_refs=evidence_refs,
         recovery_hint=recovery_hint,
-        verified_at="1970-01-01T00:00:00Z",
+        verified_at=resolved_context.verified_at,
+        clock_id=resolved_context.clock_id,
         rule_version=rule_version,
     )
 

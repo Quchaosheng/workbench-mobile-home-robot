@@ -2,26 +2,37 @@
 
 from __future__ import annotations
 
-import json
 import math
 from copy import deepcopy
 from typing import Any
 
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 from workbench_contracts import (
+    MAX_ATTRIBUTE_COUNT,
+    MAX_ATTRIBUTE_KEY_LENGTH,
+    MAX_ATTRIBUTE_VALUE_LENGTH,
+    MAX_ATTRIBUTES_JSON_BYTES,
     ActionOutcome,
     ActionResult,
+    AttributeUpdateMode,
     ClockId,
     DeviceState,
     DispatchState,
     WorldEvent,
     WorldEventType,
+    validate_observed_attributes,
 )
 
-MAX_ATTRIBUTE_COUNT = 32
-MAX_ATTRIBUTE_KEY_LENGTH = 64
-MAX_ATTRIBUTE_VALUE_LENGTH = 256
-MAX_ATTRIBUTES_JSON_BYTES = 4096
+__all__ = [
+    "MAX_ATTRIBUTES_JSON_BYTES",
+    "MAX_ATTRIBUTE_COUNT",
+    "MAX_ATTRIBUTE_KEY_LENGTH",
+    "MAX_ATTRIBUTE_VALUE_LENGTH",
+    "TypedActionResult",
+    "WorldEventPayloadValidationError",
+    "normalize_action_result_payload",
+    "normalize_world_event",
+]
 
 
 class WorldEventPayloadValidationError(ValueError):
@@ -34,42 +45,31 @@ def _strict_non_blank_string(value: object, field_name: str) -> str:
     return value
 
 
-def _normalize_attributes(value: object) -> dict[str, str]:
-    if type(value) is not dict:
-        raise WorldEventPayloadValidationError("attributes must be a string-to-string mapping")
-    if len(value) > MAX_ATTRIBUTE_COUNT:
-        raise WorldEventPayloadValidationError(f"attributes must contain at most {MAX_ATTRIBUTE_COUNT} entries")
-
-    normalized: dict[str, str] = {}
-    for key, item in value.items():
-        if type(key) is not str or not key.strip():
-            raise WorldEventPayloadValidationError("attributes keys must be non-empty strings")
-        if len(key) > MAX_ATTRIBUTE_KEY_LENGTH:
-            raise WorldEventPayloadValidationError(
-                f"attributes keys must be at most {MAX_ATTRIBUTE_KEY_LENGTH} characters"
-            )
-        if type(item) is not str or not item.strip():
-            raise WorldEventPayloadValidationError("attributes values must be non-empty strings")
-        if len(item) > MAX_ATTRIBUTE_VALUE_LENGTH:
-            raise WorldEventPayloadValidationError(
-                f"attributes values must be at most {MAX_ATTRIBUTE_VALUE_LENGTH} characters"
-            )
-        normalized[key] = item
-
+def _normalize_attributes(
+    value: object,
+    *,
+    entity_type: object | None = None,
+    allow_unknown_keys: bool = False,
+) -> dict[str, str]:
     try:
-        encoded = json.dumps(
-            normalized,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    except UnicodeEncodeError as error:
-        raise WorldEventPayloadValidationError("attributes must be valid UTF-8 JSON strings") from error
-    if len(encoded) > MAX_ATTRIBUTES_JSON_BYTES:
-        raise WorldEventPayloadValidationError(
-            f"attributes canonical UTF-8 JSON must be at most {MAX_ATTRIBUTES_JSON_BYTES} bytes"
+        return validate_observed_attributes(
+            value,
+            entity_type=entity_type if entity_type is not None else None,
+            allow_unknown_keys=allow_unknown_keys,
         )
-    return normalized
+    except ValueError as error:
+        raise WorldEventPayloadValidationError(str(error)) from error
+
+
+def _normalize_attributes_mode(value: object) -> str:
+    if isinstance(value, AttributeUpdateMode):
+        return value.value
+    if type(value) is not str:
+        raise WorldEventPayloadValidationError("attributes_mode must be a string enum value")
+    try:
+        return AttributeUpdateMode(value).value
+    except ValueError as error:
+        raise WorldEventPayloadValidationError("attributes_mode must be 'complete' or 'partial'") from error
 
 
 def _normalize_observation_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -92,8 +92,21 @@ def _normalize_observation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise WorldEventPayloadValidationError("confidence must be finite and between 0 and 1")
     normalized["confidence"] = confidence_value
 
+    if "attributes_mode" in normalized:
+        if "attributes" not in normalized:
+            raise WorldEventPayloadValidationError("attributes_mode requires attributes")
+        if normalized["attributes_mode"] is None:
+            raise WorldEventPayloadValidationError("attributes_mode may be omitted but cannot be null")
+        normalized["attributes_mode"] = _normalize_attributes_mode(normalized["attributes_mode"])
+
     if "attributes" in normalized:
-        normalized["attributes"] = _normalize_attributes(normalized["attributes"])
+        normalized["attributes"] = _normalize_attributes(
+            normalized["attributes"],
+            entity_type=normalized.get("entity_type"),
+            allow_unknown_keys="observation_id" in normalized and "pose" in normalized,
+        )
+        if "attributes_mode" not in normalized:
+            normalized["attributes_mode"] = AttributeUpdateMode.COMPLETE.value
 
     return normalized
 
