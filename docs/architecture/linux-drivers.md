@@ -102,3 +102,8 @@ LINUX5/LINUX6 的实现必须在硬件资源确认后补充以下内容：
 LINUX3 的 UART/SPI 软件契约和 fake transport 测试位于仓库的
 `hardware/linux_drivers/uart_spi/`。该契约是 owner-gated 的提案：它固化边界、CRC、
 序号、背压和重试测试，但不冻结物理控制器、pinmux、设备树、DMA 或 IRQ 参数。
+
+LINUX8 的电源管理软件契约和 fake provider 位于
+`hardware/linux_drivers/pm/`。它固化资源逆序挂起、顺序恢复、截止时间和故障闭锁，
+但不声称真实 Linux suspend/resume、runtime-PM 或唤醒功耗证据。目标板的 regulator、
+时钟、唤醒源和系统 PM notifier 必须在硬件接口及内核版本确认后补充。
