@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-labelledby="title desc">
+  <title id="title">VORA mark</title>
+  <desc id="desc">An open angle with an off-axis orbit, coral accent, lime orbit and coral point.</desc>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M40 112 80 32l40 80" stroke="#242338" stroke-width="12"/>
+    <path d="M55 80h50" stroke="#ff9d79" stroke-width="9"/>
+    <path d="M106 32c13 9 20 21 20 34 0 26-21 46-46 46" stroke="#b9e970" stroke-width="6"/>
+  </g>
+  <circle cx="80" cy="112" r="4.5" fill="#ff9d79"/>
+</svg>

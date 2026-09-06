@@ -95,7 +95,8 @@
     "Snapshot relation object IDs reject ASCII or Unicode whitespace anywhere instead of silently trimming or normalizing IDs. Canonical in:<id> and on:<id> remain accepted."
   ],
   "commands": [
-    "python tools/scripts/check_task_packet.py docs/task_packets/issue-47-deterministic-world-state-snapshots.json --base 3907f909ab0ad64506830debebf88925d904473d",
+    "python tools/scripts/check_task_packet.py docs/task_packets/issue-47-deterministic-world-state-snapshots.json --base 3907f909ab0ad64506830debebf88925d904473d --head c66b2a92b948d09f8475bcdaf7721b96f46e0e1d",
+    "python tools/scripts/check_task_packet.py docs/task_packets/issue-47-deterministic-world-state-snapshots.json --base e77ac35212b73838b2bbc47b28182ca06c18cf0d",
     "python -m pytest tests/unit/test_world_model.py -k location_support -q",
     "python -m pytest tests/integration/test_world_state_snapshot_replay.py -k whitespace -q",
     "python -m pytest tests/unit/test_contract_strictness.py -q",
@@ -103,13 +104,15 @@
     "python -m pytest tests/unit/test_world_model.py -q",
     "python -m pytest tests/integration/test_world_state_snapshot_replay.py -q",
     "python -m pytest tests/integration/test_observe_plan_act.py -q",
+    "python -m pytest tests/unit/test_container_profiles.py -q",
     "make test",
     "make contract",
     "make scenario-check",
     "make context-check",
     "make demo-scripted",
     "make check",
-    "git diff --check 3907f909ab0ad64506830debebf88925d904473d --"
+    "git diff --check 3907f909ab0ad64506830debebf88925d904473d c66b2a92b948d09f8475bcdaf7721b96f46e0e1d --",
+    "git diff --check e77ac35212b73838b2bbc47b28182ca06c18cf0d --"
   ],
   "evidence": [
     "Pre-implementation failing output showing that the deterministic snapshot API does not yet exist on the fixed main base; main already contains the core shared WorldState contract.",
@@ -123,7 +126,8 @@
     "Equal hashes printed by two independent subprocesses using different PYTHONHASHSEED values.",
     "Integration replay output containing the real asserted state_hash.",
     "Scripted demo output using typed Observation payloads.",
-    "Task Packet boundary output relative to 3907f909ab0ad64506830debebf88925d904473d.",
+    "Historical implementation boundary output for 3907f909ab0ad64506830debebf88925d904473d..c66b2a92b948d09f8475bcdaf7721b96f46e0e1d, plus the final PR boundary relative to the explicitly synchronized main commit e77ac35212b73838b2bbc47b28182ca06c18cf0d.",
+    "Main-sync provenance: all incoming main paths match e77ac35212b73838b2bbc47b28182ca06c18cf0d exactly; all existing Issue #47 implementation paths match c66b2a92b948d09f8475bcdaf7721b96f46e0e1d except this Packet's synchronization instructions.",
     "Complete make check and git diff --check results.",
     "Repair regression red output on the carried-forward PR #279 implementation: appearance-only evidence wrongly confirms spatial claims and whitespace location IDs are accepted.",
     "Green regression output separating location and appearance evidence for object, kit, parcel-routing and parcel-policy verification, including contradictory and extra entities."
@@ -131,7 +135,7 @@
   "stop_conditions": [
     "Runtime or shared-contract Owner approval for libs/contracts changes has not been recorded.",
     "Integration Owner approval for tools/scripts/demo_scripted.py and integration test changes has not been recorded.",
-    "The current implementation branch is not cleanly based on 3907f909ab0ad64506830debebf88925d904473d or contains unrelated Issue changes.",
+    "The original Issue #47 implementation cannot be audited against 3907f909ab0ad64506830debebf88925d904473d, or the branch contains unrelated changes beyond the human-authorized import of main at e77ac35212b73838b2bbc47b28182ca06c18cf0d.",
     "The existing interfaces schema must change or a new public schema field is required.",
     "Attributes or other verifier-only internal fields must become part of the public snapshot or state hash.",
     "The existing reduce_events return type must be replaced in a way that requires verifier or other consumer changes.",
@@ -139,10 +143,11 @@
     "Missing entity_type, location, pose, reduced_at or clock information would have to be guessed, defaulted or inferred from entity_id.",
     "Legacy event rows require an automatic data migration rather than explicit fail-closed behavior.",
     "The canonical byte representation or empty-stream snapshot policy cannot be agreed by the World Model and affected contract Owners.",
-    "Any change is required under interfaces, services/agent_runtime, services/backend, services/perception, robot, firmware, simulation, hardware, deployment, CI or safety configuration.",
+    "Any new implementation or conflict-resolution edit is required under interfaces, services/agent_runtime, services/backend, services/perception, robot, firmware, simulation, hardware, deployment, CI or safety configuration. The human-authorized unchanged import of main at e77ac35212b73838b2bbc47b28182ca06c18cf0d is synchronization only, not permission to edit those paths.",
     "Any targeted or required repository check fails for a reason caused by this Issue's diff."
   ],
   "risks_and_fallbacks": [
+    "On 2026-09-06 the human authorized synchronizing latest main into PR #347 and retesting/updating that existing PR. The pinned incoming main is e77ac35212b73838b2bbc47b28182ca06c18cf0d, including the already-merged PR #342 container health-probe fix and preceding VORA visuals. allowed_paths and forbidden remain unchanged; retain both the historical implementation audit and the final PR audit, and do not independently modify incoming CI/assets or merge the PR.",
     "The current public WorldState schema cannot represent internal entity_attributes; the bounded fallback is to preserve them internally and exclude them from the public snapshot and hash.",
     "Changing the existing reduce_events return type would create a broad verifier migration; the bounded fallback is a separate explicit snapshot projection using the same validated ordered stream.",
     "Existing legacy Observation events without entity_type will fail closed; recovery requires an explicitly approved offline migration task rather than silent defaults.",

@@ -1,0 +1,55 @@
+{
+  "issue": "ci-dashboard-health-check",
+  "human_owner": "TH3478",
+  "objective": "Make the full-stack container workflow validate dashboard health and readiness without crossing the dashboard local-trust boundary through Docker port forwarding.",
+  "allowed_paths": [
+    ".github/workflows/container-full-stack.yml",
+    "tests/unit/test_container_profiles.py",
+    "docs/task_packets/ci-dashboard-health-check.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "compose.yaml",
+    "services/backend/**",
+    "tools/scripts/check_task_packet.py",
+    "tools/schemas/task-packet-v1.schema.json"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/backend/**",
+    "docker/**"
+  ],
+  "acceptance": [
+    "The dashboard health and readiness probes execute through docker compose exec inside the dashboard container.",
+    "The dashboard remains in local trust mode and no Docker bridge range is added to the trusted proxy allow-list.",
+    "The regression test fails if the workflow falls back to a host-side health probe.",
+    "The workflow YAML remains parseable and the existing container static checks continue to pass.",
+    "The changed paths are authorized by this Task Packet and no runtime, Compose security, interface, firmware, or robot-control code changes are introduced."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py --all --base origin/main --head HEAD",
+    "python3 -m pytest tests/unit/test_container_baseline.py tests/unit/test_container_profiles.py -v",
+    "python3 -m ruff check tests/unit/test_container_baseline.py tests/unit/test_container_profiles.py docker/*.py",
+    "docker compose config --quiet",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Task Packet changed-path validation output",
+    "Container baseline and workflow regression test output",
+    "Ruff and Compose configuration output",
+    "Diff whitespace validation output"
+  ],
+  "stop_conditions": [
+    "The fix requires changing the backend inbound trust policy or Compose security settings.",
+    "A workflow other than container-full-stack.yml or a runtime source file must change.",
+    "The Docker bridge address can only be handled by broadening the trusted proxy allow-list.",
+    "A required check cannot be reproduced or remains attributable to an unrelated main-branch failure."
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "The container-side probe validates the service health and readiness endpoints from their intended local trust context; host port publication remains represented by the unchanged Compose configuration.",
+    "Native Docker daemon behavior is ultimately validated by the hosted static-and-cpu-image job."
+  ]
+}
