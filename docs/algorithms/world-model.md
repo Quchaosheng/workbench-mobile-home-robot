@@ -84,6 +84,57 @@ Required invariant:
 That assertion is the whole point. A snapshot that disagrees with full replay is
 manufacturing state.
 
+### Public snapshot projection and canonical bytes
+
+The verifier continues to use the World Model's internal reducer WorldState.
+create_world_state_snapshot() is a separate public projection over the same
+validated, sequence-ordered stream; it does not replace reduce_events() or
+expose verifier-only entity_attributes.
+
+Before replay, the projection folds exact duplicate events and rejects mixed
+runs, duplicate sequence ownership, malformed Observation entity_type values,
+and conflicting types for one entity_id. No event is applied until this full
+preflight succeeds.
+
+Snapshot entities are ordered by entity_id. Relations are ordered by
+(subject_id, predicate, object_id). Canonical in:<entity_id> and
+on:<entity_id> locations become inside and on_top_of; any other non-empty
+location fails projection instead of being guessed or omitted.
+Relation evidence contains only observations supporting the current location:
+same-location observations accumulate evidence, a location change replaces it,
+and observations without a location never enter the relation evidence set.
+
+Spatial verifiers use the same dedicated entity_location_evidence_refs as the
+snapshot relation, never the generic entity_evidence_refs as a fallback. This
+applies to both confirmation and refutation, including an unexpected extra
+entity in a managed container. Missing location support means
+insufficient_evidence / evidence_missing. Attribute and identity checks keep
+their generic observation evidence; compound parcel success requires both
+attribute evidence and independent location evidence.
+
+Relation object IDs containing whitespace (including tabs, newlines and Unicode
+whitespace) fail snapshot projection. IDs are not silently trimmed or
+normalized; in:tray is canonical, in: tray is not. This is a World Model
+projection rule, not a change to the public JSON Schema or a database migration.
+
+canonical_world_state_bytes() serialises this exact hash material:
+
+    {
+      "run_id": "...",
+      "sequence_no": 0,
+      "entities": [],
+      "relations": []
+    }
+
+It uses UTF-8 JSON, sorted object keys, compact separators, finite JSON numbers,
+and deterministic collection order. state_hash is the lowercase SHA-256
+hex digest of those bytes. state_hash, reduced_at, and clock_id are excluded
+from the hash; schema-visible entity and relation fields are included.
+reduced_at is the occurred_at value at the highest accepted sequence boundary,
+never the greatest timestamp. An empty stream has no truthful reduced_at
+boundary, so public snapshot creation fails closed while the existing
+empty-stream reducer behavior remains unchanged.
+
 ### Causal order, not timestamp order
 
 An action result can carry an *earlier* timestamp than the observation that

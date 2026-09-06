@@ -61,7 +61,7 @@ def run_once(run_id: str, logger: StructuredLogger) -> dict:
             run_id,
             1,
             WorldEventType.OBSERVATION,
-            {"entity_id": "red_block", "confidence": 0.98},
+            {"entity_id": "red_block", "entity_type": "block", "confidence": 0.98},
             ["camera-frame-001"],
         ),
         event(
@@ -69,7 +69,7 @@ def run_once(run_id: str, logger: StructuredLogger) -> dict:
             run_id,
             2,
             WorldEventType.OBSERVATION,
-            {"entity_id": "tray", "location": "table", "confidence": 0.99},
+            {"entity_id": "tray", "entity_type": "tray", "location": "on:table", "confidence": 0.99},
             ["camera-frame-002"],
         ),
         event(
@@ -97,7 +97,12 @@ def run_once(run_id: str, logger: StructuredLogger) -> dict:
             run_id,
             4,
             WorldEventType.OBSERVATION,
-            {"entity_id": "red_block", "location": "in:tray", "confidence": 0.97},
+            {
+                "entity_id": "red_block",
+                "entity_type": "block",
+                "location": "in:tray",
+                "confidence": 0.97,
+            },
             ["camera-frame-004"],
         ),
     ]

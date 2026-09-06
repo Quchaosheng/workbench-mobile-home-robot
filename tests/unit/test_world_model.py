@@ -4,6 +4,8 @@ from itertools import permutations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "libs/contracts"), str(ROOT / "services/world_model")]
 
@@ -62,6 +64,7 @@ def observation_event(
     *,
     run_id: str = "run-001",
     entity_id: str = "red_block",
+    entity_type: object = "block",
     location: object = "on:table",
     confidence: object = 0.9,
 ) -> WorldEvent:
@@ -71,9 +74,150 @@ def observation_event(
         sequence_no=sequence_no,
         event_type=WorldEventType.OBSERVATION,
         occurred_at=f"2026-08-04T00:00:{sequence_no:02d}Z",
-        payload={"entity_id": entity_id, "location": location, "confidence": confidence},
+        payload={
+            "entity_id": entity_id,
+            "entity_type": entity_type,
+            "location": location,
+            "confidence": confidence,
+        },
         evidence_refs=[f"frame://{event_id}"],
     )
+
+
+def location_support_case(rule: str, *, evidence: bool, contradictory: bool = False):
+    locations = {"red_block": "in:tray"}
+    if rule == "clearance":
+        locations["blue_cylinder"] = "in:staging_bin"
+    if rule in {"sorting", "policy"}:
+        locations = {"parcel": "in:pickup_shelf"}
+    events = []
+    for entity_id, location in locations.items():
+        event = observation_event(
+            f"location-{entity_id}",
+            len(events),
+            entity_id=entity_id,
+            location="on:table" if contradictory else location,
+        )
+        event.evidence_refs = [f"location://{entity_id}"] if evidence else []
+        events.append(event)
+        appearance = observation_event(f"appearance-{entity_id}", len(events), entity_id=entity_id)
+        appearance.payload.pop("location")
+        appearance.payload["attributes"] = {"label_status": "verified", "condition": "intact"}
+        appearance.evidence_refs = [f"appearance://{entity_id}"]
+        events.append(appearance)
+    state = reduce_events("run-001", events)
+
+    def verify(candidate):
+        if rule == "object":
+            return verify_object_in_tray(candidate, "task", "red_block", "tray")
+        if rule == "kit":
+            return verify_kit_contents(candidate, "task", ["red_block"], "tray")
+        if rule == "clearance":
+            return verify_workspace_clearance(candidate, "task")
+        if rule == "sorting":
+            return verify_parcel_sorting(
+                candidate,
+                "task",
+                {"parcel": "pickup_shelf"},
+                {"parcel": {"label_status": "verified", "condition": "intact"}},
+            )
+        return verify_parcel_policy(candidate, "task", ["parcel"])
+
+    return state, verify
+
+
+@pytest.mark.parametrize("rule", ["object", "kit", "clearance", "sorting", "policy"])
+@pytest.mark.parametrize("contradictory", [False, True])
+def test_location_support_cannot_be_replaced_by_appearance(rule, contradictory):
+    state, verify = location_support_case(rule, evidence=False, contradictory=contradictory)
+    before = state.model_dump()
+    result = verify(state)
+    assert result.status is VerificationStatus.INSUFFICIENT_EVIDENCE
+    assert result.reason_code is ReasonCode.EVIDENCE_MISSING
+    assert result.evidence_refs == ["system://world-state/no-evidence"]
+    assert state.model_dump() == before
+
+
+@pytest.mark.parametrize("rule", ["object", "kit", "clearance", "sorting", "policy"])
+@pytest.mark.parametrize("contradictory", [False, True])
+def test_location_support_is_used_when_present(rule, contradictory):
+    state, verify = location_support_case(rule, evidence=True, contradictory=contradictory)
+    result = verify(state)
+    expected = VerificationStatus.REFUTED if contradictory else VerificationStatus.CONFIRMED
+    assert result.status is expected
+    location_refs = {f"location://{entity}" for entity in state.entity_locations}
+    assert location_refs <= set(result.evidence_refs)
+    if rule in {"object", "kit", "clearance"} or (rule == "sorting" and contradictory):
+        assert set(result.evidence_refs) == location_refs
+
+
+@pytest.mark.parametrize("rule", ["kit", "sorting", "policy"])
+@pytest.mark.parametrize("extra_evidence", [False, True])
+def test_location_support_is_required_for_extra_entities(rule, extra_evidence):
+    state, verify = location_support_case(rule, evidence=True)
+    event = observation_event(
+        "extra",
+        10,
+        entity_id="extra",
+        location="in:tray" if rule == "kit" else "in:pickup_shelf",
+    )
+    event.evidence_refs = ["location://extra"] if extra_evidence else []
+    state = apply_event(state, event)
+    appearance = observation_event("extra-appearance", 11, entity_id="extra")
+    appearance.payload.pop("location")
+    appearance.evidence_refs = ["appearance://extra"]
+    state = apply_event(state, appearance)
+    result = verify(state)
+    if extra_evidence:
+        assert result.status is VerificationStatus.REFUTED
+        assert result.evidence_refs == ["location://extra"]
+    else:
+        assert result.status is VerificationStatus.INSUFFICIENT_EVIDENCE
+        assert result.reason_code is ReasonCode.EVIDENCE_MISSING
+        assert result.evidence_refs == ["system://world-state/no-evidence"]
+
+
+def test_location_support_changes_and_deduplicates_without_appearance():
+    state, verify = location_support_case("object", evidence=True)
+    new_location = observation_event("new", 10, location="on:table")
+    new_location.evidence_refs = ["location://new"]
+    state = apply_event(state, new_location)
+    confirmation = observation_event("repeat", 11, location="on:table")
+    confirmation.evidence_refs = ["location://new", "location://repeat"]
+    state = apply_event(state, confirmation)
+    appearance = observation_event("color", 12)
+    appearance.payload.pop("location")
+    appearance.evidence_refs = ["appearance://new"]
+    state = apply_event(state, appearance)
+    assert state.entity_location_evidence_refs["red_block"] == ["location://new", "location://repeat"]
+    assert verify(state).evidence_refs == ["location://new", "location://repeat"]
+    assert verify(state).status is VerificationStatus.REFUTED
+
+
+def test_location_support_does_not_replace_attribute_inspection_evidence():
+    state, _ = location_support_case("object", evidence=False)
+    result = verify_inspection_evidence(state, "task", ["red_block"])
+    assert result.status is VerificationStatus.CONFIRMED
+    assert result.evidence_refs == ["appearance://red_block"]
+
+
+@pytest.mark.parametrize("rule", ["sorting", "policy"])
+def test_location_support_is_not_needed_for_attribute_only_refutation(rule):
+    state, verify = location_support_case(rule, evidence=False)
+    if rule == "sorting":
+        state.entity_attributes["parcel"]["condition"] = "damaged"
+        result = verify(state)
+    else:
+        state.entity_attributes["parcel"]["barcode"] = "observed"
+        result = verify_parcel_policy(
+            state,
+            "task",
+            ["parcel"],
+            parcel_manifest={"parcel": {"barcode": "expected"}},
+            manifest_id="manifest",
+        )
+    assert result.status is VerificationStatus.REFUTED
+    assert result.evidence_refs == ["appearance://parcel"]
 
 
 class WorldModelTests(unittest.TestCase):
@@ -99,6 +243,11 @@ class WorldModelTests(unittest.TestCase):
                 "parcel_box": ["frame://parcel/box", "motion-log://parcel/box"],
                 "parcel_envelope": ["frame://parcel/envelope", "motion-log://parcel/envelope"],
                 "parcel_damaged": ["frame://parcel/damaged", "motion-log://parcel/damaged"],
+            },
+            entity_location_evidence_refs={
+                "parcel_box": ["frame://parcel/box"],
+                "parcel_envelope": ["frame://parcel/envelope"],
+                "parcel_damaged": ["frame://parcel/damaged"],
             },
         )
 
@@ -166,6 +315,7 @@ class WorldModelTests(unittest.TestCase):
                 update={
                     "payload": {
                         "entity_id": "red_block",
+                        "entity_type": "block",
                         "location": "in:tray",
                         "confidence": 0.9,
                     }
@@ -194,6 +344,7 @@ class WorldModelTests(unittest.TestCase):
                 "confidence": 0.9,
                 "location": "on:table",
                 "entity_id": "red_block",
+                "entity_type": "block",
             },
             evidence_refs=list(original.evidence_refs),
         )
@@ -257,6 +408,17 @@ class WorldModelTests(unittest.TestCase):
                 reduce_events("run-001", events)
             apply_spy.assert_not_called()
 
+    def test_reduce_events_rejects_conflicting_entity_types_before_apply(self) -> None:
+        events = [
+            observation_event("evt-block", 1, entity_id="shared", entity_type="block"),
+            observation_event("evt-tray", 2, entity_id="shared", entity_type="tray"),
+        ]
+
+        with patch("workbench_world_model.reducer.apply_event", wraps=apply_event) as apply_spy:
+            with self.assertRaisesRegex(ValueError, "entity_type"):
+                reduce_events("run-001", events)
+            apply_spy.assert_not_called()
+
     def test_direct_apply_rejects_invalid_payload_without_mutating_state(self) -> None:
         state = WorldState(
             run_id="run-001",
@@ -300,6 +462,7 @@ class WorldModelTests(unittest.TestCase):
             entity_confidence={"red_block": 0.91},
             entity_attributes={"red_block": {"colour": "red"}},
             entity_evidence_refs={"red_block": ["frame://before-action"]},
+            entity_location_evidence_refs={"red_block": ["frame://before-action"]},
             evidence_refs=["frame://before-action"],
         )
         observed_facts = {
@@ -342,6 +505,7 @@ class WorldModelTests(unittest.TestCase):
             entity_confidence={"red_block": 0.91},
             entity_attributes={"red_block": {"colour": "red"}},
             entity_evidence_refs={"red_block": ["frame://before-action"]},
+            entity_location_evidence_refs={"red_block": ["frame://before-action"]},
             evidence_refs=["frame://before-action"],
         )
         observed_facts = {
@@ -453,6 +617,7 @@ class WorldModelTests(unittest.TestCase):
             run_id="object-missing-evidence",
             entity_locations={"red_block": "in:tray", "wrong_entity": "on:table"},
             entity_evidence_refs={"wrong_entity": ["evidence://wrong/one", "evidence://wrong/two"]},
+            entity_location_evidence_refs={"wrong_entity": ["evidence://wrong/one", "evidence://wrong/two"]},
             evidence_refs=["evidence://global"],
         )
 
@@ -467,6 +632,7 @@ class WorldModelTests(unittest.TestCase):
             run_id="object-unobserved",
             entity_locations={"wrong_entity": "in:tray"},
             entity_evidence_refs={"wrong_entity": ["evidence://wrong/abundant"]},
+            entity_location_evidence_refs={"wrong_entity": ["evidence://wrong/abundant"]},
             evidence_refs=["evidence://global/abundant"],
         )
         result = verify_object_in_tray(unobserved, "task-object", "red_block", "tray")
@@ -485,6 +651,11 @@ class WorldModelTests(unittest.TestCase):
                 "wrong_entity": ["evidence://wrong"],
                 "red_block": ["evidence://object/observation", "evidence://object/action"],
             },
+            entity_location_evidence_refs={
+                "tray": ["evidence://tray"],
+                "wrong_entity": ["evidence://wrong"],
+                "red_block": ["evidence://object/observation"],
+            },
             evidence_refs=["evidence://global"],
         )
 
@@ -495,7 +666,7 @@ class WorldModelTests(unittest.TestCase):
         self.assertEqual(result.recovery_hint, RecoveryHint.NONE)
         self.assertEqual(
             result.evidence_refs,
-            ["evidence://object/observation", "evidence://object/action"],
+            ["evidence://object/observation"],
         )
 
     def test_multi_entity_verifiers_exclude_unrelated_evidence(self) -> None:
@@ -512,6 +683,11 @@ class WorldModelTests(unittest.TestCase):
                 "part-b": ["evidence://kit/b"],
                 "part-a": ["evidence://kit/a"],
             },
+            entity_location_evidence_refs={
+                "unrelated": ["evidence://unrelated"],
+                "part-b": ["evidence://kit/b"],
+                "part-a": ["evidence://kit/a"],
+            },
             evidence_refs=["evidence://global"],
         )
         inspection_state = WorldState(
@@ -519,6 +695,11 @@ class WorldModelTests(unittest.TestCase):
             entity_locations={"sensor-a": "on:table", "sensor-b": "on:table", "unrelated": "on:table"},
             entity_confidence={"sensor-a": 0.95, "sensor-b": 0.2},
             entity_evidence_refs={
+                "sensor-a": ["evidence://inspection/a"],
+                "sensor-b": ["evidence://inspection/b-low-confidence"],
+                "unrelated": ["evidence://unrelated"],
+            },
+            entity_location_evidence_refs={
                 "sensor-a": ["evidence://inspection/a"],
                 "sensor-b": ["evidence://inspection/b-low-confidence"],
                 "unrelated": ["evidence://unrelated"],
@@ -533,6 +714,11 @@ class WorldModelTests(unittest.TestCase):
                 "blue_cylinder": "in:staging_bin",
             },
             entity_evidence_refs={
+                "red_block": ["evidence://clear/red"],
+                "unrelated": ["evidence://unrelated"],
+                "blue_cylinder": ["evidence://clear/blue"],
+            },
+            entity_location_evidence_refs={
                 "red_block": ["evidence://clear/red"],
                 "unrelated": ["evidence://unrelated"],
                 "blue_cylinder": ["evidence://clear/blue"],
@@ -553,6 +739,11 @@ class WorldModelTests(unittest.TestCase):
                 "unrelated": ["evidence://unrelated"],
                 "parcel-a": ["evidence://parcel/a-missing-attribute"],
             },
+            entity_location_evidence_refs={
+                "parcel-b": ["evidence://parcel/b"],
+                "unrelated": ["evidence://unrelated"],
+                "parcel-a": ["evidence://parcel/a-missing-attribute"],
+            },
             evidence_refs=["evidence://global"],
         )
         parcel_policy_state = WorldState(
@@ -564,6 +755,11 @@ class WorldModelTests(unittest.TestCase):
                 "box-b": {"label_status": "verified", "condition": "intact"},
             },
             entity_evidence_refs={
+                "box-b": ["evidence://policy/b"],
+                "unrelated": ["evidence://unrelated"],
+                "box-a": ["evidence://policy/a"],
+            },
+            entity_location_evidence_refs={
                 "box-b": ["evidence://policy/b"],
                 "unrelated": ["evidence://unrelated"],
                 "box-a": ["evidence://policy/a"],
@@ -643,6 +839,10 @@ class WorldModelTests(unittest.TestCase):
                 entity_confidence=confidences or {},
                 entity_attributes=attributes or {},
                 entity_evidence_refs={
+                    "unrelated": ["evidence://unrelated"],
+                    **(entity_evidence or {}),
+                },
+                entity_location_evidence_refs={
                     "unrelated": ["evidence://unrelated"],
                     **(entity_evidence or {}),
                 },
@@ -986,6 +1186,10 @@ class WorldModelTests(unittest.TestCase):
                 "unrelated": ["evidence://unrelated"],
                 "red_block": ["evidence://object/refute"],
             },
+            entity_location_evidence_refs={
+                "unrelated": ["evidence://unrelated"],
+                "red_block": ["evidence://object/refute"],
+            },
             evidence_refs=["evidence://global"],
         )
         kit_state = WorldState(
@@ -1003,12 +1207,22 @@ class WorldModelTests(unittest.TestCase):
                 "extra-part": ["evidence://kit/extra-refute"],
                 "unrelated": ["evidence://unrelated"],
             },
+            entity_location_evidence_refs={
+                "part-b": ["evidence://kit/b-correct"],
+                "part-a": ["evidence://kit/a-refute"],
+                "extra-part": ["evidence://kit/extra-refute"],
+                "unrelated": ["evidence://unrelated"],
+            },
             evidence_refs=["evidence://global"],
         )
         clearance_state = WorldState(
             run_id="clearance-refuted",
             entity_locations={"red_block": "in:tray", "blue_cylinder": "on:table"},
             entity_evidence_refs={
+                "red_block": ["evidence://clear/red-correct"],
+                "blue_cylinder": ["evidence://clear/blue-refute"],
+            },
+            entity_location_evidence_refs={
                 "red_block": ["evidence://clear/red-correct"],
                 "blue_cylinder": ["evidence://clear/blue-refute"],
             },
@@ -1031,6 +1245,11 @@ class WorldModelTests(unittest.TestCase):
                 "unexpected": ["evidence://parcel/extra-refute"],
                 "parcel-a": ["evidence://parcel/a-refute"],
             },
+            entity_location_evidence_refs={
+                "parcel-b": ["evidence://parcel/b-correct"],
+                "unexpected": ["evidence://parcel/extra-refute"],
+                "parcel-a": ["evidence://parcel/a-refute"],
+            },
             evidence_refs=["evidence://global"],
         )
         parcel_policy_state = WorldState(
@@ -1046,6 +1265,11 @@ class WorldModelTests(unittest.TestCase):
                 "box-b": {"label_status": "unreadable", "condition": "intact"},
             },
             entity_evidence_refs={
+                "box-a": ["evidence://policy/a-correct"],
+                "foreign": ["evidence://policy/extra-refute"],
+                "box-b": ["evidence://policy/b-refute"],
+            },
+            entity_location_evidence_refs={
                 "box-a": ["evidence://policy/a-correct"],
                 "foreign": ["evidence://policy/extra-refute"],
                 "box-b": ["evidence://policy/b-refute"],
@@ -1109,6 +1333,7 @@ class WorldModelTests(unittest.TestCase):
                 }
             },
             entity_evidence_refs={"box-a": ["frame://box-a"]},
+            entity_location_evidence_refs={"box-a": ["frame://box-a"]},
         )
 
         result = verify_parcel_policy(
@@ -1133,6 +1358,11 @@ class WorldModelTests(unittest.TestCase):
                 "zeta": ["evidence://zeta", "evidence://shared", "evidence://zeta"],
                 "unrelated": ["evidence://unrelated"],
             },
+            entity_location_evidence_refs={
+                "alpha": ["evidence://shared", "evidence://alpha", "evidence://shared"],
+                "zeta": ["evidence://zeta", "evidence://shared", "evidence://zeta"],
+                "unrelated": ["evidence://unrelated"],
+            },
             evidence_refs=["evidence://global"],
         )
         state_b = WorldState(
@@ -1140,6 +1370,11 @@ class WorldModelTests(unittest.TestCase):
             entity_locations={"zeta": "on:table", "unrelated": "on:table", "alpha": "on:table"},
             entity_confidence={"zeta": 0.95, "alpha": 0.95},
             entity_evidence_refs={
+                "zeta": ["evidence://zeta", "evidence://shared", "evidence://zeta"],
+                "unrelated": ["evidence://unrelated"],
+                "alpha": ["evidence://shared", "evidence://alpha", "evidence://shared"],
+            },
+            entity_location_evidence_refs={
                 "zeta": ["evidence://zeta", "evidence://shared", "evidence://zeta"],
                 "unrelated": ["evidence://unrelated"],
                 "alpha": ["evidence://shared", "evidence://alpha", "evidence://shared"],
@@ -1174,18 +1409,24 @@ class WorldModelTests(unittest.TestCase):
                 "blue_cylinder": ["frame://kit/blue"],
                 "green_gear": ["frame://kit/green"],
             },
+            entity_location_evidence_refs={
+                "red_block": ["frame://kit/red"],
+                "blue_cylinder": ["frame://kit/blue"],
+                "green_gear": ["frame://kit/green"],
+            },
             evidence_refs=["frame://kit/final"],
         )
         required = ["red_block", "blue_cylinder", "green_gear"]
         self.assertTrue(verify_kit_contents(state, "task-kit-three-parts", required).completed)
         state.entity_locations["wrong_part"] = "in:kit_tray"
+        state.entity_location_evidence_refs["wrong_part"] = ["frame://kit/wrong-part"]
         result = verify_kit_contents(state, "task-kit-three-parts", required)
         self.assertFalse(result.completed)
         self.assertEqual(result.status, VerificationStatus.REFUTED)
         self.assertIn("wrong_part", result.claim)
 
         state.entity_locations.pop("wrong_part")
-        state.entity_evidence_refs.pop("blue_cylinder")
+        state.entity_location_evidence_refs.pop("blue_cylinder")
         result = verify_kit_contents(state, "task-kit-three-parts", required)
         self.assertFalse(result.completed)
         self.assertEqual(result.status, VerificationStatus.INSUFFICIENT_EVIDENCE)
@@ -1203,6 +1444,10 @@ class WorldModelTests(unittest.TestCase):
             entity_locations={"red_block": "on:table", "blue_cylinder": "on:table"},
             entity_confidence={"red_block": 0.95, "blue_cylinder": 0.42},
             entity_evidence_refs={
+                "red_block": ["frame://inspect/red"],
+                "blue_cylinder": ["frame://inspect/blue"],
+            },
+            entity_location_evidence_refs={
                 "red_block": ["frame://inspect/red"],
                 "blue_cylinder": ["frame://inspect/blue"],
             },
@@ -1224,10 +1469,14 @@ class WorldModelTests(unittest.TestCase):
                 "blue_cylinder": ["frame://clear/blue"],
                 "red_block": ["frame://clear/red"],
             },
+            entity_location_evidence_refs={
+                "blue_cylinder": ["frame://clear/blue"],
+                "red_block": ["frame://clear/red"],
+            },
             evidence_refs=["frame://clear/final"],
         )
         self.assertTrue(verify_workspace_clearance(clearance, "task-clear-workspace").completed)
-        clearance.entity_evidence_refs.pop("red_block")
+        clearance.entity_location_evidence_refs.pop("red_block")
         self.assertFalse(verify_workspace_clearance(clearance, "task-clear-workspace").completed)
 
     def test_observation_reducer_preserves_parcel_attributes(self) -> None:
@@ -1239,6 +1488,7 @@ class WorldModelTests(unittest.TestCase):
             occurred_at="2026-08-07T00:00:00Z",
             payload={
                 "entity_id": "parcel_damaged",
+                "entity_type": "parcel",
                 "location": "on:intake_table",
                 "confidence": 0.92,
                 "attributes": {"label_status": "verified", "condition": "damaged"},
@@ -1273,6 +1523,7 @@ class WorldModelTests(unittest.TestCase):
 
         state = self.parcel_state()
         state.entity_locations["unregistered_parcel"] = "in:pickup_shelf"
+        state.entity_location_evidence_refs["unregistered_parcel"] = ["frame://parcel/unregistered"]
         result = verify_parcel_sorting(state, "task-sort-parcels")
         self.assertEqual(result.status, VerificationStatus.REFUTED)
         self.assertIn("unregistered_parcel", result.claim)
@@ -1328,6 +1579,11 @@ class WorldModelTests(unittest.TestCase):
                 "box-c": {"label_status": "verified", "condition": "damaged", "barcode": "TRACK-C"},
             },
             entity_evidence_refs={
+                "box-a": ["frame://policy/a"],
+                "box-b": ["frame://policy/b"],
+                "box-c": ["frame://policy/c"],
+            },
+            entity_location_evidence_refs={
                 "box-a": ["frame://policy/a"],
                 "box-b": ["frame://policy/b"],
                 "box-c": ["frame://policy/c"],

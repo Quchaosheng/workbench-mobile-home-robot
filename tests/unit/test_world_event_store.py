@@ -29,6 +29,7 @@ def make_event(
 ) -> WorldEvent:
     event_payload: dict[str, object] = {
         "entity_id": "red_block",
+        "entity_type": "block",
         "location": "on:table",
         "confidence": 0.9,
     }
@@ -553,6 +554,71 @@ def test_store_rejects_non_finite_json_before_insert(tmp_path: Path) -> None:
     store.close()
 
 
+@pytest.mark.parametrize(
+    ("case", "entity_type"),
+    [
+        ("missing", None),
+        ("empty", ""),
+        ("blank", "   "),
+        ("integer", 7),
+        ("boolean", True),
+        ("array", []),
+    ],
+)
+def test_append_rejects_invalid_entity_type_before_insert(
+    tmp_path: Path,
+    case: str,
+    entity_type: object,
+) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+    invalid = make_event(f"evt-{case}")
+    payload = dict(invalid.payload)
+    if case == "missing":
+        payload.pop("entity_type")
+    else:
+        payload["entity_type"] = entity_type
+    invalid = invalid.model_copy(update={"payload": payload})
+    before = store.connection.execute("SELECT COUNT(*) FROM world_events").fetchone()[0]
+
+    with pytest.raises(WorldEventPayloadValidationError, match="entity_type"):
+        store.append(invalid)
+
+    after = store.connection.execute("SELECT COUNT(*) FROM world_events").fetchone()[0]
+    assert before == after == 0
+    store.close()
+
+
+def test_append_allocated_rejects_missing_entity_type_before_sequence_allocation(tmp_path: Path) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+
+    with pytest.raises(WorldEventPayloadValidationError, match="entity_type"):
+        store.append_allocated(
+            event_id="evt-invalid-observation",
+            run_id="run-allocated-observation",
+            event_type=WorldEventType.OBSERVATION,
+            occurred_at="2026-08-04T10:00:00Z",
+            payload={"entity_id": "red_block", "location": "on:table", "confidence": 0.9},
+            evidence_refs=["camera-frame-001"],
+        )
+
+    assert store.connection.execute("SELECT COUNT(*) FROM world_events").fetchone()[0] == 0
+    stored = store.append_allocated(
+        event_id="evt-valid-observation",
+        run_id="run-allocated-observation",
+        event_type=WorldEventType.OBSERVATION,
+        occurred_at="2026-08-04T10:00:00Z",
+        payload={
+            "entity_id": "red_block",
+            "entity_type": "block",
+            "location": "on:table",
+            "confidence": 0.9,
+        },
+        evidence_refs=["camera-frame-001"],
+    )
+    assert stored.sequence_no == 1
+    store.close()
+
+
 def test_append_rejects_invalid_observation_before_insert(tmp_path: Path) -> None:
     store = SQLiteEventStore(tmp_path / "events.sqlite")
     invalid = make_event("evt-invalid", payload={"entity_id": 123})
@@ -603,4 +669,34 @@ def test_list_run_rejects_externally_inserted_malformed_payload(tmp_path: Path) 
     with pytest.raises(WorldEventPayloadValidationError, match="entity_id"):
         store.list_run("run-001")
 
+    store.close()
+
+
+def test_legacy_observation_without_entity_type_fails_closed_without_migration(tmp_path: Path) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+    legacy = make_event("evt-legacy-missing-type")
+    payload = legacy.model_dump(mode="python")
+    payload["payload"].pop("entity_type")
+    event_json = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    with store.connection:
+        store.connection.execute(
+            """
+            INSERT INTO world_events(event_id, run_id, sequence_no, event_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (legacy.event_id, legacy.run_id, legacy.sequence_no, event_json),
+        )
+
+    with pytest.raises(WorldEventPayloadValidationError, match="entity_type"):
+        store.get_event(legacy.event_id)
+    with pytest.raises(WorldEventPayloadValidationError, match="entity_type"):
+        store.list_run(legacy.run_id)
+
+    assert store.connection.execute("SELECT COUNT(*) FROM world_events").fetchone()[0] == 1
     store.close()

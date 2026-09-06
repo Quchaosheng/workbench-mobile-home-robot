@@ -79,6 +79,10 @@ def _normalize_observation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise WorldEventPayloadValidationError("entity_id is required")
     normalized["entity_id"] = _strict_non_blank_string(normalized["entity_id"], "entity_id")
 
+    if "entity_type" not in normalized:
+        raise WorldEventPayloadValidationError("entity_type is required")
+    normalized["entity_type"] = _strict_non_blank_string(normalized["entity_type"], "entity_type")
+
     if "location" in normalized:
         normalized["location"] = _strict_non_blank_string(normalized["location"], "location")
 
