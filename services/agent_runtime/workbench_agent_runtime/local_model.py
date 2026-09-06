@@ -59,6 +59,11 @@ class LocalModelError(RuntimeError):
     """Raised when a local model cannot produce a trustworthy route."""
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, msg, headers, newurl):
+        raise LocalModelError(f"local model endpoint redirect rejected: {newurl}")
+
+
 @dataclass(frozen=True)
 class RouteDecision:
     task_family: str
@@ -133,7 +138,7 @@ class OllamaModelProvider:
         self.model = model.strip()
         self.endpoint = validate_local_endpoint(endpoint, allowed_hosts)
         self.timeout_s = timeout_s
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectRedirects())
         self.last_call: dict[str, object] = {}
 
     def route(self, goal: str) -> RouteDecision:
@@ -204,11 +209,6 @@ def build_local_model_plan(goal: str, provider: ModelProvider) -> TaskGraph:
             f"got {decision.task_family}"
         )
     unsafe = [requirement for requirement in UNSAFE_REQUIREMENTS if getattr(decision, requirement)]
-    # The deterministic classifier is authoritative for bounded tabletop language.
-    # A small model may over-report navigation for ordinary parcel handling, but it
-    # must never override an explicit out-of-boundary phrase caught above.
-    if known_family and decision.task_family == known_family:
-        unsafe = [requirement for requirement in unsafe if requirement != "requires_navigation"]
     if unsafe:
         raise LocalModelError(f"request is outside the safe semantic boundary: {', '.join(unsafe)}")
     builders = {

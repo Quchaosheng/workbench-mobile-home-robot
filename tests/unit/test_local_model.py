@@ -107,6 +107,26 @@ class LocalModelTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalModelError, "requires_navigation"):
             build_local_model_plan("Go downstairs and collect the parcel", provider)
 
+    def test_model_safety_flag_is_never_cleared_for_known_family(self) -> None:
+        FakeOllamaHandler.route = {
+            **FakeOllamaHandler.route,
+            "task_family": "place",
+            "requires_navigation": True,
+            "reason": "The request includes travel.",
+        }
+        provider = OllamaModelProvider("test-model", endpoint=self.endpoint)
+        with self.assertRaisesRegex(LocalModelError, "requires_navigation"):
+            build_local_model_plan("Place the red block in the tray", provider)
+
+    def test_mixed_supported_and_unsafe_goals_fail_before_model_planning(self) -> None:
+        provider = OllamaModelProvider("test-model", endpoint=self.endpoint)
+        for goal in (
+            "Place the red block in the tray, then drive to the kitchen.",
+            "\u5148\u628a\u7ea2\u8272\u6a21\u5757\u653e\u8fdb\u6258\u76d8\uff0c\u7136\u540e\u53bb\u53a8\u623f\u3002",
+        ):
+            with self.subTest(goal=goal), self.assertRaisesRegex(LocalModelError, "requires_navigation"):
+                build_local_model_plan(goal, provider)
+
     def test_model_cannot_override_deterministic_family_boundary(self) -> None:
         FakeOllamaHandler.route = {
             **FakeOllamaHandler.route,
@@ -130,6 +150,29 @@ class LocalModelTests(unittest.TestCase):
             with self.subTest(endpoint=endpoint), self.assertRaises(LocalModelError):
                 validate_local_endpoint(endpoint)
         self.assertEqual(validate_local_endpoint("http://model:11434", {"model"}), "http://model:11434")
+
+    def test_redirecting_endpoint_is_rejected(self) -> None:
+        class RedirectHandler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                self.send_response(302)
+                self.send_header("Location", "http://example.com/api/chat")
+                self.end_headers()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OllamaModelProvider("test-model", endpoint=f"http://127.0.0.1:{server.server_address[1]}")
+            with self.assertRaisesRegex(LocalModelError, "redirect"):
+                provider.route("Sort parcels")
+            self.assertEqual(provider.last_call, {})
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
 
 if __name__ == "__main__":

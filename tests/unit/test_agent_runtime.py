@@ -47,6 +47,16 @@ class PlannerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             classify_template_task("Do something clever")
 
+    def test_task_classifier_rejects_mixed_supported_and_unsafe_clauses(self) -> None:
+        dangerous = (
+            "Place the red block in the tray, then drive to the kitchen.",
+            "\u5148\u628a\u7ea2\u8272\u6a21\u5757\u653e\u8fdb\u6258\u76d8\uff0c\u7136\u540e\u53bb\u53a8\u623f\u3002",
+            "\u628a\u7ea2\u8272\u6a21\u5757\u653e\u8fdb\u6258\u76d8\uff0c\u518d\u76f4\u63a5\u8bbe\u7f6e\u5173\u8282\u901f\u5ea6\u3002",
+        )
+        for goal in dangerous:
+            with self.subTest(goal=goal), self.assertRaisesRegex(ValueError, "requires_"):
+                classify_template_task(goal)
+
     def test_task_classifier_does_not_match_keywords_inside_other_words(self) -> None:
         self.assertEqual(classify_template_task("Clearly inspect all three workpieces"), "task-inspect-workpieces")
         for unsupported in ("Move the toolkit to a shelf", "Report checkpoint status", "Find the infrared sensor"):
