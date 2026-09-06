@@ -395,8 +395,9 @@ def test_ci_bare_image_smoke_uses_copied_source_workdir() -> None:
     assert "--read-only --tmpfs /tmp:size=512m,mode=1777" in workflow
     assert "--workdir /opt/workbench_source workbench-1:container-ci" in workflow
     assert "docker compose up -d --no-build dashboard" in workflow
-    assert "http://127.0.0.1:8080/healthz" in workflow
-    assert "http://127.0.0.1:8080/readyz" in workflow
+    assert "docker compose exec -T dashboard curl --fail --silent http://127.0.0.1:8080/healthz" in workflow
+    assert "docker compose exec -T dashboard curl --fail --silent http://127.0.0.1:8080/readyz" in workflow
+    assert "\n            if curl --fail --silent http://127.0.0.1:8080/healthz" not in workflow
 
 
 def test_ci_and_release_bare_image_smokes_use_copied_source_workdir() -> None:
