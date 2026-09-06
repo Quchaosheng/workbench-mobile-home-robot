@@ -102,6 +102,7 @@ def test_valid_observation_payload_is_normalized_without_losing_metadata() -> No
 
     assert normalized.payload["confidence"] == 1.0
     assert isinstance(normalized.payload["confidence"], float)
+    assert normalized.payload["entity_type"] == "block"
     assert normalized.payload["attributes"] == {"condition": "intact"}
     assert normalized.payload["pose"] == {"opaque_metadata": "preserved"}
     assert original["confidence"] == 1
@@ -130,6 +131,24 @@ def test_observation_missing_confidence_is_rejected() -> None:
 
     with pytest.raises(WorldEventPayloadValidationError, match="confidence"):
         normalize_world_event(observation_event(payload))
+
+
+def test_observation_missing_entity_type_is_rejected() -> None:
+    payload = valid_observation_payload()
+    payload.pop("entity_type")
+
+    with pytest.raises(WorldEventPayloadValidationError, match="entity_type"):
+        normalize_world_event(observation_event(payload))
+
+
+@pytest.mark.parametrize(
+    "entity_type",
+    ["", "   ", None, 1, True, [], {}],
+    ids=["empty", "blank", "null", "integer", "boolean", "array", "object"],
+)
+def test_observation_entity_type_fail_closed(entity_type: object) -> None:
+    with pytest.raises(WorldEventPayloadValidationError, match="entity_type"):
+        normalize_world_event(observation_event(valid_observation_payload(entity_type=entity_type)))
 
 
 @pytest.mark.parametrize(

@@ -18,7 +18,7 @@ sys.path[:0] = [
 import demo_scripted
 from workbench_agent_runtime import build_template_plan
 from workbench_contracts import VerificationStatus, WorldEvent, WorldEventType
-from workbench_world_model import reduce_events
+from workbench_world_model import create_world_state_snapshot, reduce_events
 
 
 def test_observe_to_plan_integration(event_store, sample_observation):
@@ -41,6 +41,7 @@ def test_observe_to_plan_integration(event_store, sample_observation):
         payload={
             "observation_id": sample_observation.observation_id,
             "entity_id": sample_observation.entity_id,
+            "entity_type": sample_observation.entity_type,
             "location": "on:table",
             "confidence": sample_observation.confidence,
         },
@@ -113,6 +114,7 @@ def test_event_replay_integration(event_store):
             occurred_at=f"2026-08-04T10:00:{i:02d}Z",
             payload={
                 "entity_id": f"block-{i}",
+                "entity_type": "block",
                 "location": "on:table",
                 "confidence": 0.9,
             },
@@ -130,6 +132,10 @@ def test_event_replay_integration(event_store):
 
     state = reduce_events("replay-test-001", replayed)
     assert state.applied_event_ids == [item.event_id for item in replayed]
+    snapshot = create_world_state_snapshot("replay-test-001", replayed)
+    assert len(snapshot.state_hash) == 64
+    assert snapshot.state_hash.isascii()
+    assert snapshot.state_hash.islower()
 
 
 def test_scripted_demo_requires_post_action_observation(monkeypatch):
@@ -186,6 +192,7 @@ def test_scripted_demo_replay_keeps_execution_and_sensor_evidence_separate(monke
 
     assert output["verified_complete"] is True
     assert output["evidence_refs"] == ["camera-frame-004"]
+    assert "state_hash" not in output
     assert [item.event_id for item in replayed_events] == [
         "evt-001",
         "evt-002",
@@ -196,10 +203,7 @@ def test_scripted_demo_replay_keeps_execution_and_sensor_evidence_separate(monke
     assert "action-result-003" in state.evidence_refs
     assert "action-result-003" not in state.entity_evidence_refs["red_block"]
     assert state.entity_evidence_refs["red_block"] == ["camera-frame-004"]
-    # 断言:state_hash 存在且非空
-    # (一旦 WorldState 实现 state_hash,这个断言才有意义)
-    # assert state.state_hash
-    # assert len(state.state_hash) > 0
-
-    # 当前占位:只测 reduce 不抛异常
-    assert state is not None
+    snapshot = create_world_state_snapshot(output["run_id"], replayed_events)
+    assert len(snapshot.state_hash) == 64
+    assert snapshot.state_hash.isascii()
+    assert snapshot.state_hash.islower()

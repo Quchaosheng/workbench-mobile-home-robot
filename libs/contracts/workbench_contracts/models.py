@@ -203,6 +203,16 @@ class _CanonicalRuntimeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class _OmitUnsetRuntimeModel(_CanonicalRuntimeModel):
+    """Keep omitted optional fields absent during recursive serialization."""
+
+    def model_dump(self, *args: Any, exclude_unset: bool = True, **kwargs: Any) -> dict[str, Any]:
+        return super().model_dump(*args, exclude_unset=exclude_unset, **kwargs)
+
+    def model_dump_json(self, *args: Any, exclude_unset: bool = True, **kwargs: Any) -> str:
+        return super().model_dump_json(*args, exclude_unset=exclude_unset, **kwargs)
+
+
 class Position(_CanonicalRuntimeModel):
     x: float
     y: float
@@ -403,7 +413,7 @@ class WorldRelationPredicate(StrEnum):
 WorldStateHash = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
-class WorldEntity(_CanonicalRuntimeModel):
+class WorldEntity(_OmitUnsetRuntimeModel):
     entity_id: str
     entity_type: str
     pose: Pose | SkipJsonSchema[None] = Field(
@@ -420,8 +430,8 @@ class WorldEntity(_CanonicalRuntimeModel):
 
     @field_validator("pose", "confidence", mode="before")
     @classmethod
-    def reject_json_null(cls, value: object, info: ValidationInfo) -> object:
-        if info.mode == "json" and value is None:
+    def reject_explicit_null(cls, value: object) -> object:
+        if value is None:
             raise ValueError("optional WorldEntity fields must be omitted instead of null")
         return value
 
@@ -434,7 +444,15 @@ class WorldRelation(_CanonicalRuntimeModel):
     evidence_refs: list[str] = Field(default_factory=list)
 
 
-class WorldState(_CanonicalRuntimeModel):
+# Compatibility names used by the World Model snapshot projection. These are
+# aliases of the canonical contract classes, not a second set of models.
+WorldStateBelief = WorldBelief
+WorldStateRelationPredicate = WorldRelationPredicate
+WorldStateEntity = WorldEntity
+WorldStateRelation = WorldRelation
+
+
+class WorldState(_OmitUnsetRuntimeModel):
     """Public JSON-shaped WorldState contract.
 
     The World Model reducer owns a separate internal state representation; this
@@ -447,7 +465,17 @@ class WorldState(_CanonicalRuntimeModel):
     entities: list[WorldEntity]
     relations: list[WorldRelation] = Field(default_factory=list)
     reduced_at: str
-    clock_id: ClockId = ClockId.MONOTONIC
+    clock_id: ClockId | SkipJsonSchema[None] = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
+
+    @field_validator("clock_id", mode="before")
+    @classmethod
+    def reject_explicit_null_clock_id(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("clock_id may be omitted but cannot be null")
+        return value
 
 
 class TaskStep(_CanonicalRuntimeModel):

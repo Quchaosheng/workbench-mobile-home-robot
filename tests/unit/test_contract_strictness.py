@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +28,8 @@ from workbench_contracts import (
     WorldEventType,
     WorldRelation,
     WorldState,
+    WorldStateBelief,
+    WorldStateEntity,
 )
 
 CANONICAL_MODELS = (
@@ -155,6 +158,130 @@ def test_observation_hamming_matches_schema_minimum() -> None:
     assert integer_branch["minimum"] == repository_schema["properties"]["hamming"]["minimum"] == 0
 
 
+@pytest.mark.parametrize("field_name", ["pose", "confidence"])
+def test_world_state_entity_optional_fields_reject_explicit_null(field_name: str) -> None:
+    with pytest.raises(ValidationError, match=field_name):
+        WorldStateEntity(
+            entity_id="red_block",
+            entity_type="block",
+            belief=WorldStateBelief.OBSERVED,
+            **{field_name: None},
+        )
+
+
+def test_world_state_clock_id_rejects_explicit_null() -> None:
+    with pytest.raises(ValidationError, match="clock_id"):
+        WorldState(
+            run_id="run-001",
+            sequence_no=0,
+            state_hash="0" * 64,
+            entities=[],
+            reduced_at="2026-08-26T00:00:00Z",
+            clock_id=None,
+        )
+
+
+def test_world_state_optional_non_null_fields_are_omitted_and_schema_valid() -> None:
+    entity = WorldStateEntity(
+        entity_id="red_block",
+        entity_type="block",
+        belief=WorldStateBelief.OBSERVED,
+        last_observed_at=None,
+    )
+    state = WorldState(
+        run_id="run-001",
+        sequence_no=0,
+        state_hash="0" * 64,
+        entities=[entity],
+        reduced_at="2026-08-26T00:00:00Z",
+    )
+
+    payload = json.loads(state.model_dump_json())
+    serialized_entity = payload["entities"][0]
+
+    assert payload == state.model_dump(mode="json")
+    assert "pose" not in serialized_entity
+    assert "confidence" not in serialized_entity
+    assert "clock_id" not in payload
+    assert serialized_entity["last_observed_at"] is None
+
+    repository_schema = json.loads(
+        (ROOT / "interfaces" / "json_schema" / "world_state.schema.json").read_text(encoding="utf-8")
+    )
+    Draft202012Validator(repository_schema).validate(payload)
+
+
+def test_world_state_last_observed_at_accepts_explicit_null() -> None:
+    entity = WorldStateEntity(
+        entity_id="red_block",
+        entity_type="block",
+        belief=WorldStateBelief.OBSERVED,
+        last_observed_at=None,
+    )
+
+    assert entity.model_dump(mode="json")["last_observed_at"] is None
+
+
+def world_state_entity_type_payload(entity_type: object) -> dict[str, object]:
+    return {
+        "run_id": "run-entity-type-boundary",
+        "sequence_no": 0,
+        "state_hash": "0" * 64,
+        "entities": [{"entity_id": "red_block", "entity_type": entity_type, "belief": WorldStateBelief.OBSERVED}],
+        "reduced_at": "2026-09-06T00:00:00Z",
+    }
+
+
+@pytest.mark.parametrize("mode", ["python", "json"])
+@pytest.mark.parametrize(
+    "entity_type",
+    ["block", "", "   ", "\t\r\n", "\u00a0", " 方块 "],
+    ids=["normal", "empty", "spaces", "ascii-whitespace", "unicode-whitespace", "unicode-with-spaces"],
+)
+def test_world_state_entity_type_matches_schema_for_all_strings(entity_type: str, mode: str) -> None:
+    # The public contract accepts strings as-is. Observation ingestion owns
+    # the stronger non-blank policy; it must not leak into the shared model.
+    payload = world_state_entity_type_payload(entity_type)
+    repository_schema = json.loads(
+        (ROOT / "interfaces" / "json_schema" / "world_state.schema.json").read_text(encoding="utf-8")
+    )
+    validator = Draft202012Validator(repository_schema)
+    validator.validate(payload)
+    if mode == "python":
+        state = WorldState.model_validate(payload)
+    else:
+        state = WorldState.model_validate_json(json.dumps(payload))
+    assert type(state.entities[0]) is WorldEntity is WorldStateEntity
+    assert state.entities[0].entity_type == entity_type
+
+    serialized = json.loads(state.model_dump_json())
+    assert serialized["entities"][0]["entity_type"] == entity_type
+    validator.validate(serialized)
+    assert WorldState.model_validate_json(json.dumps(serialized)) == state
+
+
+@pytest.mark.parametrize("mode", ["python", "json"])
+@pytest.mark.parametrize(
+    "entity_type",
+    [None, 123, 0.5, True, [], {}],
+    ids=["null", "integer", "float", "boolean", "array", "object"],
+)
+def test_world_state_entity_type_matches_schema_for_non_strings(entity_type: object, mode: str) -> None:
+    payload = world_state_entity_type_payload(entity_type)
+    repository_schema = json.loads(
+        (ROOT / "interfaces" / "json_schema" / "world_state.schema.json").read_text(encoding="utf-8")
+    )
+    errors = list(Draft202012Validator(repository_schema).iter_errors(payload))
+    assert len(errors) == 1
+    assert list(errors[0].path) == ["entities", 0, "entity_type"]
+    with pytest.raises(ValidationError) as error:
+        if mode == "python":
+            WorldState.model_validate(payload)
+        else:
+            WorldState.model_validate_json(json.dumps(payload))
+    assert [entry["loc"] for entry in error.value.errors()] == [("entities", 0, "entity_type")]
+
+
 def test_task_graph_steps_matches_schema_minimum() -> None:
     repository_schema = json.loads(
         (ROOT / "interfaces" / "json_schema" / "task_graph.schema.json").read_text(encoding="utf-8")
@@ -171,6 +298,7 @@ def test_task_graph_steps_matches_schema_minimum() -> None:
         ("scenario-normal-001.json", ScenarioManifest),
         ("semantic-action-place.json", SemanticAction),
         ("verification-insufficient-evidence.json", VerificationResult),
+        ("world-state-block-in-tray.json", WorldState),
     ],
 )
 def test_valid_repository_examples_round_trip_deterministically(example_name: str, model: type) -> None:
