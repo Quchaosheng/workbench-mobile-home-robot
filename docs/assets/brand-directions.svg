@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1260 540" role="img" aria-labelledby="title desc">
+  <title id="title">Bold brand directions</title>
+  <desc id="desc">Three expressive, product-neutral identity directions: Vora, Rilo, and Zuno.</desc>
+  <rect width="1260" height="540" fill="#f2efe9"/>
+  <text x="48" y="48" fill="#6a716d" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" font-weight="700" letter-spacing="4">IDENTITY STUDY 03 · MORE PERSONALITY</text>
+  <text x="1212" y="48" text-anchor="end" fill="#8b918d" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" font-weight="600" letter-spacing="2">ABSTRACT / PRODUCT-NEUTRAL</text>
+
+  <g transform="translate(40 84)">
+    <rect width="374" height="410" rx="24" fill="#242338"/>
+    <path d="M128 144l45-78 45 78" fill="none" stroke="#f7f2e9" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M145 113h56" stroke="#ff9d79" stroke-width="12" stroke-linecap="round"/>
+    <path d="M205 65c15 10 24 25 24 43 0 31-25 56-56 56" fill="none" stroke="#b9e970" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="173" cy="144" r="6" fill="#ff9d79"/>
+    <text x="42" y="238" fill="#f7f2e9" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="48" font-weight="750" letter-spacing="-1">vora</text>
+    <rect x="43" y="258" width="48" height="5" rx="2.5" fill="#b9e970"/>
+    <text x="43" y="298" fill="#d8d4cc" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" font-weight="700" letter-spacing="3">BOLD / OPEN / OWNABLE</text>
+    <text x="43" y="342" fill="#aaa9b1" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14">An open angle with an off-axis orbit.</text>
+    <text x="43" y="365" fill="#aaa9b1" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14">The strongest silhouette and the most</text>
+    <text x="43" y="388" fill="#aaa9b1" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14">distinctive color personality.</text>
+  </g>
+
+  <g transform="translate(443 84)">
+    <rect width="374" height="410" rx="24" fill="#e9d8c9"/>
+    <path d="M173 62c-34 0-58 23-58 55s24 55 58 55c22 0 40-10 51-29" fill="none" stroke="#1b3441" stroke-width="15" stroke-linecap="round"/>
+    <path d="M194 68l-42 49 42 49" fill="none" stroke="#f2efe9" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="224" cy="88" r="7" fill="#f07d62"/>
+    <text x="42" y="238" fill="#1b3441" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="48" font-weight="750" letter-spacing="-1">rilo</text>
+    <rect x="43" y="258" width="48" height="5" rx="2.5" fill="#f07d62"/>
+    <text x="43" y="298" fill="#50636a" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" font-weight="700" letter-spacing="3">WARM / CURIOUS / HUMAN</text>
+    <text x="43" y="342" fill="#6f7a7b" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14">A broken ring that feels friendly</text>
+    <text x="43" y="365" fill="#6f7a7b" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14">without becoming literal or cute.</text>
+    <text x="43" y="388" fill="#6f7a7b" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14">The most approachable route.</text>
+  </g>
+
+  <g transform="translate(846 84)">
+    <rect width="374" height="410" rx="24" fill="#183e62"/>
+    <path d="M128 68h99l-99 96h99" fill="none" stroke="#f2efe9" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M173 68l35 96" stroke="#ffb15e" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="128" cy="68" r="6" fill="#70e0d0"/>
+    <text x="42" y="238" fill="#f2efe9" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="48" font-weight="750" letter-spacing="-1">zuno</text>
+    <rect x="43" y="258" width="48" height="5" rx="2.5" fill="#70e0d0"/>
+    <text x="43" y="298" fill="#c9d7df" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" font-weight="700" letter-spacing="3">PLAYFUL / FAST / MEMORABLE</text>
+    <text x="43" y="342" fill="#9fb3c0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14">A folded Z with a bright interruption.</text>
+    <text x="43" y="365" fill="#9fb3c0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14">The most energetic mark, built to hold</text>
+    <text x="43" y="388" fill="#9fb3c0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14">attention in small digital spaces.</text>
+  </g>
+</svg>

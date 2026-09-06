@@ -11,7 +11,16 @@
 [![Release](https://img.shields.io/github/v/release/Quchaosheng/workbench-desk-robot?display_name=tag)](https://github.com/Quchaosheng/workbench-desk-robot/releases/latest)
 [![CI](https://github.com/Quchaosheng/workbench-desk-robot/actions/workflows/ci.yml/badge.svg)](https://github.com/Quchaosheng/workbench-desk-robot/actions)
 
-![Workbench Home Robot](docs/assets/workbench-home-robot-market-v13.png)
+![VORA Home Robot](docs/assets/workbench-home-robot-market-v18.png)
+
+<p align="center"><img src="docs/assets/vora-logo.svg" alt="VORA" width="360"></p>
+
+**Product name:** VORA Home Robot<br>
+**Repository/runtime:** Workbench Desk Robot (`workbench-desk-robot`)
+
+VORA is the product brand; Workbench remains the engineering repository and
+evidence-first runtime name. The VORA mark uses an open angle and off-axis orbit
+to stay distinctive without binding the identity to one robot use case.
 
 [简体中文](README.zh-CN.md) · [Interactive 3D view](docs/assets/premium-product-render.html)
 

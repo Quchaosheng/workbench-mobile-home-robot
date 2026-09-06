@@ -10,7 +10,14 @@
 [![Release](https://img.shields.io/github/v/release/Quchaosheng/workbench-desk-robot?display_name=tag)](https://github.com/Quchaosheng/workbench-desk-robot/releases/latest)
 [![CI](https://github.com/Quchaosheng/workbench-desk-robot/actions/workflows/ci.yml/badge.svg)](https://github.com/Quchaosheng/workbench-desk-robot/actions)
 
-![Workbench Home Robot](docs/assets/workbench-home-robot-market-v13.png)
+![VORA 家务机器人](docs/assets/workbench-home-robot-market-v18.png)
+
+<p align="center"><img src="docs/assets/vora-logo.svg" alt="VORA" width="360"></p>
+
+**产品名：** VORA Home Robot  ·  **工程仓库 / 运行时：** Workbench Desk Robot（`workbench-desk-robot`）
+
+VORA 是面向用户的产品品牌；Workbench 继续作为工程仓库和证据优先运行时的名称。
+标志由开放角度和偏心轨道构成，保持识别度，同时不把品牌绑定在某一种机器人用途上。
 
 [English](README.md) · [可旋转的 3D 产品视图](docs/assets/premium-product-render.html)
 
