@@ -1,4 +1,5 @@
 import contextlib
+import io
 import json
 import math
 import os
@@ -15,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from workbench_backend.inbound_http import InboundHttpConfigurationError, InboundHttpPolicy
+from workbench_backend.logging import StructuredLogger
 from workbench_backend.read_model import ReadModelError, RemoteDashboardReadModel
 from workbench_backend.remote_http import (
     MAX_REMOTE_RESPONSE_BYTES,
@@ -243,6 +245,175 @@ class MultiHostReadModelTests(unittest.TestCase):
                     sim.shutdown()
                     sim.server_close()
                     sim_thread.join(timeout=2)
+
+
+class RemoteStrictJsonTests(unittest.TestCase):
+    tokens = ("NaN", "Infinity", "-Infinity", "1e400", "-1e400")
+
+    def setUp(self) -> None:
+        self.controls = [0, -0.0, 1e308, 1e-300, 7, -7, True, False, None, "摄像头", "NaN", "Infinity"]
+        self.events = [
+            {
+                "event_id": f"evt-{sequence}",
+                "run_id": "run-finite",
+                "sequence_no": sequence,
+                "event_type": "observation",
+                "occurred_at": "2026-08-08T00:00:00Z",
+                "payload": {"nested": self.controls},
+            }
+            for sequence in range(2)
+        ]
+        self.payloads = {
+            "/readyz": {"status": "ready", "metadata": self.controls},
+            "/api/v1/runs": {"runs": [{"run_id": "run-finite", "nested": self.controls}]},
+            "/api/v1/runs/run-finite/events": {"events": self.events},
+        }
+        self.bodies = {path: json.dumps(body, allow_nan=False).encode() for path, body in self.payloads.items()}
+
+        def responder(path):
+            body = self.bodies[path]
+            return 200, json_headers(body), body
+
+        source_url, self.hits = self.enterContext(response_server(responder))
+        self.model = RemoteDashboardReadModel(source_url)
+        self.controller = create_server("127.0.0.1", 0, event_source_url=source_url)
+        self.logs = io.StringIO()
+        self.controller.RequestHandlerClass.logger = StructuredLogger("strict-remote-test", self.logs)
+        self.thread = threading.Thread(target=self.controller.serve_forever, daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.controller.server_address[1]}"
+        self.addCleanup(self.stop_controller)
+
+    def stop_controller(self) -> None:
+        self.controller.shutdown()
+        self.controller.server_close()
+        self.thread.join(timeout=2)
+
+    @staticmethod
+    def strict_json(body: bytes):
+        # Independent from the production decoder, including exponent-overflow checks.
+        def reject_constant(value):
+            raise ValueError("non-JSON constant")
+
+        decoded = json.loads(body, parse_constant=reject_constant)
+        pending = [decoded]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError("non-finite decoded number")
+            if isinstance(value, dict):
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+        return decoded
+
+    def request_json(self, path: str):
+        try:
+            response = urllib.request.urlopen(self.base_url + path, timeout=3)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            body = response.read()
+            self.assertEqual(response.headers["Content-Type"], "application/json; charset=utf-8")
+            self.assertEqual(int(response.headers["Content-Length"]), len(body))
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+            self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+            self.assertEqual(response.headers["Permissions-Policy"], "camera=(), microphone=(), geolocation=()")
+            self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+            try:
+                payload = self.strict_json(body)
+            except ValueError:
+                self.fail("controller returned a non-finite HTTP JSON body")
+            return response.status, response.headers, payload, body
+
+    def test_finite_controls(self) -> None:
+        self.assertTrue(self.model.ready())
+        self.assertEqual(self.model.list_runs()[0]["nested"], self.controls)
+        self.assertEqual(self.model.list_events("run-finite"), self.events)
+        self.assertEqual(self.request_json("/readyz")[0], 200)
+        for prefix in ("/api", "/api/v1"):
+            for suffix in ("", "/run-finite", "/run-finite/events"):
+                with self.subTest(prefix=prefix, suffix=suffix):
+                    status, headers, payload, _ = self.request_json(prefix + "/runs" + suffix)
+                    self.assertEqual(status, 200)
+                    self.assertEqual(headers.get("X-API-Version"), "1" if prefix == "/api/v1" else None)
+                    if suffix.endswith("/events"):
+                        values = payload["events"][1]["payload"]["nested"]
+                    elif not suffix:
+                        values = payload["runs"][0]["nested"]
+                    else:
+                        continue
+                    self.assertEqual(values, self.controls)
+                    self.assertEqual([type(value) for value in values], [type(value) for value in self.controls])
+                    self.assertEqual(math.copysign(1, values[1]), -1)
+        for token in self.tokens:
+            with self.subTest(oracle=token), self.assertRaises(ValueError):
+                self.strict_json(('{"nested": [' + token + "]}").encode())
+
+    def test_remote_nonfinite_matrix(self) -> None:
+        for source_path, original_body in list(self.bodies.items()):
+            for token in self.tokens:
+                for placement in ("top", "nested", "array"):
+                    with self.subTest(path=source_path, token=token, placement=placement):
+                        payload = json.loads(original_body)
+                        target = payload
+                        if placement != "top":
+                            if "runs" in payload:
+                                target = payload["runs"][0]
+                            elif "events" in payload:
+                                target = payload["events"][1]["payload"]
+                        target["unused"] = "__NUMBER__" if placement == "top" else {"value": "__NUMBER__"}
+                        if placement == "array":
+                            target["unused"] = [0, {"value": "__NUMBER__"}]
+                        self.bodies[source_path] = json.dumps(payload).replace('"__NUMBER__"', token).encode()
+                        try:
+                            if source_path == "/readyz":
+                                self.assertFalse(self.model.ready())
+                                status, _, body, _ = self.request_json("/readyz")
+                                self.assertEqual((status, body["status"]), (503, "not_ready"))
+                            else:
+                                with self.assertRaises(ReadModelError):
+                                    if source_path.endswith("/events"):
+                                        self.model.list_events("run-finite")
+                                    else:
+                                        self.model.list_runs()
+                                suffixes = ("/run-finite", "/run-finite/events") if "events" in payload else ("",)
+                                for prefix in ("/api", "/api/v1"):
+                                    for suffix in suffixes:
+                                        status, _, body, _ = self.request_json(prefix + "/runs" + suffix)
+                                        self.assertEqual((status, body["error"]), (503, "invalid_event_source"))
+                                        self.assertNotIn("runs", body)
+                        finally:
+                            self.bodies[source_path] = original_body
+
+    def test_error_redaction_and_headers(self) -> None:
+        sentinel = "private-remote-body"
+        field = "attacker-controlled-field"
+        for token in self.tokens:
+            with self.subTest(token=token):
+                payload = {"runs": [{field: [sentinel, "__NUMBER__"]}]}
+                self.bodies["/api/v1/runs"] = json.dumps(payload).replace('"__NUMBER__"', token).encode()
+                with self.assertRaises(ReadModelError) as caught:
+                    self.model.list_runs()
+                status, _, body, wire = self.request_json("/api/v1/runs")
+                self.assertEqual((status, body["error"]), (503, "invalid_event_source"))
+                self.assertLess(len(wire), 512)
+                for secret in (sentinel, field):
+                    self.assertNotIn(secret, str(caught.exception))
+                    self.assertNotIn(secret.encode(), wire)
+                    self.assertNotIn(secret, self.logs.getvalue())
+
+    def test_readiness_does_not_probe_other_endpoints_or_stick(self) -> None:
+        good = self.bodies["/api/v1/runs"]
+        self.bodies["/api/v1/runs"] = b'{"runs": [], "unused": 1e400}'
+        for path, expected_status in (("/readyz", 200), ("/api/v1/runs", 503), ("/readyz", 200)):
+            with self.subTest(path=path):
+                self.hits.clear()
+                self.assertEqual(self.request_json(path)[0], expected_status)
+                self.assertEqual(self.hits, [path])
+        self.bodies["/api/v1/runs"] = good
+        self.assertEqual(self.request_json("/api/v1/runs")[0], 200)
 
 
 class RemoteHttpSecurityTests(unittest.TestCase):

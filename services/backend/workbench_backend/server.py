@@ -50,7 +50,8 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
     def process_request(self, request, client_address) -> None:
         if not self._request_slots.acquire(blocking=False):
             body = json.dumps(
-                {"error": "server_busy", "message": "The server has reached its request concurrency limit."}
+                {"error": "server_busy", "message": "The server has reached its request concurrency limit."},
+                allow_nan=False,
             ).encode()
             response = (
                 b"HTTP/1.1 503 Service Unavailable\r\n"
@@ -97,11 +98,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _send_json(
         self, payload: object, status: HTTPStatus = HTTPStatus.OK, *, api_version: str | None = None
     ) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode()
+        try:
+            body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
+        except (TypeError, ValueError):
+            # Includes UnicodeError from UTF-8 encoding. No response headers have
+            # been sent, and the fixed fallback never re-enters a failing encoder.
+            status = HTTPStatus.SERVICE_UNAVAILABLE
+            body = b'{"error":"response_serialization_failed","message":"The response could not be encoded as JSON."}'
         if len(body) > MAX_RESPONSE_BYTES:
             status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE
             body = json.dumps(
-                {"error": "response_too_large", "message": "The requested read model exceeds the response limit."}
+                {"error": "response_too_large", "message": "The requested read model exceeds the response limit."},
+                allow_nan=False,
             ).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")

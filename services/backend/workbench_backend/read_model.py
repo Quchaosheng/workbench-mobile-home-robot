@@ -1,4 +1,5 @@
 import json
+import math
 import threading
 import urllib.parse
 from pathlib import Path
@@ -53,6 +54,23 @@ class _DuplicateJsonKey(ValueError):
     """Raised before JSON decoding can silently discard an object member."""
 
 
+class _NonFiniteJsonNumber(ValueError):
+    """Raised before an event source can introduce NaN or infinity."""
+
+
+def _reject_json_constant(value: str) -> None:
+    # Do not include attacker-controlled input or field names in diagnostics.
+    raise _NonFiniteJsonNumber("non-finite JSON number")
+
+
+def _finite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        # Valid JSON syntax such as 1e400 can overflow Python's float.
+        raise _NonFiniteJsonNumber("non-finite JSON number")
+    return number
+
+
 def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     for key, value in pairs:
@@ -60,6 +78,15 @@ def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise _DuplicateJsonKey(f"duplicate JSON key: {key!r}")
         payload[key] = value
     return payload
+
+
+def _decode_event_source_json(contents: str | bytes) -> Any:
+    return json.loads(
+        contents,
+        object_pairs_hook=_object_without_duplicates,
+        parse_constant=_reject_json_constant,
+        parse_float=_finite_json_float,
+    )
 
 
 class DashboardReadModel:
@@ -104,11 +131,9 @@ class DashboardReadModel:
             if contents is None or stable_stat is None:
                 raise ReadModelError(f"event source changed while being read: {path.name}")
             try:
-                events = [
-                    json.loads(line, object_pairs_hook=_object_without_duplicates)
-                    for line in contents.splitlines()
-                    if line.strip()
-                ]
+                events = [_decode_event_source_json(line) for line in contents.splitlines() if line.strip()]
+            except _NonFiniteJsonNumber as exc:
+                raise ReadModelError("event log contains a non-finite JSON number") from exc
             except _DuplicateJsonKey as exc:
                 raise ReadModelError(f"event log contains {exc}: {path.name}") from exc
             except json.JSONDecodeError as exc:
@@ -244,7 +269,9 @@ class RemoteDashboardReadModel(DashboardReadModel):
         if not 200 <= response.status < 300:
             raise ReadModelError(f"remote event source unavailable: {self.base_url}")
         try:
-            payload = json.loads(response.body, object_pairs_hook=_object_without_duplicates)
+            payload = _decode_event_source_json(response.body)
+        except _NonFiniteJsonNumber as exc:
+            raise ReadModelError("remote event source contains a non-finite JSON number") from exc
         except _DuplicateJsonKey as exc:
             raise ReadModelError(f"remote event source returned {exc}: {self.base_url}") from exc
         except (UnicodeError, json.JSONDecodeError) as exc:
