@@ -402,6 +402,14 @@ observed_controller_over_limit_behavior{                   # 实测六分类，�
     is_phase4_bypass_risk: bool},                          # clamped/executed_over_limit 时 true
 validator_violation{joint, kind, value, bound}             # check_trajectory 返回的纯 Violation（无 event_id：事件归阶段 4）
 ```
+
+合法 arm 动作现在必须先通过 `preflight_trajectory`，再由
+`AcceptedTrajectoryExecutor` 交给 `GazeboTrajectoryController`；报告中的
+`legal_trajectory.execution_path=accepted_trajectory_adapter` 与
+`legal_trajectory.execution` 保存 gate、state/context hash、action 状态、fresh
+feedback sequence/timestamp、最大位置/速度误差及 `verified` / `not_converged`。
+越限动作的 `execution_path=raw_safety_probe` 仍是独立安全探针，不得作为正常轨迹执行证据。`verified` 只表示
+真实 Gazebo feedback 已刷新并满足控制器收敛阈值，不表示 WorldState 已验证任务成功。
 关节前后状态从 `/joint_states` 采。**无穿模证据路径唯一定为 MoveIt `/check_state_validity`**（仓库无 Gazebo contact sensor/bridge，合并 URDF 是 MoveIt 碰撞权威）——`/joint_states` + 无 warning 不足以证明无穿模（review 小修项）。**一条命令产全套证据**：见 §6 的 `phase2_probe` 控制台脚本。
 
 **probe 健壮性（回应 review）**：
