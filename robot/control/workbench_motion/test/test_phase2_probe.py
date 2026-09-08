@@ -5,12 +5,21 @@ from __future__ import annotations
 import inspect
 import json
 import math
+from dataclasses import replace
 from itertools import pairwise
 from types import SimpleNamespace
 
 import pytest
 from workbench_motion.arm_config import load_arm_config
-from workbench_motion.joint_limits import JointLimit, ReasonCode, Violation
+from workbench_motion.controller import RobotState
+from workbench_motion.joint_limits import (
+    AcceptedTrajectory,
+    JointLimit,
+    PreflightPolicy,
+    ReasonCode,
+    Violation,
+    build_preflight_context,
+)
 from workbench_motion.phase2_probe import (
     FAIL_BEHAVIORS,
     FOLLOWERS,
@@ -198,6 +207,152 @@ def test_ros_callback_drops_incomplete_or_nonfinite_joint_states(names, position
     assert probe.history == []
 
 
+def test_ros_callback_does_not_record_feedback_rejected_by_controller():
+    probe = object.__new__(RosProbeIO)
+    probe.arm = ARM
+    probe.latest = None
+    probe.history = []
+
+    class Controller:
+        def ingest_joint_state(self, _message):
+            return False
+
+    probe.gazebo_controller = Controller()
+    message = SimpleNamespace(
+        name=list(ARM.joints),
+        position=[0.0] * len(ARM.joints),
+        header=SimpleNamespace(stamp=SimpleNamespace(sec=10, nanosec=0)),
+    )
+    probe._on_joint_state(message)
+    assert probe.latest is None
+    assert probe.history == []
+
+
+def test_ros_probe_legal_arm_action_uses_accepted_trajectory_adapter():
+    probe = object.__new__(RosProbeIO)
+    probe.arm = ARM
+    probe.timeout_s = 1.0
+    probe.latest = snapshot()
+    probe.history = [probe.latest]
+
+    def snapshot_provider(_staleness):
+        return probe.latest
+
+    probe.joint_snapshot = snapshot_provider
+    probe.context_provider = lambda: build_preflight_context(
+        policy=PreflightPolicy("test", 1e-6, 30.0, 0.05),
+        expected_joint_names=ARM.joints,
+        hard_limits=LIMITS,
+        override_limits={},
+    )
+
+    class Adapter:
+        def __init__(self):
+            self.state = RobotState(ARM.joints, tuple(BASE.values()), timestamp_ns=11_000_000_000, sequence=1)
+            self.calls = []
+
+        def execute_accepted(self, accepted, *, expected_state, context_provider, timeout_s):
+            self.calls.append((accepted, expected_state, context_provider, timeout_s))
+            return SimpleNamespace(
+                gate=SimpleNamespace(
+                    status=SimpleNamespace(value="accepted"),
+                    reason=None,
+                    dispatch_attempted=True,
+                    expected_state_hash="sha256:expected",
+                    observed_state_hash="sha256:observed",
+                    expected_context_hash=accepted.context_sha256,
+                    observed_context_hash=accepted.context_sha256,
+                ),
+                status=SimpleNamespace(value="succeeded"),
+                action_error_code=0,
+                final_state=RobotState(ARM.joints, tuple(BASE.values()), timestamp_ns=12_000_000_000, sequence=2),
+                max_position_error=0.0,
+                max_velocity=0.0,
+                detail=None,
+            )
+
+    probe.gazebo_controller = Adapter()
+    target = dict(BASE)
+    target[ARM.joints[0]] = 0.02
+    observation = probe.execute_arm(target, 2.0, 1.0)
+    assert len(probe.gazebo_controller.calls) == 1
+    accepted, expected_state, context_provider, timeout_s = probe.gazebo_controller.calls[0]
+    assert isinstance(accepted, AcceptedTrajectory)
+    assert expected_state is probe.gazebo_controller.state
+    assert context_provider is probe.context_provider
+    assert timeout_s == 3.0
+    assert observation.gate["dispatch_attempted"] is True
+    assert observation.execution["convergence_status"] == "verified"
+    assert observation.execution["fresh_feedback"]["advanced"] is True
+
+
+def test_ros_probe_raw_arm_action_is_a_separate_safety_path():
+    probe = object.__new__(RosProbeIO)
+    probe.arm = ARM
+    probe.timeout_s = 1.0
+    probe.latest = snapshot()
+    probe.history = [probe.latest]
+
+    def snapshot_provider(_staleness):
+        return probe.latest
+
+    def spin(future, timeout_s=None):
+        return future.result() if future.done() else None
+
+    probe.joint_snapshot = snapshot_provider
+    probe._spin = spin
+
+    class Goal:
+        accepted = False
+
+    class Client:
+        def send_goal_async(self, _goal):
+            return SimpleNamespace(done=lambda: True, result=lambda: Goal())
+
+    probe.arm_action = Client()
+    target = dict(BASE)
+    target[ARM.joints[0]] = 2.1
+    observation = probe.execute_raw_arm(target, 2.0, 1.0)
+    assert observation.accepted is False
+    assert observation.status == "rejected"
+
+
+def test_ros_probe_preflight_rejection_is_zero_dispatch():
+    probe = object.__new__(RosProbeIO)
+    probe.arm = ARM
+    probe.timeout_s = 1.0
+    probe.latest = snapshot()
+    probe.history = [probe.latest]
+
+    def snapshot_provider(_staleness):
+        return probe.latest
+
+    class Adapter:
+        def __init__(self):
+            self.state = RobotState(ARM.joints, tuple(BASE.values()), timestamp_ns=10_000_000_000)
+            self.calls = 0
+
+        def execute_accepted(self, **_kwargs):
+            self.calls += 1
+            raise AssertionError("preflight rejection must not call the Gazebo adapter")
+
+    probe.joint_snapshot = snapshot_provider
+    probe.context_provider = lambda: build_preflight_context(
+        policy=PreflightPolicy("test", 1e-6, 30.0, 0.05),
+        expected_joint_names=ARM.joints,
+        hard_limits=LIMITS,
+        override_limits={},
+    )
+    probe.gazebo_controller = Adapter()
+    target = dict(BASE)
+    target[ARM.joints[0]] = LIMITS[ARM.joints[0]].max_position + 0.1
+    observation = probe.execute_arm(target, 2.0, 1.0)
+    assert observation.gate["dispatch_attempted"] is False
+    assert observation.gate["reason"] == "position"
+    assert observation.execution["convergence_status"] == "not_converged"
+    assert probe.gazebo_controller.calls == 0
+
+
 def test_mimic_ratio_uses_deltas_not_absolute_positions():
     before = {ARM.driver_joint: 0.1, **{joint: 0.2 for joint in FOLLOWERS}}
     after = {ARM.driver_joint: 0.6}
@@ -240,8 +395,21 @@ def valid_report():
         "controllers": [],
         "tf_chain": {},
         "gripper_mimic": {},
-        "legal_trajectory": {"smoothness": {"valid": True}},
-        "observed_controller_over_limit_behavior": {"kind": "rejected"},
+        "legal_trajectory": {
+            "execution_path": "accepted_trajectory_adapter",
+            "smoothness": {"valid": True},
+            "execution": {
+                "gate": {"status": "accepted", "dispatch_attempted": True},
+                "action": {
+                    "status": "succeeded",
+                    "convergence_status": "verified",
+                    "fresh_feedback": {"advanced": True},
+                    "max_position_error": 0.0,
+                    "max_velocity": 0.0,
+                },
+            },
+        },
+        "observed_controller_over_limit_behavior": {"execution_path": "raw_safety_probe", "kind": "rejected"},
         "validator_violation": {"kind": "position"},
         "all_passed": True,
     }
@@ -280,6 +448,14 @@ def test_atomic_report_schema_and_replace(tmp_path):
     assert json.loads(output.read_text(encoding="utf-8"))["all_passed"] is True
 
 
+def test_report_rejects_malformed_execution_evidence(tmp_path):
+    output = tmp_path / "report.json"
+    broken = valid_report()
+    broken["legal_trajectory"]["execution"] = {"gate": {}, "action": {"convergence_status": "unknown"}}
+    with pytest.raises(ValueError, match="convergence status"):
+        atomic_write_report(output, broken)
+
+
 class FakeIO:
     def __init__(self, *, endpoints=True, gazebo=True, over_kind="rejected", tf_present=True, joint_error=False):
         self.endpoints = endpoints
@@ -288,6 +464,7 @@ class FakeIO:
         self.tf_present = tf_present
         self.joint_error = joint_error
         self.arm_calls = 0
+        self.raw_arm_calls = 0
         positions = dict(BASE)
         positions[ARM.driver_joint] = 0.0
         positions.update({joint: 0.0 for joint in FOLLOWERS})
@@ -331,7 +508,34 @@ class FakeIO:
             after_positions = dict(self.now.positions)
             after_positions.update(target)
             self.now = JointSnapshot(after_positions, 10.1)
-            return ActionObservation(True, "succeeded", False, dict(target), before, self.now, (self.now,))
+            return ActionObservation(
+                True,
+                "succeeded",
+                False,
+                dict(target),
+                before,
+                self.now,
+                (self.now,),
+                gate={"status": "accepted", "dispatch_attempted": True},
+                execution={
+                    "status": "succeeded",
+                    "convergence_status": "verified",
+                    "fresh_feedback": {
+                        "expected_sequence": 0,
+                        "expected_timestamp_ns": 10_000_000_000,
+                        "sequence": 1,
+                        "timestamp_ns": 10_100_000_000,
+                        "advanced": True,
+                    },
+                    "max_position_error": 0.0,
+                    "max_velocity": 0.0,
+                },
+            )
+        raise AssertionError("raw safety probe must not use execute_arm")
+
+    def execute_raw_arm(self, target, duration_s, staleness_s):
+        self.raw_arm_calls += 1
+        before = self.now
         if self.over_kind == "rejected":
             return ActionObservation(False, "rejected", False, dict(target), before, before)
         if self.over_kind == "aborted":
@@ -405,6 +609,43 @@ def test_successful_mock_probe_publishes_complete_json(tmp_path, monkeypatch):
     assert report["observed_controller_over_limit_behavior"]["kind"] == "rejected"
     assert report["gripper_mimic"]["all_ok"]
     assert report["tf_chain"]["present"]
+    assert report["legal_trajectory"]["execution"]["action"]["convergence_status"] == "verified"
+    assert report["legal_trajectory"]["execution_path"] == "accepted_trajectory_adapter"
+    assert report["observed_controller_over_limit_behavior"]["execution_path"] == "raw_safety_probe"
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("gate", "status", "rejected"),
+        ("gate", "dispatch_attempted", False),
+        ("action", "status", "aborted"),
+        ("action", "convergence_status", "not_converged"),
+        ("fresh_feedback", "advanced", False),
+        ("action", "max_position_error", 0.051),
+        ("action", "max_velocity", 0.011),
+    ],
+)
+def test_legal_probe_evidence_fails_closed_without_complete_verified_execution(section, field, value, tmp_path):
+    io = FakeIO()
+    original = io.execute_arm
+
+    def incomplete_evidence(target, duration_s, staleness_s):
+        observation = original(target, duration_s, staleness_s)
+        gate = dict(observation.gate)
+        action = dict(observation.execution)
+        action["fresh_feedback"] = dict(action["fresh_feedback"])
+        target_section = (
+            gate if section == "gate" else action["fresh_feedback"] if section == "fresh_feedback" else action
+        )
+        target_section[field] = value
+        return replace(observation, gate=gate, execution=action)
+
+    io.execute_arm = incomplete_evidence
+    output = tmp_path / "phase2.json"
+    assert run_probe(io, arm=ARM, limits=LIMITS, output=output, repo=tmp_path, config_dir=CONFIG) == 2
+    assert not output.exists()
+    assert io.raw_arm_calls == 0
 
 
 def test_clamped_controller_publishes_phase4_risk_evidence(tmp_path, monkeypatch):
@@ -412,7 +653,8 @@ def test_clamped_controller_publishes_phase4_risk_evidence(tmp_path, monkeypatch
 
     monkeypatch.setattr(phase2_probe, "_git_metadata", lambda repo: ("abc123", False))
     output = tmp_path / "phase2.json"
-    rc = run_probe(FakeIO(over_kind="clamped"), arm=ARM, limits=LIMITS, output=output, repo=tmp_path, config_dir=CONFIG)
+    io = FakeIO(over_kind="clamped")
+    rc = run_probe(io, arm=ARM, limits=LIMITS, output=output, repo=tmp_path, config_dir=CONFIG)
     assert rc == 0
     report = json.loads(output.read_text(encoding="utf-8"))
     behavior = report["observed_controller_over_limit_behavior"]
@@ -421,6 +663,7 @@ def test_clamped_controller_publishes_phase4_risk_evidence(tmp_path, monkeypatch
     assert behavior["is_phase4_bypass_risk"] is True
     assert behavior["requested_limit_excess"][0]["excess"] == pytest.approx(0.1)
     assert report["all_passed"] is True
+    assert io.raw_arm_calls == 1
 
 
 @pytest.mark.parametrize("kind", ["executed_over_limit", "timeout", "unclassified"])
