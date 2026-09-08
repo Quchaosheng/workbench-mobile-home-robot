@@ -1,0 +1,66 @@
+{
+  "issue": "motion-quintic-ptp-001",
+  "human_owner": "current-session human Owner",
+  "objective": "Add a ROS-free, deterministic quintic point-to-point trajectory generator for the UR5e motion stack. The generator is an internal planning primitive only: it proves configured position, velocity, acceleration, and jerk bounds for one joint-space move, but does not modify existing trajectory preflight, dispatch, Gazebo, MoveIt, schemas, evidence, or hardware behavior.",
+  "allowed_paths": [
+    "docs/task_packets/motion-quintic-ptp-001.json",
+    "robot/control/workbench_motion/workbench_motion/quintic_trajectory.py",
+    "robot/control/workbench_motion/test/test_quintic_trajectory.py"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "robot/control/workbench_motion/workbench_motion/controller.py",
+    "robot/control/workbench_motion/workbench_motion/joint_limits.py",
+    "robot/control/workbench_motion/workbench_motion/trajectory_executor.py",
+    "robot/control/workbench_motion/test/test_joint_limits.py",
+    "robot/control/workbench_motion/test/test_trajectory_preflight.py",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "firmware/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "firmware/**",
+    "robot/control/workbench_motion/workbench_motion/controller.py",
+    "robot/control/workbench_motion/workbench_motion/joint_limits.py",
+    "robot/control/workbench_motion/workbench_motion/trajectory_executor.py",
+    "robot/control/workbench_motion/workbench_motion/gazebo_adapter.py",
+    "robot/control/workbench_motion/workbench_motion/__init__.py",
+    "robot/control/workbench_motion/config/**",
+    "robot/control/workbench_motion/launch/**"
+  ],
+  "acceptance": [
+    "A new ROS-free module creates a deterministic joint-space quintic point-to-point profile from an exact ordered joint schema, start positions, target positions, and explicit per-joint position/velocity/acceleration/jerk limits.",
+    "For every moving joint, duration is the maximum of 15*abs(delta)/(8*v_max), sqrt(10*abs(delta)/(sqrt(3)*a_max)), and cbrt(60*abs(delta)/j_max); all joints share that maximum duration. Missing, non-finite, non-positive, mismatched, or extra limits fail closed without fallback values.",
+    "The profile samples position, velocity, acceleration, and jerk analytically on the closed interval [0, duration]; negative, non-finite, and out-of-range sample times are rejected rather than clamped or extrapolated.",
+    "Start and target positions must be finite and within explicit bounds. A zero-displacement profile has duration zero and can only be sampled at time zero with zero derivatives.",
+    "The implementation imports neither ROS, Gazebo, MoveIt, nor hardware adapters; it creates no RobotCommand, FollowJointTrajectory, ActionResult, event, WorldState, VerificationResult, or execution claim.",
+    "Tests cover endpoint conditions, analytic midpoint values, duration selection, deterministic mapping normalization, zero displacement, invalid schemas/limits/positions, and out-of-domain sampling.",
+    "The focused motion tests and required repository checks pass with no changes outside allowed_paths."
+  ],
+  "commands": [
+    "make task-check PACKET=docs/task_packets/motion-quintic-ptp-001.json",
+    "uv run --directory robot/control pytest -q workbench_motion/test/test_quintic_trajectory.py",
+    "uv run --directory robot/control pytest -q",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Task Packet validation output with an exact allowed-path boundary.",
+    "Focused red and green pytest output proving the generator's mathematical and fail-closed behavior.",
+    "Full pure-Python motion test output and required repository check output.",
+    "A Git diff limited to the Task Packet, trajectory primitive, and its tests."
+  ],
+  "stop_conditions": [
+    "Implementation requires a public contract/schema, existing preflight behavior, ROS/Gazebo/MoveIt adapter, launch/configuration, event/replay, or hardware change.",
+    "Complete acceleration or jerk bounds are unavailable and the implementation would need a guessed or implicit default.",
+    "The module would be used to issue a robot command before a separate controller-integration Task Packet is approved.",
+    "Required tests or checks fail for a reason that cannot be fixed inside allowed_paths."
+  ]
+}
