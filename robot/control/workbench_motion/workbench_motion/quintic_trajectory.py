@@ -123,8 +123,7 @@ class QuinticTrajectory:
             self,
             "deltas",
             tuple(
-                target_position - start_position
-                for start_position, target_position in zip(start, target, strict=True)
+                target_position - start_position for start_position, target_position in zip(start, target, strict=True)
             ),
         )
         if any(not math.isfinite(delta) for delta in self.deltas):
@@ -162,8 +161,7 @@ class QuinticTrajectory:
         jerk_scale = (60.0 - 360.0 * normalized_time + 360.0 * s2) / duration_cubed
         sample = TrajectorySample(
             tuple(
-                start + delta * position_scale
-                for start, delta in zip(self.start_positions, self.deltas, strict=True)
+                start + delta * position_scale for start, delta in zip(self.start_positions, self.deltas, strict=True)
             ),
             tuple(delta * velocity_scale for delta in self.deltas),
             tuple(delta * acceleration_scale for delta in self.deltas),
@@ -216,8 +214,7 @@ def quintic_point_to_point(
         duration_s = max(duration_s, *candidate_durations)
 
     if duration_s == 0.0 and any(
-        start_position != target_position
-        for start_position, target_position in zip(start, target, strict=True)
+        start_position != target_position for start_position, target_position in zip(start, target, strict=True)
     ):
         raise ValueError("nonzero displacement requires a positive duration")
     return QuinticTrajectory(names, start, target, duration_s)
