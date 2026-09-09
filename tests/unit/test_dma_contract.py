@@ -36,6 +36,16 @@ def test_preallocated_buffer_is_cpu_owned_and_submit_transfers_ownership() -> No
     assert dma.read(buffer, 5) == b"hello"
     assert dma.recycle(descriptor.descriptor_id) is buffer
     assert buffer.owner is BufferOwner.FREE
+    reused = dma.allocate(32)
+    assert reused is buffer
+    assert reused.owner is BufferOwner.CPU
+
+
+def test_buffer_owner_is_read_only_to_callers() -> None:
+    dma = FakeDMAProvider()
+    buffer = dma.allocate(8)
+    with pytest.raises(AttributeError):
+        buffer.owner = BufferOwner.DMA  # type: ignore[misc]
 
 
 def test_descriptor_ring_is_bounded_and_recycled() -> None:
@@ -114,8 +124,10 @@ def test_recovery_rejects_active_descriptors_and_close_cancels_then_closes() -> 
     dma.submit(buffer, 6)
     dma.complete_next(status=DMAStatus.ERROR, error="fault")
     assert dma.state is DMAState.HALTED
+    assert dma.completion_count == 1
     dma.close()
     assert dma.state is DMAState.CLOSED
+    assert dma.completion_count == 0
     with pytest.raises(DMAProviderClosed):
         dma.read(buffer, 6)
     with pytest.raises(DMAProviderClosed):

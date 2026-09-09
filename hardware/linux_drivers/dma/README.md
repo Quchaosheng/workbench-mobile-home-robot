@@ -11,11 +11,13 @@ allocate -> CPU-owned -> submit -> DMA-owned -> complete/cancel -> CPU-owned -> 
 ```
 
 - 缓冲区预分配且容量有界；写入只能发生在 CPU-owned 状态。
+- `recycle` 后的 `FREE` buffer 会优先被 `allocate` 复用，不因历史分配数量达到上限而错误背压。
+- `DMABuffer.owner` 仅提供只读观察；所有权转换只能由 provider 在完成、取消和回收路径中执行。
 - `submit` 不复制 payload，描述符直接引用预分配 buffer，模拟零拷贝提交。
 - DMA-owned buffer 不允许 CPU 读写；完成或取消后才归还 CPU。
 - 描述符环固定容量；满时显式返回 backpressure，不静默覆盖在途工作。
 - `DMAStatus.ERROR` 会停止引擎；必须清理在途描述符后才能 `recover`。
-- 关闭会取消在途描述符、清空可见队列并拒绝后续访问。
+- 关闭会取消在途描述符、清空 completion 队列并拒绝后续访问。
 
 ## 硬件接入前置条件
 

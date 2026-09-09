@@ -9,7 +9,7 @@ model a controller register layout or claim physical throughput.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 MAX_BUFFER_BYTES = 1024 * 1024
@@ -61,7 +61,13 @@ class DMABuffer:
     buffer_id: int
     capacity: int
     _data: bytearray
-    owner: BufferOwner = BufferOwner.FREE
+    _owner: BufferOwner = field(default=BufferOwner.FREE, repr=False)
+
+    @property
+    def owner(self) -> BufferOwner:
+        """Read-only ownership view; transitions belong to the provider."""
+
+        return self._owner
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +126,19 @@ class FakeDMAProvider:
             self._ensure_ready()
             if type(capacity) is not int or not 1 <= capacity <= MAX_BUFFER_BYTES:
                 raise DMAError(f"buffer capacity must be between 1 and {MAX_BUFFER_BYTES}")
+            reusable = min(
+                (
+                    buffer
+                    for buffer in self._buffers.values()
+                    if buffer.owner is BufferOwner.FREE and buffer.capacity >= capacity
+                ),
+                key=lambda buffer: buffer.capacity,
+                default=None,
+            )
+            if reusable is not None:
+                reusable._owner = BufferOwner.CPU
+                reusable._data[:] = b"\x00" * reusable.capacity
+                return reusable
             if len(self._buffers) >= self._buffer_capacity:
                 raise DMABackpressure("preallocated DMA buffer pool is full")
             buffer = DMABuffer(self._next_buffer_id, capacity, bytearray(capacity), BufferOwner.CPU)
@@ -160,7 +179,7 @@ class FakeDMAProvider:
                 raise DMABackpressure("DMA descriptor ring is full")
             descriptor = DMADescriptor(self._next_descriptor_id, owned.buffer_id, length)
             self._next_descriptor_id += 1
-            owned.owner = BufferOwner.DMA
+            owned._owner = BufferOwner.DMA
             self._descriptors[descriptor.descriptor_id] = descriptor
             self._active.append(descriptor.descriptor_id)
             return descriptor
@@ -177,7 +196,7 @@ class FakeDMAProvider:
             descriptor_id = self._active.pop(0)
             descriptor = self._descriptors[descriptor_id]
             buffer = self._buffers[descriptor.buffer_id]
-            buffer.owner = BufferOwner.CPU
+            buffer._owner = BufferOwner.CPU
             completed = DMACompletion(
                 descriptor_id,
                 descriptor.buffer_id,
@@ -200,7 +219,7 @@ class FakeDMAProvider:
             while self._active:
                 descriptor_id = self._active.pop(0)
                 descriptor = self._descriptors[descriptor_id]
-                self._buffers[descriptor.buffer_id].owner = BufferOwner.CPU
+                self._buffers[descriptor.buffer_id]._owner = BufferOwner.CPU
                 completion = DMACompletion(descriptor_id, descriptor.buffer_id, DMAStatus.CANCELLED, 0, "cancelled")
                 self._descriptors[descriptor_id] = DMADescriptor(
                     descriptor.descriptor_id, descriptor.buffer_id, descriptor.length, DMAStatus.CANCELLED
@@ -226,7 +245,7 @@ class FakeDMAProvider:
             buffer = self._buffers[descriptor.buffer_id]
             if buffer.owner is not BufferOwner.CPU:
                 raise DMAOwnershipError("completed descriptor buffer is not CPU-owned")
-            buffer.owner = BufferOwner.FREE
+            buffer._owner = BufferOwner.FREE
             del self._descriptors[descriptor_id]
             return buffer
 
@@ -245,6 +264,7 @@ class FakeDMAProvider:
             if self._state is DMAState.CLOSED:
                 return
             self.cancel_pending()
+            self._completions.clear()
             self._state = DMAState.CLOSED
 
     def _owned_buffer(self, buffer: DMABuffer) -> DMABuffer:
