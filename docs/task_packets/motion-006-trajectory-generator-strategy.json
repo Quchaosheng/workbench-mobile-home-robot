@@ -1,0 +1,71 @@
+{
+  "issue": "motion-006-trajectory-generator-strategy",
+  "human_owner": "current-session human Owner",
+  "objective": "Add a ROS-free, deterministic trajectory-generator selection seam for the existing quintic and jerk-limited S-curve point-to-point planning primitives. It retains quintic as the compatibility default, accepts only exact canonical algorithm identifiers, and delegates all motion-limit validation and analytic sampling to the selected existing primitive. It neither changes the controller nor emits any robot command, simulation result, execution evidence, WorldState fact, or verification claim.",
+  "allowed_paths": [
+    "docs/task_packets/motion-006-trajectory-generator-strategy.json",
+    "robot/control/workbench_motion/workbench_motion/trajectory_generator.py",
+    "robot/control/workbench_motion/test/test_trajectory_generator.py"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "docs/DEVELOPMENT_ROADMAP.md",
+    "docs/task_packets/motion-005-jerk-limited-scurve.json",
+    "robot/control/workbench_motion/workbench_motion/quintic_trajectory.py",
+    "robot/control/workbench_motion/workbench_motion/s_curve_trajectory.py",
+    "robot/control/workbench_motion/workbench_motion/joint_controller.py",
+    "robot/control/workbench_motion/test/test_quintic_trajectory.py",
+    "robot/control/workbench_motion/test/test_s_curve_trajectory.py",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "firmware/**",
+    "sim/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "firmware/**",
+    "sim/**",
+    "robot/control/workbench_motion/workbench_motion/joint_controller.py",
+    "robot/control/workbench_motion/workbench_motion/motion_types.py",
+    "robot/control/workbench_motion/workbench_motion/controller.py",
+    "robot/control/workbench_motion/workbench_motion/quintic_trajectory.py",
+    "robot/control/workbench_motion/workbench_motion/s_curve_trajectory.py",
+    "robot/control/workbench_motion/workbench_motion/__init__.py",
+    "robot/control/workbench_motion/config/**",
+    "robot/control/workbench_motion/launch/**"
+  ],
+  "acceptance": [
+    "TrajectoryAlgorithm exposes only the exact canonical strategy values quintic and s_curve.",
+    "generate_point_to_point defaults to quintic and delegates exact quintic and S-curve selections to their existing primitives without copying their limit, endpoint, or analytic-sampling logic.",
+    "Unknown, empty, case-variant, alias, and invalid-type strategy values raise ValueError without a fallback trajectory.",
+    "Both selected trajectories retain their existing immutable shared fields and analytic sample method.",
+    "The selection seam is deterministic, side-effect free, and imports no ROS, Gazebo, MuJoCo, MoveIt, hardware adapter, task runtime, public schema, event store, controller, or verifier.",
+    "Tests prove default compatibility, exact selection, deterministic behavior, fail-closed strategy validation, and propagation of the underlying explicit-limit validation."
+  ],
+  "commands": [
+    "make task-check PACKET=docs/task_packets/motion-006-trajectory-generator-strategy.json",
+    "uv run --directory robot/control pytest -q workbench_motion/test/test_trajectory_generator.py",
+    "uv run --directory robot/control pytest -q workbench_motion/test/test_quintic_trajectory.py workbench_motion/test/test_s_curve_trajectory.py workbench_motion/test/test_trajectory_generator.py",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Task Packet validation output proving the exact allowed-path boundary.",
+    "Focused uv pytest output covering delegation, determinism, and fail-closed validation.",
+    "Existing quintic and S-curve regression test output alongside strategy tests.",
+    "Repository test, contract, scenario, and context check output without any claim of Gazebo, MuJoCo, or hardware execution.",
+    "Git diff limited to the Task Packet, selection module, and its tests."
+  ],
+  "stop_conditions": [
+    "Implementation requires a public contract/schema, JointController API change, ROS/Gazebo/MuJoCo/MoveIt adapter, launch/configuration, task runtime, event/replay, or hardware change.",
+    "The selection seam must infer, weaken, or duplicate the existing primitives' explicit motion-limit validation.",
+    "The implementation would fabricate observed feedback, simulator evidence, execution success, or verified task success.",
+    "Required tests or checks fail for a reason that cannot be fixed inside allowed_paths."
+  ]
+}
