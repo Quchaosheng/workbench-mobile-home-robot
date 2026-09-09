@@ -102,3 +102,7 @@ LINUX5/LINUX6 的实现必须在硬件资源确认后补充以下内容：
 LINUX3 的 UART/SPI 软件契约和 fake transport 测试位于仓库的
 `hardware/linux_drivers/uart_spi/`。该契约是 owner-gated 的提案：它固化边界、CRC、
 序号、背压和重试测试，但不冻结物理控制器、pinmux、设备树、DMA 或 IRQ 参数。
+
+LINUX5 的 DMA 软件契约和 fake provider 位于 `hardware/linux_drivers/dma/`。它固化
+预分配 buffer、CPU/DMA 所有权、固定描述符容量、取消和错误恢复测试，但不冻结真实
+DMA 控制器、cache 一致性、IRQ 资源或物理吞吐预算。

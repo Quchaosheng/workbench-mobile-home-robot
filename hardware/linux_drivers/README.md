@@ -4,6 +4,10 @@
 应用之间，向上只暴露 Linux 标准子系统接口，向下才绑定具体控制器、总线和
 板级资源。
 
+LINUX5 的 DMA 软件契约和 fake provider 位于
+[`dma/README.md`](dma/README.md)。它只验证 buffer/descriptor 所有权、背压、取消和
+错误恢复；真实 DMA 控制器、cache 策略和吞吐证据仍由硬件 Owner 确认。
+
 当前仓库已经有一个用于软件验证的 SocketCAN 内核模块：
 [`kernel/wbcan`](../../kernel/wbcan/)。它是带故障注入面的虚拟 CAN 设备，服务
 于固件和恢复路径测试，不代表已经完成某一款物理 CAN 控制器的量产驱动。
