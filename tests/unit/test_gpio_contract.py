@@ -43,6 +43,22 @@ def test_output_starts_inactive_and_input_is_unknown_until_observed() -> None:
     assert gpio._values["enable"] is True
 
 
+def test_active_low_outputs_and_inputs_use_logical_active_values() -> None:
+    gpio = FakeGPIOProvider(
+        [
+            GPIOConfig("active_low_input", GPIODirection.INPUT, active_high=False, edge=Edge.BOTH),
+            GPIOConfig("active_low_output", GPIODirection.OUTPUT, active_high=False),
+        ]
+    )
+
+    gpio.write("active_low_output", True)
+    assert gpio._values["active_low_output"] is False
+    gpio.inject_input("active_low_input", True, 0)
+    assert gpio.read("active_low_input") is False
+    event = gpio.inject_input("active_low_input", False, 1)
+    assert event == GPIOEvent("active_low_input", 0, True, 1)
+
+
 def test_input_edges_are_debounced_and_queued_with_monotonic_sequence() -> None:
     gpio = provider()
     assert gpio.inject_input("status", False, 100) is None
@@ -73,6 +89,12 @@ def test_event_queue_backpressure_is_explicit() -> None:
     gpio.inject_input("status", True, 10)
     with pytest.raises(GPIOQueueFull, match="full"):
         gpio.inject_input("status", False, 20)
+
+    assert gpio.read("status") is True
+    assert gpio._last_timestamp["status"] == 10
+    assert gpio.event_count == 1
+    assert gpio.read_event() == GPIOEvent("status", 0, True, 10)
+    assert gpio.inject_input("status", False, 20) == GPIOEvent("status", 1, False, 20)
 
 
 def test_close_clears_pending_events_and_rejects_future_access() -> None:

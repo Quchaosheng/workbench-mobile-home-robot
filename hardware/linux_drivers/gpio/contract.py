@@ -85,7 +85,12 @@ class FakeGPIOProvider:
         if len({config.name for config in configs}) != len(configs):
             raise GPIOError("GPIO line names must be unique")
         self._configs = {config.name: config for config in configs}
-        self._values = {config.name: False for config in configs}
+        # Values are stored as physical levels; the public API uses logical
+        # values where True means active, independent of polarity.
+        self._values = {
+            config.name: (not config.active_high if config.direction is GPIODirection.OUTPUT else False)
+            for config in configs
+        }
         self._observed: set[str] = set()
         self._last_timestamp: dict[str, int] = {}
         self._events: list[GPIOEvent] = []
@@ -119,7 +124,7 @@ class FakeGPIOProvider:
                 raise GPIOPermissionError(f"GPIO line is not an input: {name}")
             if name not in self._observed:
                 raise GPIOStateError(f"input value is unknown until observed: {name}")
-            return self._values[name]
+            return self._to_logical(config, self._values[name])
 
     def write(self, name: str, value: bool) -> None:
         with self._lock:
@@ -128,7 +133,7 @@ class FakeGPIOProvider:
                 raise GPIOPermissionError(f"GPIO line is not an output: {name}")
             if type(value) is not bool:
                 raise GPIOError("GPIO value must be a boolean")
-            self._values[name] = value
+            self._values[name] = self._to_physical(config, value)
 
     def inject_input(self, name: str, value: bool, timestamp_ns: int) -> GPIOEvent | None:
         with self._lock:
@@ -142,22 +147,32 @@ class FakeGPIOProvider:
             previous_timestamp = self._last_timestamp.get(name)
             if previous_timestamp is not None and timestamp_ns <= previous_timestamp:
                 raise GPIOStateError("input timestamps must increase strictly")
-            previous_value = self._values[name]
-            self._last_timestamp[name] = timestamp_ns
-            self._values[name] = value
+            previous_physical = self._values[name]
+            previous_value = self._to_logical(config, previous_physical)
+            next_value = self._to_logical(config, value)
             if name not in self._observed:
+                self._last_timestamp[name] = timestamp_ns
+                self._values[name] = value
                 self._observed.add(name)
                 return None
-            if previous_value == value:
+            if previous_value == next_value:
+                self._last_timestamp[name] = timestamp_ns
+                self._values[name] = value
                 return None
             if config.debounce_ns and timestamp_ns - previous_timestamp < config.debounce_ns:
+                self._last_timestamp[name] = timestamp_ns
+                self._values[name] = value
                 return None
-            edge = Edge.RISING if not previous_value and value else Edge.FALLING
+            edge = Edge.RISING if not previous_value and next_value else Edge.FALLING
             if config.edge is Edge.NONE or (config.edge is not edge and config.edge is not Edge.BOTH):
+                self._last_timestamp[name] = timestamp_ns
+                self._values[name] = value
                 return None
             if len(self._events) >= self._event_capacity:
                 raise GPIOQueueFull(f"GPIO event queue is full for {name}")
-            event = GPIOEvent(name, self._next_sequence, value, timestamp_ns)
+            self._last_timestamp[name] = timestamp_ns
+            self._values[name] = value
+            event = GPIOEvent(name, self._next_sequence, next_value, timestamp_ns)
             self._next_sequence += 1
             self._events.append(event)
             return event
@@ -170,3 +185,11 @@ class FakeGPIOProvider:
     def _ensure_open(self) -> None:
         if self._closed:
             raise GPIOProviderClosed("GPIO provider is closed")
+
+    @staticmethod
+    def _to_logical(config: GPIOConfig, physical: bool) -> bool:
+        return physical if config.active_high else not physical
+
+    @staticmethod
+    def _to_physical(config: GPIOConfig, logical: bool) -> bool:
+        return logical if config.active_high else not logical
