@@ -21,7 +21,7 @@ fmt:
 	$(PYTHON) -m ruff format .
 
 test:
-	$(PYTHON) -m pytest -v
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PYTHON) -m pytest -v
 
 # Everything CI runs, in one command. Run this before opening a PR.
 check: lint test contract scenario-check golden-check context-check demo-scripted demo-offline
@@ -136,7 +136,7 @@ container-dashboard-check:
 	docker compose logs dashboard; exit 2
 
 container-project-check:
-	docker compose run --rm dashboard bash -lc 'set -euo pipefail; test_root=$$(mktemp -d /tmp/workbench-project-check.XXXXXX); cp -a /workspace/src/. "$$test_root/"; cd "$$test_root"; PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTEST_ADDOPTS="--ignore=tests/unit/test_multi_host_deployment.py" make test && make contract && make scenario-check && make context-check && make demo-scripted'
+	docker compose run --rm dashboard bash -lc 'set -euo pipefail; test_root=$$(mktemp -d /tmp/workbench-project-check.XXXXXX); overlay=$$(mktemp -d /tmp/workbench-project-overlay.XXXXXX); tar --exclude=".venv" --exclude="*/.venv" --exclude=".pytest_cache" --exclude="*/.pytest_cache" --exclude="__pycache__" --exclude="*/__pycache__" -C /workspace/src -cf - . | tar -C "$$test_root" -xf -; /opt/workbench-venv/bin/python -m pip install --target "$$overlay" --no-deps --no-build-isolation "$$test_root"; cd "$$test_root"; PYTHONPATH="$$overlay" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTEST_ADDOPTS="--ignore=tests/unit/test_multi_host_deployment.py" make test && PYTHONPATH="$$overlay" make contract && PYTHONPATH="$$overlay" make scenario-check && PYTHONPATH="$$overlay" make context-check && PYTHONPATH="$$overlay" make demo-scripted'
 
 container-colcon-build:
 	docker compose run --rm dashboard colcon --log-base /workspace/log build --base-paths /workspace/src/robot/control --build-base /workspace/build --install-base /workspace/install --merge-install --packages-select workbench_motion

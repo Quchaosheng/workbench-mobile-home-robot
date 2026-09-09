@@ -1,0 +1,46 @@
+{
+  "issue": "test-001-pytest-plugin-isolation",
+  "human_owner": "current-session human Owner",
+  "objective": "Make the repository Python test entry point independent of ambient ROS pytest plugins, and keep the Docker project test copy free of local virtual-environment and cache artifacts. The root suite owns no ROS launch tests, so it must run from the declared test paths without discovering incompatible third-party pytest11 entry points from a sourced ROS installation.",
+  "allowed_paths": [
+    "Makefile",
+    "docs/task_packets/test-001-pytest-plugin-isolation.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "pyproject.toml",
+    "tests/**",
+    "libs/kernel/tests/**",
+    "compose.yaml",
+    "Dockerfile"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "firmware/**",
+    "sim/**",
+    "Dockerfile",
+    "compose.yaml"
+  ],
+  "acceptance": [
+    "make test does not auto-load ambient ROS pytest11 plugins.",
+    "container-project-check excludes local virtual environments and Python test caches from its temporary source copy, then imports that temporary current-source package instead of the image's preinstalled copy.",
+    "The root test entry point continues to execute the declared tests and kernel tests with pytest's built-in functionality.",
+    "No production, public-contract, simulator, hardware, or motion-control behavior changes."
+  ],
+  "commands": [
+    "make task-check PACKET=docs/task_packets/test-001-pytest-plugin-isolation.json",
+    "make container-project-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Docker project-check output showing pytest collection proceeds without launch_testing plugin validation failure and imports the artifact-free temporary source copy.",
+    "Diff limited to the root test invocation and this task packet."
+  ],
+  "stop_conditions": [
+    "A root test requires a ROS launch plugin.",
+    "The repair requires a public contract, production code, simulator, hardware, or motion-control change.",
+    "The temporary Docker source copy cannot run project validation without local virtual environments or caches."
+  ]
+}
