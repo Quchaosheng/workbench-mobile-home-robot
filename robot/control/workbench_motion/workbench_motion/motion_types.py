@@ -41,6 +41,7 @@ class ReceiptReason(StrEnum):
     ACCEPTED = "accepted"
     NO_STATE = "no_state"
     STALE_STATE = "stale_state"
+    FUTURE_STATE = "future_state"
     ROBOT_ID_MISMATCH = "robot_id_mismatch"
     JOINT_SCHEMA_MISMATCH = "joint_schema_mismatch"
     DUPLICATE_REQUEST = "duplicate_request"

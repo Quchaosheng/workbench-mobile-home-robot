@@ -1,0 +1,69 @@
+{
+  "issue": "motion-005-jerk-limited-scurve",
+  "human_owner": "current-session human Owner",
+  "objective": "Add a ROS-free, deterministic rest-to-rest jerk-limited S-curve point-to-point trajectory primitive. It computes the minimum feasible duration for explicit joint position, velocity, acceleration, and jerk limits; synchronizes every joint to a common arrival time through temporal scaling; and exposes analytic position, velocity, acceleration, and jerk samples. It is a planning primitive only and does not dispatch, simulate, persist evidence, update WorldState, or claim any execution result.",
+  "allowed_paths": [
+    "docs/DEVELOPMENT_ROADMAP.md",
+    "docs/task_packets/motion-005-jerk-limited-scurve.json",
+    "robot/control/workbench_motion/workbench_motion/s_curve_trajectory.py",
+    "robot/control/workbench_motion/test/test_s_curve_trajectory.py"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "docs/task_packets/motion-quintic-ptp-001.json",
+    "robot/control/workbench_motion/workbench_motion/quintic_trajectory.py",
+    "robot/control/workbench_motion/workbench_motion/joint_controller.py",
+    "robot/control/workbench_motion/workbench_motion/motion_types.py",
+    "robot/control/workbench_motion/test/test_quintic_trajectory.py",
+    "robot/control/workbench_motion/test/test_joint_controller.py",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "firmware/**",
+    "sim/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "firmware/**",
+    "sim/**",
+    "robot/control/workbench_motion/workbench_motion/joint_controller.py",
+    "robot/control/workbench_motion/workbench_motion/motion_types.py",
+    "robot/control/workbench_motion/workbench_motion/controller.py",
+    "robot/control/workbench_motion/workbench_motion/quintic_trajectory.py",
+    "robot/control/workbench_motion/workbench_motion/__init__.py",
+    "robot/control/workbench_motion/config/**",
+    "robot/control/workbench_motion/launch/**"
+  ],
+  "acceptance": [
+    "s_curve_point_to_point accepts only exact ordered joint names, finite start and target positions, and explicit JointMotionLimit values. Missing, extra, non-finite, non-positive, or out-of-bounds inputs fail closed without inferred limits.",
+    "Every moving axis is represented by seven fixed phase slots: positive jerk, positive-acceleration plateau, negative jerk, velocity plateau, negative jerk, negative-acceleration plateau, positive jerk. Unavailable plateaus have zero duration; valid moving profiles have 7, 6, 5, or 4 active segments.",
+    "Each axis gets its minimum feasible rest-to-rest duration under its velocity, acceleration, and jerk limits. All axes complete at the maximum individual duration; shorter profiles are temporally scaled so they preserve endpoints while never increasing derivative magnitudes.",
+    "Sampling is analytic on the closed interval. It returns the existing TrajectorySample shape, uses right-continuous jerk at interior phase boundaries, returns zero jerk at completion, and rejects non-finite or out-of-range sample times.",
+    "The primitive is immutable, deterministic, side-effect free, and imports no ROS, Gazebo, MuJoCo, MoveIt, hardware adapter, task runtime, public schema, event store, controller, or verifier.",
+    "Tests cover 7/6/5/4 active profile categories, exact endpoints and boundary jerk convention, analytic derivative limits, synchronized arrival, zero displacement, malformed inputs, and invalid sample times.",
+    "The roadmap records the dependency-ordered trajectory algorithm sequence after quintic planning and identifies this S-curve primitive as the first integration task."
+  ],
+  "commands": [
+    "make task-check PACKET=docs/task_packets/motion-005-jerk-limited-scurve.json",
+    "uv run --directory robot/control pytest -q workbench_motion/test/test_s_curve_trajectory.py",
+    "uv run --directory robot/control pytest -q workbench_motion/test/test_quintic_trajectory.py workbench_motion/test/test_s_curve_trajectory.py",
+    "docker compose run --rm dashboard python3 tools/scripts/validate_contracts.py",
+    "docker compose run --rm dashboard python3 tools/scripts/validate_scenarios.py",
+    "docker compose run --rm dashboard python3 tools/scripts/check_context.py",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Task Packet validation output proving the declared scope and stop conditions.",
+    "Focused red and green uv pytest output for profile selection, limits, synchronization, and fail-closed validation.",
+    "Docker contract, scenario, and context validation output.",
+    "Git diff limited to the task packet, trajectory primitive, tests, and authorized roadmap update."
+  ],
+  "stop_conditions": [
+    "Implementation requires a public contract/schema, JointController API change, ROS/Gazebo/MuJoCo/MoveIt adapter, launch/configuration, task runtime, event/replay, or hardware change.",
+    "The desired profile cannot prove configured position, velocity, acceleration, and jerk limits without changing the existing quintic primitive or controller interface.",
+    "The implementation would fabricate observed feedback, simulator evidence, execution success, or verified task success.",
+    "Required tests or checks fail for a reason that cannot be fixed inside allowed_paths."
+  ]
+}

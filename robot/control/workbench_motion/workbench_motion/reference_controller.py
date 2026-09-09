@@ -80,7 +80,7 @@ class InMemoryController(Controller):
 
     def get_state(self, *, now_s: float) -> RobotState | None:
         now = _finite_now(now_s)
-        if self._state is None or now - self._state.observed_at_s > self._max_state_age_s:
+        if self._state is None or not self._state_is_current(now):
             return None
         return self._state
 
@@ -181,9 +181,16 @@ class InMemoryController(Controller):
     def _state_reason(self, now_s: float) -> ReceiptReason:
         if self._state is None:
             return ReceiptReason.NO_STATE
+        if now_s < self._state.observed_at_s:
+            return ReceiptReason.FUTURE_STATE
         if now_s - self._state.observed_at_s > self._max_state_age_s:
             return ReceiptReason.STALE_STATE
         return ReceiptReason.NO_STATE
+
+    def _state_is_current(self, now_s: float) -> bool:
+        return self._state is not None and self._state.observed_at_s <= now_s <= (
+            self._state.observed_at_s + self._max_state_age_s
+        )
 
     def _transition(self, request_id: str, target: ControllerLifecycle) -> ExecutionReceipt:
         before = self._lifecycle

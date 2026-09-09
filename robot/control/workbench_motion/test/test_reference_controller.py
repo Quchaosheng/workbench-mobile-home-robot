@@ -84,6 +84,18 @@ def test_command_requires_fresh_matching_feedback_and_never_claims_dispatch():
     assert port.get_state(now_s=10.6) is None
 
 
+def test_future_dated_feedback_is_rejected_fail_closed():
+    port = controller()
+    port.update_state(state(observed_at_s=10.2))
+
+    receipt = port.submit_command(command(), now_s=10.1)
+
+    assert receipt.status is ReceiptStatus.REJECTED
+    assert receipt.reason is ReceiptReason.FUTURE_STATE
+    assert receipt.dispatch_attempted is False
+    assert port.get_state(now_s=10.1) is None
+
+
 @pytest.mark.parametrize(
     "candidate,reason",
     [
