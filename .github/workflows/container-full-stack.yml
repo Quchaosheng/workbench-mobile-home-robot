@@ -74,8 +74,8 @@ jobs:
           docker compose up -d --no-build dashboard
           trap 'docker compose down' EXIT
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:8080/healthz \
-              && curl --fail --silent http://127.0.0.1:8080/readyz; then
+            if docker compose exec -T dashboard curl --fail --silent http://127.0.0.1:8080/healthz \
+              && docker compose exec -T dashboard curl --fail --silent http://127.0.0.1:8080/readyz; then
               exit 0
             fi
             sleep 1

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" role="img" aria-labelledby="title desc">
+  <title id="title">VORA</title>
+  <desc id="desc">VORA wordmark with an open angle and off-axis orbit mark.</desc>
+  <g transform="translate(0 0) scale(1 1)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M40 112 80 32l40 80" stroke="#242338" stroke-width="12"/>
+    <path d="M55 80h50" stroke="#ff9d79" stroke-width="9"/>
+    <path d="M106 32c13 9 20 21 20 34 0 26-21 46-46 46" stroke="#b9e970" stroke-width="6"/>
+  </g>
+  <circle cx="80" cy="112" r="4.5" fill="#ff9d79"/>
+  <g transform="translate(194 49)" fill="#242338" font-family="Inter,Segoe UI,Arial,sans-serif">
+    <text x="0" y="50" font-size="60" font-weight="750" letter-spacing="3">VORA</text>
+    <rect x="3" y="70" width="48" height="5" rx="2.5" fill="#b9e970"/>
+  </g>
+</svg>
