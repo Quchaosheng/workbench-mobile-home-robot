@@ -1,0 +1,67 @@
+{
+  "issue": "motion-003-core-ports",
+  "human_owner": "current-session human Owner",
+  "objective": "Add ROS-free, fail-closed RobotState, RobotCommand, Controller, and deterministic reference-controller ports for the UR5e motion stack. This bounded unit establishes named-joint validation, feedback freshness, lifecycle transitions, and non-execution receipts; it does not connect a simulator, ROS, MoveIt, hardware, public schema, task runtime, or event store.",
+  "allowed_paths": [
+    "docs/task_packets/motion-003-core-ports.json",
+    "robot/control/workbench_motion/workbench_motion/motion_types.py",
+    "robot/control/workbench_motion/workbench_motion/controller.py",
+    "robot/control/workbench_motion/workbench_motion/reference_controller.py",
+    "robot/control/workbench_motion/test/test_motion_types.py",
+    "robot/control/workbench_motion/test/test_reference_controller.py"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "docs/DEVELOPMENT_ROADMAP.md",
+    "robot/control/README.md",
+    "robot/control/workbench_motion/workbench_motion/arm_config.py",
+    "robot/control/workbench_motion/workbench_motion/joint_limits.py",
+    "robot/control/workbench_motion/workbench_motion/quintic_trajectory.py",
+    "robot/control/workbench_motion/test/test_joint_limits.py",
+    "robot/control/workbench_motion/test/test_quintic_trajectory.py",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "firmware/**",
+    "sim/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "firmware/**",
+    "sim/**",
+    "robot/control/workbench_motion/config/**",
+    "robot/control/workbench_motion/launch/**",
+    "robot/control/workbench_motion/workbench_motion/__init__.py"
+  ],
+  "acceptance": [
+    "ROS-free immutable motion values validate non-blank robot and request identifiers, exact ordered unique joint names, finite values, and finite feedback timestamps without inventing a task-level command contract.",
+    "The Controller protocol exposes command and accepted-trajectory submission, state reads, hold, stop, and reset without importing ROS, Gazebo, MuJoCo, MoveIt, or hardware adapters.",
+    "The deterministic reference controller rejects identity, joint-schema, stale-feedback, duplicate-request, invalid-lifecycle, and trajectory-start discontinuity cases fail closed, recording zero dispatch attempts for every receipt.",
+    "Hold, stop, reset, and injected safe-stop failure have explicit lifecycle transitions. Accepted reference receipts are not execution, task, simulator, or hardware success claims.",
+    "Focused tests cover validation, freshness, lifecycle transitions, receipt semantics, accepted preflight trajectory input, and rejection paths. No public interface, runtime adapter, event/replay, configuration, simulation, or hardware behavior changes."
+  ],
+  "commands": [
+    "make task-check PACKET=docs/task_packets/motion-003-core-ports.json",
+    "uv run --directory robot/control pytest -q workbench_motion/test/test_motion_types.py workbench_motion/test/test_reference_controller.py",
+    "uv run --directory robot/control pytest -q",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Task Packet validation output proving the exact changed-path boundary.",
+    "Focused red and green pytest output for motion values and reference-controller fail-closed behavior.",
+    "Full pure-Python motion suite and required repository check output.",
+    "Git diff limited to the Task Packet, ROS-free ports, reference controller, and their tests."
+  ],
+  "stop_conditions": [
+    "Implementation requires a public contract/schema, ROS/Gazebo/MuJoCo/MoveIt adapter, launch/configuration, task runtime, event/replay, or hardware change.",
+    "The existing preflight contract cannot be consumed without modifying its implementation or inventing trajectory limits.",
+    "The reference controller would be treated as a physical, Gazebo, MuJoCo, or verified task execution result.",
+    "Required tests or checks fail for a reason that cannot be fixed inside allowed_paths."
+  ]
+}
