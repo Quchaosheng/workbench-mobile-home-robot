@@ -1,0 +1,59 @@
+{
+  "issue": "LINUX4",
+  "human_owner": "Quchaosheng",
+  "objective": "Define and test a fail-closed software GPIO contract with an injectable fake provider while leaving physical lines and safety-circuit ownership to hardware and safety owners.",
+  "allowed_paths": [
+    "hardware/linux_drivers/gpio/**",
+    "hardware/linux_drivers/README.md",
+    "tests/unit/test_gpio_contract.py",
+    "Makefile",
+    "docs/task_packets/linux-gpio-contract.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "hardware/pcb/**",
+    "hardware/safety/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "hardware/pcb/**",
+    "hardware/safety/**"
+  ],
+  "acceptance": [
+    "logical GPIO lines have validated direction, active level, edge and debounce configuration",
+    "outputs start inactive and unobserved inputs remain unknown until a valid observation",
+    "input timestamps are strictly increasing and edge events use bounded monotonic sequence numbers",
+    "queue-full, permission, invalid-line, invalid-timestamp and closed-provider outcomes fail closed",
+    "tests cover input and output behavior without changing frozen interfaces or physical safety ownership",
+    "documentation identifies real line numbers, pinmux, device-tree, IRQ and electrical validation as owner-gated"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/linux-gpio-contract.json",
+    "python3 -m pytest tests/unit/test_gpio_contract.py -v",
+    "make gpio-test",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused GPIO contract test output",
+    "fake provider default-state, edge, debounce, timestamp, backpressure and lifecycle assertions",
+    "repository gate output",
+    "software-only scope with physical GPIO and safety validation marked NOT_EXECUTED"
+  ],
+  "stop_conditions": [
+    "a physical GPIO line, safety circuit or device-tree choice is required",
+    "a production GPIO ABI or frozen interface schema change is required",
+    "the implementation would control E-stop, motor enable or watchdog authority",
+    "fake GPIO evidence would be presented as electrical or hardware safety evidence"
+  ]
+}

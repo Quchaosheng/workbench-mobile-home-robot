@@ -102,3 +102,7 @@ LINUX5/LINUX6 的实现必须在硬件资源确认后补充以下内容：
 LINUX3 的 UART/SPI 软件契约和 fake transport 测试位于仓库的
 `hardware/linux_drivers/uart_spi/`。该契约是 owner-gated 的提案：它固化边界、CRC、
 序号、背压和重试测试，但不冻结物理控制器、pinmux、设备树、DMA 或 IRQ 参数。
+
+LINUX4 的 GPIO 软件契约和 fake provider 位于 `hardware/linux_drivers/gpio/`。该契约
+只验证 character-device 语义、unknown 输入、边沿、去抖和有界队列；真实 GPIO 线路、
+设备树和安全回路仍由硬件与安全 Owner 确认。
