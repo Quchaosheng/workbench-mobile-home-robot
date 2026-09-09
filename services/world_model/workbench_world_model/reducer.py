@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from workbench_contracts import (
+    ATTRIBUTE_SCHEMA_VERSION,
+    LEGACY_ATTRIBUTE_MIGRATION_VERSION,
+    AttributeUpdateMode,
     ClockId,
     Pose,
     WorldBelief,
@@ -14,6 +18,9 @@ from workbench_contracts import (
     WorldEventType,
     WorldRelation,
     WorldRelationPredicate,
+    legacy_attribute_keys_allowed,
+    validate_attribute_metadata_map,
+    validate_observed_attributes,
 )
 from workbench_contracts import WorldState as ContractWorldState
 
@@ -45,6 +52,8 @@ class WorldState(BaseModel):
     entity_confidence: dict[str, float] = Field(default_factory=dict)
     entity_attributes: dict[str, dict[str, str]] = Field(default_factory=dict)
     entity_attribute_baselines: dict[str, bool] = Field(default_factory=dict)
+    entity_attribute_metadata: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
+    entity_attribute_schema_versions: dict[str, str] = Field(default_factory=dict)
     entity_evidence_refs: dict[str, list[str]] = Field(default_factory=dict)
     evidence_refs: list[str] = Field(default_factory=list)
     freshness_evaluated: bool = Field(default=True, exclude=True, repr=False)
@@ -97,24 +106,134 @@ def _has_attribute_baseline(state: WorldState, entity_id: str) -> bool:
     return state.entity_attribute_baselines.get(entity_id, entity_id in state.entity_attributes)
 
 
-def _apply_observed_attributes(state: WorldState, entity_id: str, payload: dict[str, Any]) -> None:
+def _attribute_metadata_is_provably_older(
+    current: Mapping[str, Any],
+    incoming: Mapping[str, Any],
+) -> bool:
+    return comparable_wall_observation_is_older(
+        current_observed_at=current.get("observed_at"),
+        current_clock_id=current.get("clock_id"),
+        incoming_observed_at=incoming.get("observed_at"),
+        incoming_clock_id=incoming.get("clock_id"),
+    )
+
+
+def _attribute_metadata_evidence(metadata: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    evidence: list[str] = []
+    seen: set[str] = set()
+    for key in sorted(metadata):
+        refs = metadata[key].get("evidence_refs", [])
+        if not isinstance(refs, list):
+            continue
+        for reference in refs:
+            if isinstance(reference, str) and reference not in seen:
+                evidence.append(reference)
+                seen.add(reference)
+    return evidence
+
+
+def _attribute_version(payload: Mapping[str, Any]) -> str:
+    value = payload.get("attributes_schema_version", LEGACY_ATTRIBUTE_MIGRATION_VERSION)
+    if value not in {ATTRIBUTE_SCHEMA_VERSION, LEGACY_ATTRIBUTE_MIGRATION_VERSION}:
+        raise WorldEventPayloadValidationError("attributes_schema_version must be a supported string enum value")
+    return str(value)
+
+
+def _apply_observed_attributes(
+    state: WorldState,
+    entity_id: str,
+    payload: dict[str, Any],
+    *,
+    observation_is_older: bool = False,
+) -> bool:
+    """Apply only attribute values accepted by timestamp ordering."""
     if "attributes" not in payload:
-        return
+        return False
     attributes = dict(payload["attributes"])
+    version = _attribute_version(payload)
     mode = payload.get("attributes_mode", "complete")
+    if isinstance(mode, AttributeUpdateMode):
+        mode = mode.value
+    entity_type = payload.get("entity_type") or state.entity_types.get(entity_id)
+    allow_legacy_keys = version == LEGACY_ATTRIBUTE_MIGRATION_VERSION and legacy_attribute_keys_allowed(entity_type)
+    metadata = {key: dict(value) for key, value in dict(payload.get("attribute_metadata", {})).items()}
+    try:
+        validate_observed_attributes(
+            attributes,
+            entity_type=entity_type,
+            allow_unknown_keys=allow_legacy_keys,
+        )
+        validate_attribute_metadata_map(
+            metadata,
+            attribute_keys=set(attributes),
+            entity_type=entity_type,
+            allow_unknown_keys=allow_legacy_keys,
+            require_observed=True,
+            require_complete=True,
+            expected_clock_id=payload.get("clock_id"),
+        )
+    except (TypeError, ValueError) as error:
+        raise WorldEventPayloadValidationError(str(error)) from error
+
+    existing_version = state.entity_attribute_schema_versions.get(entity_id)
+    if existing_version is not None and existing_version != version:
+        migration_upgrade = (
+            existing_version == LEGACY_ATTRIBUTE_MIGRATION_VERSION and version == ATTRIBUTE_SCHEMA_VERSION
+        )
+        if observation_is_older:
+            return False
+        if mode != AttributeUpdateMode.COMPLETE.value or not migration_upgrade:
+            raise WorldEventPayloadValidationError(
+                f"attribute schema version conflict for entity_id {entity_id!r}: {existing_version!r} and {version!r}"
+            )
+
+    # A complete observation is a snapshot. If its enclosing observation is
+    # provably older, accepting a new key from it could resurrect an attribute
+    # that a newer complete snapshot intentionally omitted. Partial updates
+    # remain key-wise mergeable below.
+    if mode == AttributeUpdateMode.COMPLETE.value and observation_is_older:
+        return False
+
+    existing_attributes = dict(state.entity_attributes.get(entity_id, {}))
+    existing_metadata = {key: dict(value) for key, value in state.entity_attribute_metadata.get(entity_id, {}).items()}
+    applied_metadata: dict[str, dict[str, Any]] = {}
+    accepted_update = False
     if mode == "partial":
         if not _has_attribute_baseline(state, entity_id):
             raise WorldEventPayloadValidationError(
                 f"partial attributes for entity_id {entity_id!r} require a prior complete attributes baseline"
             )
-        merged = dict(state.entity_attributes.get(entity_id, {}))
-        merged.update(attributes)
-        state.entity_attributes[entity_id] = merged
+        for key, value in attributes.items():
+            incoming_metadata = metadata[key]
+            current_metadata = existing_metadata.get(key)
+            if current_metadata is not None and _attribute_metadata_is_provably_older(
+                current_metadata,
+                incoming_metadata,
+            ):
+                continue
+            existing_attributes[key] = value
+            existing_metadata[key] = incoming_metadata
+            applied_metadata[key] = incoming_metadata
+            accepted_update = True
+        if not accepted_update:
+            return False
+        state.entity_attributes[entity_id] = existing_attributes
+        state.entity_attribute_metadata[entity_id] = existing_metadata
     elif mode == "complete":
         state.entity_attributes[entity_id] = attributes
+        state.entity_attribute_metadata[entity_id] = metadata
+        applied_metadata = metadata
+        accepted_update = True
     else:
         raise WorldEventPayloadValidationError("attributes_mode must be 'complete' or 'partial'")
+    if not accepted_update:
+        return False
     state.entity_attribute_baselines[entity_id] = True
+    state.entity_attribute_schema_versions[entity_id] = (
+        existing_version if existing_version is not None and mode == "partial" else version
+    )
+    _append_entity_evidence(state, entity_id, _attribute_metadata_evidence(applied_metadata))
+    return True
 
 
 def _is_modern_observation(payload: dict[str, Any]) -> bool:
@@ -154,43 +273,49 @@ def apply_event(state: WorldState, event: WorldEvent) -> WorldState:
         entity_id = event.payload["entity_id"]
         if _is_modern_observation(event.payload):
             next_state.freshness_evaluated = False
-        if _observation_is_provably_older(state, entity_id, event.payload):
-            return next_state
+        observation_is_older = _observation_is_provably_older(state, entity_id, event.payload)
 
-        incoming_entity_type = event.payload.get("entity_type")
-        if incoming_entity_type is not None:
-            next_state.entity_types[entity_id] = incoming_entity_type
-        else:
-            next_state.entity_types.setdefault(entity_id, "legacy")
-        if "pose" in event.payload:
-            next_state.entity_poses[entity_id] = event.payload["pose"]
-        _replace_observation_metadata(next_state.entity_last_observed_at, entity_id, event.payload, "observed_at")
-        _replace_observation_metadata(
-            next_state.entity_observation_clock_ids,
+        if not observation_is_older:
+            incoming_entity_type = event.payload.get("entity_type")
+            if incoming_entity_type is not None:
+                next_state.entity_types[entity_id] = incoming_entity_type
+            else:
+                next_state.entity_types.setdefault(entity_id, "legacy")
+            if "pose" in event.payload:
+                next_state.entity_poses[entity_id] = event.payload["pose"]
+            _replace_observation_metadata(next_state.entity_last_observed_at, entity_id, event.payload, "observed_at")
+            _replace_observation_metadata(
+                next_state.entity_observation_clock_ids,
+                entity_id,
+                event.payload,
+                "clock_id",
+            )
+            _replace_observation_metadata(
+                next_state.entity_observation_sources,
+                entity_id,
+                event.payload,
+                "source",
+            )
+            next_state.entity_beliefs[entity_id] = WorldBelief.OBSERVED
+            location = event.payload.get("location")
+            if location is not None:
+                _update_location(next_state, entity_id, location, event.evidence_refs)
+                for values, field_name in (
+                    (next_state.entity_location_last_observed_at, "observed_at"),
+                    (next_state.entity_location_clock_ids, "clock_id"),
+                    (next_state.entity_location_sources, "source"),
+                ):
+                    _replace_observation_metadata(values, entity_id, event.payload, field_name)
+                next_state.entity_location_beliefs[entity_id] = WorldBelief.OBSERVED
+            next_state.entity_confidence[entity_id] = event.payload["confidence"]
+
+        _apply_observed_attributes(
+            next_state,
             entity_id,
             event.payload,
-            "clock_id",
+            observation_is_older=observation_is_older,
         )
-        _replace_observation_metadata(
-            next_state.entity_observation_sources,
-            entity_id,
-            event.payload,
-            "source",
-        )
-        next_state.entity_beliefs[entity_id] = WorldBelief.OBSERVED
-        location = event.payload.get("location")
-        if location is not None:
-            _update_location(next_state, entity_id, location, event.evidence_refs)
-            for values, field_name in (
-                (next_state.entity_location_last_observed_at, "observed_at"),
-                (next_state.entity_location_clock_ids, "clock_id"),
-                (next_state.entity_location_sources, "source"),
-            ):
-                _replace_observation_metadata(values, entity_id, event.payload, field_name)
-            next_state.entity_location_beliefs[entity_id] = WorldBelief.OBSERVED
-        next_state.entity_confidence[entity_id] = event.payload["confidence"]
-        _apply_observed_attributes(next_state, entity_id, event.payload)
-        if location is None:
+        if not observation_is_older and event.payload.get("location") is None:
             _append_entity_evidence(next_state, entity_id, event.evidence_refs)
 
     return next_state
@@ -263,7 +388,8 @@ def _validated_event_stream(run_id: str, events: list[WorldEvent]) -> list[World
             raise WorldEventPayloadValidationError(
                 f"partial attributes for entity_id {entity_id!r} require a prior complete attributes baseline"
             )
-        complete_baselines.add(entity_id)
+        if event.payload.get("attributes_mode", "complete") == "complete":
+            complete_baselines.add(entity_id)
     return ordered_events
 
 
@@ -390,6 +516,15 @@ def create_world_state_snapshot(
             values["last_observed_at"] = internal_state.entity_last_observed_at[entity_id]
         if entity_id in internal_state.entity_attributes:
             values["attributes"] = dict(internal_state.entity_attributes[entity_id])
+            values["attributes_schema_version"] = internal_state.entity_attribute_schema_versions.get(
+                entity_id,
+                LEGACY_ATTRIBUTE_MIGRATION_VERSION,
+            )
+            metadata = internal_state.entity_attribute_metadata.get(entity_id)
+            if metadata is not None:
+                values["attribute_metadata"] = {
+                    key: dict(metadata[key]) for key in sorted(metadata) if key in values["attributes"]
+                }
         entities.append(WorldEntity.model_validate(values))
 
     relations = sorted(

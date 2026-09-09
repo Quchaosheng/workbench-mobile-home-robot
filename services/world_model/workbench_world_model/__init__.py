@@ -15,6 +15,7 @@ from .reducer import (
     reduce_events,
 )
 from .verifier import (
+    VerificationContext,
     verify_inspection_evidence,
     verify_kit_contents,
     verify_object_in_tray,
@@ -28,6 +29,7 @@ __all__ = [
     "ObservationAgingBoundary",
     "ObservationFreshnessPolicy",
     "SQLiteEventStore",
+    "VerificationContext",
     "WorldState",
     "age_world_state",
     "apply_event",

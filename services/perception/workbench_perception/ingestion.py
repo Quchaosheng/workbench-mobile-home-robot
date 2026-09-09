@@ -17,7 +17,15 @@ from threading import Lock
 from typing import Any, Literal
 
 from pydantic import ValidationError
-from workbench_contracts import AttributeUpdateMode, ClockId, Observation, WorldEvent, WorldEventType
+from workbench_contracts import (
+    ATTRIBUTE_SCHEMA_VERSION,
+    AttributeUpdateMode,
+    ClockId,
+    Observation,
+    WorldEvent,
+    WorldEventType,
+    materialize_attribute_metadata,
+)
 
 _REQUIRED_OBSERVATION_KEYS = frozenset(
     {
@@ -196,9 +204,18 @@ class ObservationIngestionAdapter:
         }
         if observation.attributes is not None:
             payload["attributes"] = dict(observation.attributes)
-            payload["attributes_mode"] = (
-                observation.attributes_mode or AttributeUpdateMode.COMPLETE
-            ).value
+            payload["attributes_mode"] = (observation.attributes_mode or AttributeUpdateMode.COMPLETE).value
+            payload["attributes_schema_version"] = ATTRIBUTE_SCHEMA_VERSION
+            payload["attribute_metadata"] = materialize_attribute_metadata(
+                payload["attributes"],
+                observation.attribute_metadata,
+                observed_at=observation.observed_at,
+                confidence=observation.confidence,
+                evidence_refs=list(observation.evidence_refs),
+                clock_id=observation.clock_id,
+                source=observation.source,
+                entity_type=observation.entity_type,
+            )
 
         event = WorldEvent(
             event_id=f"observation:{observation.observation_id}",
@@ -231,8 +248,25 @@ def _parse_contract_observation(record: Mapping[str, object] | None) -> tuple[di
     if missing:
         raise ObservationRejected(f"Observation is missing contract fields: {sorted(missing)}")
     try:
-        serialized = json.dumps(dict(record), allow_nan=False, ensure_ascii=False)
-        raw_record = json.loads(serialized)
+        raw_serialized = json.dumps(dict(record), allow_nan=False, ensure_ascii=False)
+        raw_record = json.loads(raw_serialized)
+        candidate = dict(raw_record)
+        if (
+            "attributes" in candidate
+            and candidate.get("attributes_schema_version") == ATTRIBUTE_SCHEMA_VERSION
+            and "attribute_metadata" not in candidate
+        ):
+            candidate["attribute_metadata"] = materialize_attribute_metadata(
+                candidate["attributes"],
+                None,
+                observed_at=candidate["observed_at"],
+                confidence=candidate["confidence"],
+                evidence_refs=candidate["evidence_refs"],
+                clock_id=candidate.get("clock_id", ClockId.MONOTONIC),
+                source=candidate["source"],
+                entity_type=candidate["entity_type"],
+            )
+        serialized = json.dumps(candidate, allow_nan=False, ensure_ascii=False)
         observation = Observation.model_validate_json(serialized, strict=True)
     except (TypeError, ValueError, ValidationError) as exc:
         raise ObservationRejected(f"Observation is not contract-valid: {exc}") from exc

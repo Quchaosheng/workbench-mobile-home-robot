@@ -190,6 +190,33 @@ def _least_fresh(*beliefs: WorldBelief) -> WorldBelief:
     return WorldBelief.OBSERVED
 
 
+def _age_attribute_metadata(
+    state: WorldState,
+    *,
+    freshness_policy: ObservationFreshnessPolicy,
+    aging_boundary: ObservationAgingBoundary,
+) -> None:
+    for entity_id in sorted(state.entity_attributes):
+        metadata_by_key = state.entity_attribute_metadata.get(entity_id)
+        if metadata_by_key is None:
+            continue
+        for attribute_key in sorted(metadata_by_key):
+            raw_metadata = metadata_by_key[attribute_key]
+            if not isinstance(raw_metadata, Mapping):
+                continue
+            belief = _belief_for_observation(
+                observed_at=raw_metadata.get("observed_at"),
+                observation_clock_id=raw_metadata.get("clock_id"),
+                source=raw_metadata.get("source"),
+                entity_type=state.entity_types.get(entity_id),
+                policy=freshness_policy,
+                boundary=aging_boundary,
+            )
+            if raw_metadata.get("belief") == WorldBelief.INFERRED.value and belief is WorldBelief.OBSERVED:
+                belief = WorldBelief.INFERRED
+            raw_metadata["belief"] = belief.value
+
+
 def age_world_state(
     state: WorldState,
     *,
@@ -206,6 +233,11 @@ def age_world_state(
     aged.freshness_evaluated = True
     aged.entity_beliefs = {}
     aged.entity_location_beliefs = {}
+    _age_attribute_metadata(
+        aged,
+        freshness_policy=freshness_policy,
+        aging_boundary=aging_boundary,
+    )
     for entity_id in sorted(aged.entity_types):
         aged.entity_beliefs[entity_id] = _belief_for_observation(
             observed_at=aged.entity_last_observed_at.get(entity_id),

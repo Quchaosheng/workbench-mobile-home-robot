@@ -4,6 +4,7 @@
   "description": "A single perception result about one entity. Carries its own evidence refs so a downstream verification conclusion can be traced back to raw sensor data.",
   "type": "object",
   "required": ["observation_id", "run_id", "entity_id", "entity_type", "pose", "confidence", "observed_at", "source", "evidence_refs"],
+  "additionalProperties": false,
   "properties": {
     "observation_id": {"type": "string"},
     "run_id": {"type": "string"},
@@ -17,6 +18,234 @@
     "observed_at": {"type": "string"},
     "clock_id": {"enum": ["monotonic", "wall"]},
     "source": {"type": "string"},
-    "evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}}
-  }
+    "evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "attributes": {
+      "type": "object",
+      "description": "Finite observed attributes. Keys use the v1 vocabulary; each key and value is a bounded printable string and canonical UTF-8 JSON is limited to 4096 bytes.",
+      "maxProperties": 32,
+      "additionalProperties": false,
+      "properties": {
+        "barcode": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+        "colour": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+        "condition": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$", "enum": ["damaged", "intact", "unknown"]},
+        "door_state": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$", "enum": ["closed", "open", "unknown"]},
+        "identity": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+        "label_status": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$", "enum": ["missing", "unknown", "unreadable", "verified"]},
+        "orientation": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+        "parcel_uid": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+        "presence": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$", "enum": ["absent", "present", "unknown"]},
+        "rack_state": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$", "enum": ["closed", "open", "unknown"]},
+        "slot_occupancy": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$", "enum": ["blocked", "empty", "occupied", "unknown"]},
+        "slot_state": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$", "enum": ["blocked", "empty", "occupied", "unknown"]},
+        "tracking_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+      }
+    },
+    "attributes_mode": {"enum": ["complete", "partial"]},
+    "attributes_schema_version": {
+      "type": "string",
+      "enum": ["observed-attributes-v1", "legacy-observed-attributes-v0"]
+    },
+    "attribute_metadata": {
+      "type": "object",
+      "description": "Per-attribute timestamp, confidence, belief, source and evidence metadata. Canonical UTF-8 JSON is limited to 16384 bytes.",
+      "maxProperties": 32,
+      "additionalProperties": false,
+      "properties": {
+        "barcode": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "colour": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "condition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "door_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "label_status": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "orientation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "parcel_uid": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "presence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "rack_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "slot_occupancy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "slot_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        },
+        "tracking_id": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_at", "confidence", "evidence_refs", "belief"],
+          "properties": {
+            "observed_at": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}},
+            "belief": {"type": "string", "enum": ["inferred", "lost", "observed", "stale"]},
+            "clock_id": {"type": "string", "enum": ["monotonic", "wall"]},
+            "source": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"required": ["attributes_mode"]},
+      "then": {"required": ["attributes"]}
+    },
+    {
+      "if": {"required": ["attributes"]},
+      "then": {"required": ["attributes_schema_version"]}
+    },
+    {
+      "if": {"required": ["attributes_schema_version"]},
+      "then": {"required": ["attributes"]}
+    },
+    {
+      "if": {"required": ["attribute_metadata"]},
+      "then": {"required": ["attributes"]}
+    },
+    {
+      "if": {
+        "required": ["attributes_schema_version"],
+        "properties": {"attributes_schema_version": {"const": "observed-attributes-v1"}}
+      },
+      "then": {"required": ["attribute_metadata"]}
+    }
+  ]
 }

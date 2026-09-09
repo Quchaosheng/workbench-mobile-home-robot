@@ -9,9 +9,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "libs/contracts"), str(ROOT / "services/world_model")]
 
-from workbench_contracts import ActionOutcome, ActionResult, WorldEvent, WorldEventType
+from workbench_contracts import (
+    ATTRIBUTE_SCHEMA_VERSION,
+    ActionOutcome,
+    ActionResult,
+    WorldEvent,
+    WorldEventType,
+)
 from workbench_world_model.event_payloads import (
-    MAX_ATTRIBUTE_COUNT,
     MAX_ATTRIBUTE_KEY_LENGTH,
     MAX_ATTRIBUTE_VALUE_LENGTH,
     MAX_ATTRIBUTES_JSON_BYTES,
@@ -38,22 +43,31 @@ def valid_observation_payload(**updates: object) -> dict[str, object]:
         "observation_id": "obs-001",
         "run_id": "run-001",
         "entity_id": "red_block",
-        "entity_type": "block",
+        "entity_type": "parcel",
         "location": "on:table",
         "confidence": 0.9,
         "attributes": {"condition": "intact"},
+        "attributes_schema_version": ATTRIBUTE_SCHEMA_VERSION,
+        "observed_at": "2026-08-25T00:00:00Z",
+        "source": "test-camera",
         "pose": {"opaque_metadata": "preserved"},
     }
     payload.update(updates)
     return payload
 
 
-def utf8_boundary_attributes(marker: str) -> dict[str, str]:
-    attributes = {f"key-{index:02d}": "v" * MAX_ATTRIBUTE_VALUE_LENGTH for index in range(15)}
-    attributes["k" * MAX_ATTRIBUTE_KEY_LENGTH] = attributes.pop("key-00")
-    attributes["p" * 21] = attributes.pop("key-02")
-    attributes["key-01"] = marker + ("v" * (MAX_ATTRIBUTE_VALUE_LENGTH - 1))
-    return attributes
+def supported_parcel_attributes() -> dict[str, str]:
+    return {
+        "barcode": "BARCODE-001",
+        "colour": "red",
+        "condition": "intact",
+        "identity": "parcel-001",
+        "label_status": "verified",
+        "orientation": "upright",
+        "parcel_uid": "UID-001",
+        "presence": "present",
+        "tracking_id": "TRACK-001",
+    }
 
 
 def action_result_payload(**updates: object) -> dict[str, object]:
@@ -153,6 +167,7 @@ def test_observation_without_optional_location_or_attributes_is_valid() -> None:
     payload = valid_observation_payload()
     payload.pop("location")
     payload.pop("attributes")
+    payload.pop("attributes_schema_version")
 
     normalized = normalize_world_event(observation_event(payload))
 
@@ -160,25 +175,20 @@ def test_observation_without_optional_location_or_attributes_is_valid() -> None:
     assert "attributes" not in normalized.payload
 
 
-def test_observation_attribute_exact_bounds_are_accepted() -> None:
-    attributes = {f"key-{index:02d}": "v" for index in range(MAX_ATTRIBUTE_COUNT)}
-    attributes["k" * MAX_ATTRIBUTE_KEY_LENGTH] = attributes.pop("key-00")
-    attributes["key-01"] = "v" * MAX_ATTRIBUTE_VALUE_LENGTH
+def test_observation_supported_attribute_vocabulary_is_accepted() -> None:
+    attributes = supported_parcel_attributes()
+    attributes["tracking_id"] = "v" * MAX_ATTRIBUTE_VALUE_LENGTH
 
     normalized = normalize_world_event(observation_event(valid_observation_payload(attributes=attributes)))
 
     assert normalized.payload["attributes"] == attributes
 
 
-def test_observation_attribute_exact_utf8_size_limit_is_accepted() -> None:
-    attributes = utf8_boundary_attributes("\u20ac")
-    encoded = json.dumps(
-        attributes,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    assert len(encoded) == MAX_ATTRIBUTES_JSON_BYTES
+def test_observation_attribute_utf8_values_are_preserved() -> None:
+    attributes = supported_parcel_attributes()
+    attributes["tracking_id"] = "€" * MAX_ATTRIBUTE_VALUE_LENGTH
+    encoded = json.dumps(attributes, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    assert len(encoded) < MAX_ATTRIBUTES_JSON_BYTES
 
     normalized = normalize_world_event(observation_event(valid_observation_payload(attributes=attributes)))
 
@@ -187,19 +197,20 @@ def test_observation_attribute_exact_utf8_size_limit_is_accepted() -> None:
 
 def test_observation_attribute_bounds_fail_closed() -> None:
     cases: list[dict[object, object]] = [
-        {f"key-{index:02d}": "v" for index in range(MAX_ATTRIBUTE_COUNT + 1)},
+        {"unsupported": "value"},
         {"k" * (MAX_ATTRIBUTE_KEY_LENGTH + 1): "v"},
-        {"key": "v" * (MAX_ATTRIBUTE_VALUE_LENGTH + 1)},
+        {"tracking_id": "v" * (MAX_ATTRIBUTE_VALUE_LENGTH + 1)},
         {"": "value"},
         {"   ": "value"},
-        {"key": ""},
-        {"key": "   "},
-        {"key": {"nested": "value"}},
-        {"key": ["value"]},
-        {"key": None},
-        {"key": True},
-        {"key": 1},
-        utf8_boundary_attributes("\U0001f600"),
+        {"tracking_id": ""},
+        {"tracking_id": "   "},
+        {"tracking_id": {"nested": "value"}},
+        {"tracking_id": ["value"]},
+        {"tracking_id": None},
+        {"tracking_id": True},
+        {"tracking_id": 1},
+        {"tracking_id": "\ud800"},
+        {"condition": "not-a-condition"},
     ]
 
     for attributes in cases:
@@ -233,6 +244,8 @@ def test_observation_attribute_keys_must_be_strings(attributes: dict[object, obj
     ids=["surrogate-value", "surrogate-key"],
 )
 def test_observation_attributes_must_encode_as_utf8(attributes: dict[str, str]) -> None:
+    if "key" in attributes:
+        attributes = {"tracking_id": attributes["key"]}
     with pytest.raises(WorldEventPayloadValidationError, match="valid UTF-8"):
         normalize_world_event(observation_event(valid_observation_payload(attributes=attributes)))
 
