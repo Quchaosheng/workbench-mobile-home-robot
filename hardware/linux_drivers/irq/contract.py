@@ -68,6 +68,7 @@ class FakeIRQProvider:
         self._next_sequence = 0
         self._lock = threading.RLock()
         self._active_changed = threading.Condition(self._lock)
+        self._close_lock = threading.Lock()
 
     @property
     def state(self) -> IRQState:
@@ -120,6 +121,7 @@ class FakeIRQProvider:
 
     def complete_top_half(self, work: IRQWork) -> None:
         with self._lock:
+            self._ensure_not_closed()
             if work not in self._works or work.sequence not in self._active_work:
                 raise IRQError("IRQ top-half work is not active")
             self._active_work.remove(work.sequence)
@@ -127,6 +129,7 @@ class FakeIRQProvider:
 
     def run_bottom_half(self, work: IRQWork) -> None:
         with self._lock:
+            self._ensure_not_closed()
             if work not in self._works:
                 raise IRQWorkCancelled("IRQ work is not pending")
             if work.sequence in self._active_work:
@@ -148,19 +151,24 @@ class FakeIRQProvider:
 
     def cancel_work(self) -> int:
         with self._lock:
+            self._ensure_not_closed()
             cancellable = [work for work in self._works if work.sequence not in self._active_work]
             count = len(cancellable)
             self._works = [work for work in self._works if work.sequence in self._active_work]
             return count
 
     def close(self, *, timeout_s: float = 1.0) -> None:
-        with self._lock:
-            if self._state is IRQState.CLOSED:
-                return
-        self.stop(timeout_s=timeout_s)
-        with self._lock:
-            self._handlers.clear()
-            self._state = IRQState.CLOSED
+        # Serialize the check/stop/owner-clear sequence.  ``stop`` waits on a
+        # condition and therefore releases ``_lock``; a separate close lock
+        # prevents another close from interleaving during that wait.
+        with self._close_lock:
+            with self._lock:
+                if self._state is IRQState.CLOSED:
+                    return
+            self.stop(timeout_s=timeout_s)
+            with self._lock:
+                self._handlers.clear()
+                self._state = IRQState.CLOSED
 
     def _ensure_not_closed(self) -> None:
         if self._state is IRQState.CLOSED:

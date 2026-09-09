@@ -106,6 +106,49 @@ def test_work_queue_backpressure_and_closed_lifecycle_fail_closed() -> None:
         irq.enable()
 
 
+def test_closed_provider_rejects_all_work_lifecycle_operations() -> None:
+    irq = FakeIRQProvider(IRQLine(48))
+    irq.register("uart")
+    irq.enable()
+    work = irq.trigger("uart")
+    irq.complete_top_half(work)
+    irq.close()
+
+    with pytest.raises(IRQError, match="closed"):
+        irq.complete_top_half(work)
+    with pytest.raises(IRQError, match="closed"):
+        irq.run_bottom_half(work)
+    with pytest.raises(IRQError, match="closed"):
+        irq.cancel_work()
+
+
+def test_concurrent_close_calls_are_serialized() -> None:
+    irq = FakeIRQProvider(IRQLine(49))
+    irq.register("gpio")
+    irq.enable()
+    errors: list[Exception] = []
+    barrier = threading.Barrier(2)
+
+    def close() -> None:
+        try:
+            barrier.wait(timeout=1.0)
+            irq.close()
+        except (IRQError, threading.BrokenBarrierError) as exc:  # pragma: no cover - assertion captures this path
+            errors.append(exc)
+
+    first = threading.Thread(target=close)
+    second = threading.Thread(target=close)
+    first.start()
+    second.start()
+    first.join(1.0)
+    second.join(1.0)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert not errors
+    assert irq.state is IRQState.CLOSED
+
+
 def test_cancel_work_preserves_active_top_half_until_completion() -> None:
     irq = FakeIRQProvider(IRQLine(47))
     irq.register("uart")
