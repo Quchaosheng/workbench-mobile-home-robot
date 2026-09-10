@@ -72,15 +72,15 @@ class _ChangingSchema(Mapping):
 
 
 class ToolRegistryRegistrationTests(unittest.TestCase):
-    """ToolRegistry knows all seven ActionTypes on construction,
+    """ToolRegistry knows all nine ActionTypes on construction,
     supports register()/get(), and rejects invalid or duplicate registrations."""
 
     def setUp(self) -> None:
         self.registry = ToolRegistry()
 
-    def test_all_seven_action_types_are_registered(self) -> None:
+    def test_all_nine_action_types_are_registered(self) -> None:
         registered = self.registry.list_all()
-        self.assertEqual(len(registered), 7)
+        self.assertEqual(len(registered), 9)
         self.assertIn(ActionType.OBSERVE, registered)
         self.assertIn(ActionType.GRASP, registered)
         self.assertIn(ActionType.PLACE, registered)
@@ -88,6 +88,8 @@ class ToolRegistryRegistrationTests(unittest.TestCase):
         self.assertIn(ActionType.EXPRESS, registered)
         self.assertIn(ActionType.STOP, registered)
         self.assertIn(ActionType.NAVIGATE, registered)
+        self.assertIn(ActionType.OPEN, registered)
+        self.assertIn(ActionType.CLOSE, registered)
 
     def test_register_rejects_non_action_type(self) -> None:
         with self.assertRaises(ValueError):
@@ -398,6 +400,14 @@ class ToolRegistryValidationTests(unittest.TestCase):
         result = self.registry.validate(_action(ActionType.STOP))
         self.assertTrue(result.is_valid)
 
+    def test_open_is_valid(self) -> None:
+        result = self.registry.validate(_action(ActionType.OPEN, target_id="washer_door_fixture"))
+        self.assertTrue(result.is_valid)
+
+    def test_close_is_valid(self) -> None:
+        result = self.registry.validate(_action(ActionType.CLOSE, target_id="washer_door_fixture"))
+        self.assertTrue(result.is_valid)
+
     # -- target_id requirement ------------------------------------------------
 
     def test_grasp_without_target_id_is_rejected(self) -> None:
@@ -423,6 +433,28 @@ class ToolRegistryValidationTests(unittest.TestCase):
             any("target_id" in e.field for e in result.errors),
             f"expected target_id error in {result.errors}",
         )
+
+    def test_open_without_target_id_is_rejected(self) -> None:
+        malformed = SemanticAction.model_construct(
+            action_id="act-open-missing-target",
+            action_type=ActionType.OPEN,
+            target_id=None,
+            parameters={},
+        )
+        result = self.registry.validate(malformed)
+        self.assertFalse(result.is_valid)
+        self.assertTrue(any("target_id" in e.field for e in result.errors))
+
+    def test_close_without_target_id_is_rejected(self) -> None:
+        malformed = SemanticAction.model_construct(
+            action_id="act-close-missing-target",
+            action_type=ActionType.CLOSE,
+            target_id=None,
+            parameters={},
+        )
+        result = self.registry.validate(malformed)
+        self.assertFalse(result.is_valid)
+        self.assertTrue(any("target_id" in e.field for e in result.errors))
 
     def test_observe_without_target_id_is_valid(self) -> None:
         """OBSERVE does not require target_id (global scan is valid)."""

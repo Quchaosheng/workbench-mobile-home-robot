@@ -6,13 +6,23 @@
   "required": ["action_id", "action_type"],
   "properties": {
     "action_id": {"type": "string"},
-    "action_type": {"enum": ["observe", "grasp", "place", "ask_confirm", "express", "stop", "navigate"]},
+    "action_type": {"enum": ["observe", "grasp", "place", "ask_confirm", "express", "stop", "navigate", "open", "close"]},
     "target_id": {"type": ["string", "null"]},
     "parameters": {"type": "object"}
   },
   "allOf": [
     {
       "if": {"properties": {"action_type": {"const": "navigate"}}},
+      "then": {
+        "required": ["target_id"],
+        "properties": {
+          "target_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+          "parameters": {"type": "object", "additionalProperties": false, "maxProperties": 0}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"action_type": {"enum": ["open", "close"]}}},
       "then": {
         "required": ["target_id"],
         "properties": {

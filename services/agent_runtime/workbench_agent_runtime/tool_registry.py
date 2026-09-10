@@ -21,7 +21,9 @@ from . import tool_schemas as _schemas
 # public types
 # ---------------------------------------------------------------------------
 
-_TARGET_REQUIRED_ACTIONS: frozenset[ActionType] = frozenset({ActionType.GRASP, ActionType.PLACE, ActionType.NAVIGATE})
+_TARGET_REQUIRED_ACTIONS: frozenset[ActionType] = frozenset(
+    {ActionType.GRASP, ActionType.PLACE, ActionType.NAVIGATE, ActionType.OPEN, ActionType.CLOSE}
+)
 _SCHEMA_KEYS: frozenset[str] = frozenset(
     {
         "description",
@@ -75,12 +77,12 @@ class ValidationResult:
 
 
 class ToolRegistry:
-    """Register and validate the seven bounded semantic-action tools.
+    """Register and validate the nine bounded semantic-action tools.
 
     Validation layers, applied in order:
 
     1. **Existence** — the action_type must be registered.
-    2. **Target** — GRASP and PLACE require a non-empty ``target_id``.
+    2. **Target** — target-bearing actions require a non-empty ``target_id``.
     3. **Field set** — parameters must contain every required key and no key
        outside the union of required + optional.
     4. **Type safety** — every parameter value must match its declared type.

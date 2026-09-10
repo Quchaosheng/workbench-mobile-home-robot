@@ -33,6 +33,8 @@ class ActionType(StrEnum):
     EXPRESS = "express"
     STOP = "stop"
     NAVIGATE = "navigate"
+    OPEN = "open"
+    CLOSE = "close"
 
 
 class ActionStatus(StrEnum):
@@ -403,7 +405,17 @@ class SemanticAction(_CanonicalRuntimeModel):
                             "parameters": {"type": "object", "additionalProperties": False, "maxProperties": 0},
                         },
                     },
-                }
+                },
+                {
+                    "if": {"properties": {"action_type": {"enum": ["open", "close"]}}},
+                    "then": {
+                        "required": ["target_id"],
+                        "properties": {
+                            "target_id": {"type": "string", "minLength": 1, "pattern": r".*\S.*"},
+                            "parameters": {"type": "object", "additionalProperties": False, "maxProperties": 0},
+                        },
+                    },
+                },
             ]
         }
     )
@@ -414,13 +426,20 @@ class SemanticAction(_CanonicalRuntimeModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_navigate_boundary(self) -> "SemanticAction":
-        if self.action_type is not ActionType.NAVIGATE:
+    def validate_bounded_action_boundary(self) -> "SemanticAction":
+        if self.action_type is ActionType.NAVIGATE:
+            if not isinstance(self.target_id, str) or not self.target_id.strip():
+                raise ValueError("navigate requires a non-empty configured waypoint target_id")
+            if self.parameters:
+                raise ValueError("navigate parameters must be empty; waypoint policy is executor-owned")
             return self
-        if not isinstance(self.target_id, str) or not self.target_id.strip():
-            raise ValueError("navigate requires a non-empty configured waypoint target_id")
-        if self.parameters:
-            raise ValueError("navigate parameters must be empty; waypoint policy is executor-owned")
+
+        if self.action_type in {ActionType.OPEN, ActionType.CLOSE}:
+            action_name = self.action_type.value
+            if not isinstance(self.target_id, str) or not self.target_id.strip():
+                raise ValueError(f"{action_name} requires a non-empty configured articulated-entity target_id")
+            if self.parameters:
+                raise ValueError(f"{action_name} parameters must be empty; motion policy is owner-controlled")
         return self
 
 
