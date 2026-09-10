@@ -1,0 +1,59 @@
+{
+  "issue": "LINUX6",
+  "human_owner": "Quchaosheng",
+  "objective": "Define and test a bounded software IRQ lifecycle with shared-line ownership, top-half acknowledgement, bottom-half work cancellation and fail-closed stop/remove behavior without claiming real IRQ jitter.",
+  "allowed_paths": [
+    "hardware/linux_drivers/irq/**",
+    "tests/unit/test_irq_contract.py",
+    "Makefile",
+    "docs/architecture/linux-drivers.md",
+    "hardware/linux_drivers/README.md",
+    "docs/task_packets/linux-irq-contract.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "hardware/pcb/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "hardware/pcb/**"
+  ],
+  "acceptance": [
+    "shared and non-shared IRQ ownership is validated before enable or trigger",
+    "trigger creates bounded bottom-half work while active handler count is observable",
+    "stop waits for active handlers, flushes pending work and fails closed on timeout",
+    "close completes the stop/flush lifecycle before clearing owners",
+    "tests cover shared IRQ routing, queue backpressure, cancellation, timeout and closed state",
+    "the implementation is software-only and does not claim IRQ jitter below 100 microseconds"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/linux-irq-contract.json",
+    "python3 -m pytest tests/unit/test_irq_contract.py -v",
+    "make irq-test",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused IRQ lifecycle and cancellation test output",
+    "shared-owner and bottom-half queue assertions",
+    "stop timeout fail-closed assertion",
+    "repository gate output",
+    "physical IRQ and jitter evidence marked NOT_EXECUTED"
+  ],
+  "stop_conditions": [
+    "a real IRQ number, device register or device-tree choice is required",
+    "PREEMPT_RT or physical jitter measurement is required",
+    "a frozen interface, firmware, robot-control or PCB change is required",
+    "fake IRQ evidence would be presented as target-hardware real-time validation"
+  ]
+}
