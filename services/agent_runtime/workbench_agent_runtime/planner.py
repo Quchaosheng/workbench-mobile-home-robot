@@ -49,6 +49,72 @@ def _matches_task_keyword(text: str, english: tuple[str, ...], chinese: tuple[st
     return english_match or any(keyword in text for keyword in chinese)
 
 
+def _goal_boundary_violation(normalized: str) -> tuple[str, str] | None:
+    if "\ufffd" in normalized:
+        return "unsupported_request", "task goal contains invalid replacement characters"
+    if re.search(
+        r"\b(go|walk|travel|navigate|drive|head|ride)\b|"
+        r"\b(mobile[- ]base|elevator|lobby|locker|off[- ]table)\b",
+        normalized,
+    ) or any(
+        token in normalized
+        for token in ("去取", "下楼", "快递柜", "乘电梯", "导航", "前往", "走到", "开到", "移动底盘", "然后去", "再去")
+    ):
+        return "requires_navigation", "explicit navigation is outside the tabletop robot boundary"
+    if re.search(
+        r"\b(joint|velocity|torque|firmware|motor control|servo|raw can|can frame)\b",
+        normalized,
+    ) or any(
+        token in normalized
+        for token in ("关节", "速度控制", "扭矩", "力矩", "固件", "电机控制", "舵机", "原始can", "can帧")
+    ):
+        return "requires_joint_control", "raw joint, motor, firmware, or CAN control is outside the planner boundary"
+    if (
+        re.search(
+            r"\b(report|claim|declare|mark|pretend|fabricat\w*)\b.{0,60}\b(success|complete|verified|pass)\b",
+            normalized,
+        )
+        or re.search(r"\b(without|skip|ignore)\b.{0,40}\b(seeing|evidence|verification|verify)\b", normalized)
+        or re.search(
+            r"\b(low[- ]confidence|unreadable|unknown label)\b.{0,40}\b(confirmed|verified|success)\b", normalized
+        )
+        or any(
+            token in normalized
+            for token in (
+                "报告成功",
+                "声称完成",
+                "标记完成",
+                "跳过核验",
+                "忽略证据",
+                "无需验证",
+                "低置信度",
+                "未验证",
+                "直接通过",
+                "没有证据",
+                "直接宣布",
+                "质检通过",
+                "绕过验证器",
+                "齐套状态",
+                "改成成功",
+            )
+        )
+    ):
+        return "requires_completion_claim", "completion or verification claims require observable evidence"
+    if (
+        re.search(
+            r"\b(disable|ignore|bypass|turn off)\b.{0,40}\b(collision|emergency stop|e-stop|watchdog|safety)\b",
+            normalized,
+        )
+        or re.search(r"\b(damaged|broken)\s+(parcel|package)\b.*\b(on|to|into|in)\b.*\bpickup shelf\b", normalized)
+        or any(
+            token in normalized
+            for token in ("关闭碰撞", "忽略急停", "关闭看门狗", "绕过安全", "破损取件架", "破损正常区")
+        )
+    ):
+        return "unsupported_request", "safety or quarantine bypass is outside the planner boundary"
+    return None
+
+
 def _validate_identifier(value: str, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label} must be a non-empty string")
@@ -93,29 +159,16 @@ def classify_template_task(goal: str) -> str:
     normalized = goal.strip().lower()
     if not normalized:
         raise ValueError("task goal must not be empty")
-    mobile_delivery = any(
-        re.search(pattern, normalized)
-        for pattern in (
-            r"\b(go|walk|travel|navigate|drive|head)\b.*\b(parcel|package|courier|delivery|locker|lobby|downstairs)\b",
-            r"\b(collect|retrieve|pick up|get)\b.*\b(parcel|package|delivery)\b.*\b(from|at)\b.*"
-            r"\b(locker|lobby|downstairs|front desk)\b",
-        )
-    ) or any(token in normalized for token in ("去取快递", "下楼取", "快递柜取", "去拿包裹", "乘电梯取"))
-    if mobile_delivery:
-        raise ValueError("mobile parcel pickup requires navigation and is outside the tabletop robot boundary")
-    fabricated_verification = (
-        any(token in normalized for token in ("ignore", "skip", "忽略", "跳过"))
-        and any(token in normalized for token in ("unreadable", "unknown label", "无法读取", "看不清"))
-        and any(token in normalized for token in ("verified", "verification", "核验", "已验证"))
-    )
-    quarantine_bypass = bool(
-        re.search(r"\b(damaged|broken)\s+(parcel|package)\b.*\b(on|to|into|in)\b.*\bpickup shelf\b", normalized)
-        or re.search(r"破损.{0,10}(取件架|正常区)", normalized)
-    )
-    if fabricated_verification:
-        raise ValueError("parcel labels must be readable evidence before they can be marked verified")
-    if quarantine_bypass:
-        raise ValueError("damaged parcels must be isolated and cannot be routed to pickup")
+    violation = _goal_boundary_violation(normalized)
+    if violation:
+        code, message = violation
+        if code == "requires_completion_claim" and any(
+            token in normalized for token in ("unreadable", "unknown label", "无法读取", "看不清")
+        ):
+            message = "parcel labels must be readable evidence before they can be marked verified"
+        elif code == "unsupported_request" and any(token in normalized for token in ("damaged", "broken", "破损")):
+            message = "damaged parcels must be isolated and cannot be routed to pickup"
+        raise ValueError(f"{code}: {message}")
     if _matches_task_keyword(
         normalized,
         ("parcel", "parcels", "courier", "delivery", "shipment"),
