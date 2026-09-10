@@ -13,6 +13,17 @@ from pydantic import (
 )
 from pydantic.json_schema import SkipJsonSchema
 
+from .observed_attributes import (
+    ATTRIBUTE_SCHEMA_VERSION,
+    LEGACY_ATTRIBUTE_MIGRATION_VERSION,
+    AttributeMetadataMap,
+    AttributeUpdateMode,
+    VersionedObservedAttributes,
+    legacy_attribute_keys_allowed,
+    validate_attribute_metadata_map,
+    validate_observed_attributes,
+)
+
 
 class ActionType(StrEnum):
     OBSERVE = "observe"
@@ -231,6 +242,29 @@ class Detector(StrEnum):
 
 
 class Observation(_CanonicalRuntimeModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        json_schema_extra={
+            "allOf": [
+                {"if": {"required": ["attributes_mode"]}, "then": {"required": ["attributes"]}},
+                {"if": {"required": ["attributes"]}, "then": {"required": ["attributes_schema_version"]}},
+                {
+                    "if": {"required": ["attributes_schema_version"]},
+                    "then": {"required": ["attributes"]},
+                },
+                {"if": {"required": ["attribute_metadata"]}, "then": {"required": ["attributes"]}},
+                {
+                    "if": {
+                        "required": ["attributes_schema_version"],
+                        "properties": {"attributes_schema_version": {"const": ATTRIBUTE_SCHEMA_VERSION}},
+                    },
+                    "then": {"required": ["attribute_metadata"]},
+                },
+            ]
+        },
+    )
+
     observation_id: str
     run_id: str
     entity_id: str
@@ -244,6 +278,87 @@ class Observation(_CanonicalRuntimeModel):
     clock_id: ClockId = ClockId.MONOTONIC
     source: str
     evidence_refs: list[str] = Field(min_length=1)
+    attributes: VersionedObservedAttributes | SkipJsonSchema[None] = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
+    attributes_mode: AttributeUpdateMode | SkipJsonSchema[None] = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
+    attributes_schema_version: (
+        Literal[ATTRIBUTE_SCHEMA_VERSION, LEGACY_ATTRIBUTE_MIGRATION_VERSION] | SkipJsonSchema[None]
+    ) = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
+    attribute_metadata: AttributeMetadataMap | SkipJsonSchema[None] = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def reject_explicit_null_attributes(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("attributes may be omitted but cannot be null")
+        return value
+
+    @field_validator("attributes_mode", mode="before")
+    @classmethod
+    def normalize_attributes_mode(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("attributes_mode may be omitted but cannot be null")
+        if isinstance(value, AttributeUpdateMode):
+            return value
+        if type(value) is not str:
+            raise ValueError("attributes_mode must be a string enum value")
+        try:
+            return AttributeUpdateMode(value)
+        except ValueError as error:
+            raise ValueError("attributes_mode must be 'complete' or 'partial'") from error
+
+    @field_validator("attributes_schema_version", "attribute_metadata", mode="before")
+    @classmethod
+    def reject_null_attribute_metadata_fields(cls, value: object, info: ValidationInfo) -> object:
+        if value is None:
+            raise ValueError(f"{info.field_name} may be omitted but cannot be null")
+        return value
+
+    @model_validator(mode="after")
+    def validate_attribute_semantics(self) -> "Observation":
+        if self.attributes is None:
+            if self.attributes_mode is not None:
+                raise ValueError("attributes_mode requires attributes")
+            if self.attributes_schema_version is not None:
+                raise ValueError("attributes_schema_version requires attributes")
+            if self.attribute_metadata is not None:
+                raise ValueError("attribute_metadata requires attributes")
+            return self
+        if self.attributes_schema_version is None:
+            raise ValueError("attributes_schema_version is required when attributes are present")
+        allow_legacy = (
+            self.attributes_schema_version == LEGACY_ATTRIBUTE_MIGRATION_VERSION
+            and legacy_attribute_keys_allowed(self.entity_type)
+        )
+        validate_observed_attributes(
+            self.attributes,
+            entity_type=self.entity_type,
+            allow_unknown_keys=allow_legacy,
+        )
+        if self.attributes_schema_version == ATTRIBUTE_SCHEMA_VERSION and self.attribute_metadata is None:
+            raise ValueError("modern Observation attributes require attribute_metadata")
+        if self.attribute_metadata is not None:
+            validate_attribute_metadata_map(
+                {key: value.model_dump(mode="json") for key, value in self.attribute_metadata.items()},
+                attribute_keys=set(self.attributes),
+                entity_type=self.entity_type,
+                allow_unknown_keys=allow_legacy,
+                require_observed=self.attributes_schema_version == ATTRIBUTE_SCHEMA_VERSION,
+                require_complete=True,
+                expected_clock_id=self.clock_id,
+            )
+        return self
 
 
 class EmotionState(StrEnum):
@@ -404,6 +519,28 @@ WorldStateHash = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
 class WorldEntity(_CanonicalRuntimeModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        json_schema_extra={
+            "allOf": [
+                {"if": {"required": ["attributes"]}, "then": {"required": ["attributes_schema_version"]}},
+                {
+                    "if": {"required": ["attributes_schema_version"]},
+                    "then": {"required": ["attributes"]},
+                },
+                {"if": {"required": ["attribute_metadata"]}, "then": {"required": ["attributes"]}},
+                {
+                    "if": {
+                        "required": ["attributes_schema_version"],
+                        "properties": {"attributes_schema_version": {"const": ATTRIBUTE_SCHEMA_VERSION}},
+                    },
+                    "then": {"required": ["attribute_metadata"]},
+                },
+            ]
+        },
+    )
+
     entity_id: str
     entity_type: str
     pose: Pose | SkipJsonSchema[None] = Field(
@@ -417,6 +554,20 @@ class WorldEntity(_CanonicalRuntimeModel):
     )
     last_observed_at: str | None = None
     evidence_refs: list[str] = Field(default_factory=list)
+    attributes: VersionedObservedAttributes | SkipJsonSchema[None] = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
+    attributes_schema_version: (
+        Literal[ATTRIBUTE_SCHEMA_VERSION, LEGACY_ATTRIBUTE_MIGRATION_VERSION] | SkipJsonSchema[None]
+    ) = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
+    attribute_metadata: AttributeMetadataMap | SkipJsonSchema[None] = Field(
+        default_factory=lambda: None,
+        exclude_if=lambda value: value is None,
+    )
 
     @field_validator("pose", "confidence", mode="before")
     @classmethod
@@ -424,6 +575,48 @@ class WorldEntity(_CanonicalRuntimeModel):
         if info.mode == "json" and value is None:
             raise ValueError("optional WorldEntity fields must be omitted instead of null")
         return value
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def reject_json_null_attributes(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("attributes may be omitted but cannot be null")
+        return value
+
+    @field_validator("attributes_schema_version", "attribute_metadata", mode="before")
+    @classmethod
+    def reject_null_attribute_metadata_fields(cls, value: object, info: ValidationInfo) -> object:
+        if value is None:
+            raise ValueError(f"{info.field_name} may be omitted but cannot be null")
+        return value
+
+    @model_validator(mode="after")
+    def validate_entity_attributes(self) -> "WorldEntity":
+        if self.attributes is not None:
+            if self.attributes_schema_version is None:
+                raise ValueError("attributes_schema_version is required when attributes are present")
+            allow_legacy = (
+                self.attributes_schema_version == LEGACY_ATTRIBUTE_MIGRATION_VERSION
+                and legacy_attribute_keys_allowed(self.entity_type)
+            )
+            validate_observed_attributes(
+                self.attributes,
+                entity_type=self.entity_type,
+                allow_unknown_keys=allow_legacy,
+            )
+            if self.attributes_schema_version == ATTRIBUTE_SCHEMA_VERSION and self.attribute_metadata is None:
+                raise ValueError("modern WorldEntity attributes require attribute_metadata")
+            if self.attribute_metadata is not None:
+                validate_attribute_metadata_map(
+                    {key: value.model_dump(mode="json") for key, value in self.attribute_metadata.items()},
+                    attribute_keys=set(self.attributes),
+                    entity_type=self.entity_type,
+                    allow_unknown_keys=allow_legacy,
+                    require_complete=True,
+                )
+        elif self.attributes_schema_version is not None or self.attribute_metadata is not None:
+            raise ValueError("attribute metadata fields require attributes")
+        return self
 
 
 class WorldRelation(_CanonicalRuntimeModel):
