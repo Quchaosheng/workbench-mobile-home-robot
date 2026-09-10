@@ -1,0 +1,85 @@
+{
+  "issue": 230,
+  "human_owner": "TH3478",
+  "objective": "Implement the first bounded ROS 2 LifecycleNode bridge for the existing DeviceRuntime and SocketCAN adapter without changing frozen public schemas or safety ownership.",
+  "decision_supported": "Issue #230 acceptance for a concrete SocketCAN-to-read-only-consumer path, delayed ROS 2 lifecycle integration, bounded projection draining, explicit QoS/domain settings, and truthful loopback evidence.",
+  "allowed_paths": [
+    "docs/architecture/ros2-device-runtime-bridge-v1.md",
+    "docs/task_packets/issue-230-runtime-bridge.json",
+    "libs/hardware/workbench/hardware/__init__.py",
+    "libs/hardware/workbench/hardware/ros2_runtime_bridge.py",
+    "tests/unit/test_ros2_runtime_bridge.py"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "docs/architecture/host-can-transport-v1.md",
+    "docs/architecture/system.md",
+    "docs/decisions/ADR-0005-hardware-device-runtime.md",
+    "libs/hardware/package.xml",
+    "libs/hardware/workbench/hardware/can_driver_safe.py",
+    "libs/hardware/workbench/hardware/socketcan_transport.py",
+    "interfaces/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/**",
+    "hardware/**",
+    ".github/workflows/**"
+  ],
+  "input_refs": [
+    "docs/decisions/ADR-0005-hardware-device-runtime.md",
+    "docs/architecture/host-can-transport-v1.md",
+    "docs/task_packets/issue-230-hardware-device-runtime.json",
+    "libs/hardware/workbench/hardware/can_driver_safe.py",
+    "libs/hardware/workbench/hardware/socketcan_transport.py",
+    "libs/hardware/package.xml"
+  ],
+  "outputs": [
+    "libs/hardware/workbench/hardware/ros2_runtime_bridge.py",
+    "tests/unit/test_ros2_runtime_bridge.py",
+    "docs/architecture/ros2-device-runtime-bridge-v1.md"
+  ],
+  "acceptance": [
+    "The ROS-free bridge core reuses one DeviceRuntime and accepts only immutable validated CanExternalRecord and CanDiagnostic projections through an explicit field allowlist.",
+    "Telemetry, ACK/action-result and health publications have separate bounded QoS definitions, fixed per-tick drain work and observable source queue/drop metrics; an unsupported or non-exposed object is never serialized.",
+    "The ROS 2 integration delays rclpy imports until its factory is called, creates a LifecycleNode with lifecycle publishers and a bounded timer, and does not require ROS 2 to import workbench.hardware.",
+    "Lifecycle configure, activate, deactivate, cleanup and shutdown are fail-closed and idempotent at the bridge boundary; deactivation stops the existing runtime and a later activation recreates a clean adapter/runtime without an orphan worker or stale projection.",
+    "The default SocketCAN factory wires SocketCANTransport into SafeCANBus while leaving Fast DDS as a deployment-selected RMW and keeping commands, E-stop, watchdog, safe-enable and direct motion authority outside the bridge.",
+    "The bridge records domain ID, RMW selection, topic names, reliability/history/depth, executor thread bound, queue capacities and security profile without changing interfaces/ schemas.",
+    "Unit tests cover strict parameter validation, JSON allowlisting, bounded drain and publisher failure, queue/drop accounting, lifecycle failure and restart cleanup, and a fake SocketCAN adapter path.",
+    "Documentation and test evidence distinguish ROS/fake/virtual loopback behavior from physical CAN, MCU, actuator, PREEMPT_RT and hard-real-time evidence; unexecuted physical evidence remains NOT_EXECUTED."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-230-runtime-bridge.json --base origin/main",
+    "python3 -m pytest tests/unit/test_ros2_runtime_bridge.py -q",
+    "python3 -m ruff check libs/hardware/workbench/hardware/ros2_runtime_bridge.py libs/hardware/workbench/hardware/__init__.py tests/unit/test_ros2_runtime_bridge.py",
+    "python3 -m ruff format --check libs/hardware/workbench/hardware/ros2_runtime_bridge.py libs/hardware/workbench/hardware/__init__.py tests/unit/test_ros2_runtime_bridge.py",
+    "source /opt/ros/jazzy/setup.bash && python3 -m pytest tests/unit/test_ros2_runtime_bridge.py -q",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "make docs",
+    "git diff --check origin/main...HEAD"
+  ],
+  "evidence": [
+    "Task Packet changed-path validation output",
+    "ROS-free focused unit test output and Ruff check/format output",
+    "ROS 2 Jazzy lifecycle smoke output when the host environment is available",
+    "required repository test, contract, scenario, context and documentation checks",
+    "scoped diff review with explicit virtual-versus-physical evidence limits",
+    "owner review from Integration, Motion and Perception for lifecycle, QoS, source metadata and safety boundaries"
+  ],
+  "stop_conditions": [
+    "A public interface/schema, firmware, robot-control or service implementation change is required.",
+    "The bridge needs a second unbounded worker, queue, lifecycle owner, direct DDS hardware callback or raw device handle.",
+    "DDS would become the E-stop, watchdog, safe-enable or direct motion authority.",
+    "A ROS or virtual SocketCAN loopback result would be used as physical CAN, MCU, actuator, PREEMPT_RT or hard-real-time evidence.",
+    "The existing DeviceRuntime cannot be stopped and recreated within the configured bounded shutdown deadline.",
+    "A required change falls outside the allowed paths or requires an unapproved owner decision."
+  ],
+  "data_classification": "validated device telemetry, health metadata and deployment configuration; no credentials, sockets or device write handles",
+  "model_policy": "No model output is admitted as a hardware command, lifecycle decision, safety state, DDS configuration authority or physical evidence."
+}
