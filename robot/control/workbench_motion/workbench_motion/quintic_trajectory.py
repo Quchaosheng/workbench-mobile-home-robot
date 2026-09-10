@@ -145,9 +145,8 @@ class QuinticTrajectory:
                 zero_values,
             )
 
-        duration_squared = self.duration_s**2
-        duration_cubed = duration_squared * self.duration_s
-        if duration_squared == 0.0 or duration_cubed == 0.0:
+        inverse_duration = 1.0 / self.duration_s
+        if not math.isfinite(inverse_duration):
             raise ValueError("time scale is too small to sample finite derivatives")
 
         normalized_time = time / self.duration_s
@@ -156,16 +155,19 @@ class QuinticTrajectory:
         s4 = s3 * normalized_time
         s5 = s4 * normalized_time
         position_scale = 10.0 * s3 - 15.0 * s4 + 6.0 * s5
-        velocity_scale = (30.0 * s2 - 60.0 * s3 + 30.0 * s4) / self.duration_s
-        acceleration_scale = (60.0 * normalized_time - 180.0 * s2 + 120.0 * s3) / duration_squared
-        jerk_scale = (60.0 - 360.0 * normalized_time + 360.0 * s2) / duration_cubed
+        velocity_polynomial = 30.0 * s2 - 60.0 * s3 + 30.0 * s4
+        acceleration_polynomial = 60.0 * normalized_time - 180.0 * s2 + 120.0 * s3
+        jerk_polynomial = 60.0 - 360.0 * normalized_time + 360.0 * s2
         sample = TrajectorySample(
             tuple(
                 start + delta * position_scale for start, delta in zip(self.start_positions, self.deltas, strict=True)
             ),
-            tuple(delta * velocity_scale for delta in self.deltas),
-            tuple(delta * acceleration_scale for delta in self.deltas),
-            tuple(delta * jerk_scale for delta in self.deltas),
+            tuple(delta * inverse_duration * velocity_polynomial for delta in self.deltas),
+            tuple(delta * inverse_duration * inverse_duration * acceleration_polynomial for delta in self.deltas),
+            tuple(
+                delta * inverse_duration * inverse_duration * inverse_duration * jerk_polynomial
+                for delta in self.deltas
+            ),
         )
         if any(
             not math.isfinite(value)
@@ -212,6 +214,37 @@ def quintic_point_to_point(
         if any(not math.isfinite(candidate) or candidate <= 0 for candidate in candidate_durations):
             raise ValueError(f"{name} trajectory duration must be finite")
         duration_s = max(duration_s, *candidate_durations)
+
+    if duration_s > 0.0:
+        # Re-check the analytic extrema through the actual sampler. A few ULPs
+        # of headroom prevent a boundary value from exceeding its limit after
+        # floating-point evaluation of the derivative polynomials.
+        critical_times = (
+            0.0,
+            (3.0 - math.sqrt(3.0)) / 6.0,
+            0.5,
+            (3.0 + math.sqrt(3.0)) / 6.0,
+            1.0 - (3.0 - math.sqrt(3.0)) / 6.0,
+            1.0,
+        )
+        for _ in range(16):
+            trajectory = QuinticTrajectory(names, start, target, duration_s)
+            try:
+                samples = [trajectory.sample(duration_s * time) for time in critical_times]
+            except ValueError:
+                samples = []
+            if samples and all(
+                all(abs(sample.velocities[index]) <= limit.max_velocity for sample in samples)
+                and all(abs(sample.accelerations[index]) <= limit.max_acceleration for sample in samples)
+                and all(abs(sample.jerks[index]) <= limit.max_jerk for sample in samples)
+                for index, limit in enumerate(normalized_limits)
+            ):
+                return trajectory
+            duration_s = math.nextafter(duration_s, math.inf)
+            if not math.isfinite(duration_s):
+                raise ValueError("trajectory duration must remain finite after rounding")
+        else:
+            raise ValueError("trajectory duration cannot satisfy explicit limits")
 
     if duration_s == 0.0 and any(
         start_position != target_position for start_position, target_position in zip(start, target, strict=True)

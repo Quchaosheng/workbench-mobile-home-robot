@@ -23,11 +23,11 @@ def test_profile_has_expected_endpoint_and_midpoint_derivatives():
     assert trajectory.sample(0.0).positions == (0.0, 0.0)
     assert trajectory.sample(0.0).velocities == (0.0, 0.0)
     assert trajectory.sample(0.0).accelerations == (0.0, 0.0)
-    assert trajectory.sample(1.0).positions == (1.0, -0.5)
-    assert trajectory.sample(1.0).velocities == (0.0, 0.0)
-    assert trajectory.sample(1.0).accelerations == (0.0, 0.0)
+    assert trajectory.sample(trajectory.duration_s).positions == (1.0, -0.5)
+    assert trajectory.sample(trajectory.duration_s).velocities == (0.0, 0.0)
+    assert trajectory.sample(trajectory.duration_s).accelerations == (0.0, 0.0)
 
-    midpoint = trajectory.sample(0.5)
+    midpoint = trajectory.sample(trajectory.duration_s * 0.5)
     assert midpoint.positions == pytest.approx((0.5, -0.25))
     assert midpoint.velocities == pytest.approx((1.875, -0.9375))
     assert midpoint.accelerations == pytest.approx((0.0, 0.0))
@@ -72,6 +72,72 @@ def test_duration_calculation_avoids_intermediate_acceleration_overflow():
 
     expected = (math.sqrt(10.0 / math.sqrt(3.0)) * math.sqrt(1e300)) / math.sqrt(1e-308)
     assert trajectory.duration_s == pytest.approx(expected)
+
+
+def test_large_finite_duration_preserves_representable_acceleration():
+    duration = 1e155
+    trajectory = QuinticTrajectory(("j1",), (0.0,), (1.0,), duration)
+
+    sample = trajectory.sample(duration * 0.25)
+
+    assert sample.accelerations[0] == pytest.approx(5.625e-310, abs=1e-320)
+    assert sample.accelerations[0] != 0.0
+
+
+def test_large_displacement_preserves_derivatives_when_inverse_powers_underflow():
+    trajectory = QuinticTrajectory(("j1",), (0.0,), (1e308,), 1e308)
+
+    sample = trajectory.sample(2.5e307)
+
+    assert sample.accelerations[0] == pytest.approx(5.625e-308, abs=1e-320)
+    assert sample.accelerations[0] != 0.0
+
+
+@pytest.mark.parametrize(
+    ("limit", "attribute", "sample_times"),
+    [
+        (JointMotionLimit(-1.0, 1.0, 0.1, 1e6, 1e6), "velocities", (0.5,)),
+        (JointMotionLimit(-1.0, 1.0, 1e6, 0.1, 1e6), "accelerations", ((3.0 - math.sqrt(3.0)) / 6.0,)),
+        (JointMotionLimit(-1.0, 1.0, 1e6, 1e6, 0.5), "jerks", (0.0, 1.0)),
+    ],
+)
+def test_selected_duration_stays_within_each_derivative_limit(limit, attribute, sample_times):
+    trajectory = quintic_point_to_point(("j1",), (0.0,), (0.1,), {"j1": limit})
+
+    values = [abs(getattr(trajectory.sample(trajectory.duration_s * time), attribute)[0]) for time in sample_times]
+
+    assert (
+        max(values)
+        <= {
+            "velocities": limit.max_velocity,
+            "accelerations": limit.max_acceleration,
+            "jerks": limit.max_jerk,
+        }[attribute]
+    )
+
+
+def test_selected_duration_checks_both_float_representations_of_acceleration_extrema():
+    limit = JointMotionLimit(
+        -100.0,
+        100.0,
+        2.9989261417057094e17,
+        8.552021242940469e-64,
+        240.83955071470302,
+    )
+    trajectory = quintic_point_to_point(
+        ("j1",),
+        (0.0,),
+        (37.00450613481811,),
+        {"j1": limit},
+    )
+
+    extrema_times = (
+        (3.0 - math.sqrt(3.0)) / 6.0,
+        1.0 - (3.0 - math.sqrt(3.0)) / 6.0,
+    )
+    accelerations = [abs(trajectory.sample(trajectory.duration_s * time).accelerations[0]) for time in extrema_times]
+
+    assert max(accelerations) <= limit.max_acceleration
 
 
 def test_nonzero_subnormal_displacement_that_underflows_duration_fails_closed():
