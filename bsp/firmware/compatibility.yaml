@@ -6,8 +6,9 @@ linux_bundle:
   compatibility_manifest: required
 controllers:
   MCU-BASE:
-    part: STM32H563
+    part: STM32G474RET6
     protocol: MCU_WIRE_V1
+    can_controller: FDCAN
     minimum_firmware: TBD
     required_capabilities: [traction, encoders, lift, watchdog, can_fd]
   MCU-SAFETY:

@@ -18,9 +18,12 @@ linux_board:
     - camera_connector_and_bandwidth
     - physical_can_controller_or_usb_adapter
     - pinctrl_and_irq_numbers
+    - controller_pcb_mcu_eco_from_legacy_ch32v307
 controllers:
   - id: MCU-BASE
-    part: STM32H563
+    part: STM32G474RET6
+    can_controller: FDCAN
+    selection_status: candidate_requires_pcb_eco
     node_id: 0x10
   - id: ARM-L-CTRL
     implementation: vendor_arm_controller
