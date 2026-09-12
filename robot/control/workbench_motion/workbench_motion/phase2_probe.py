@@ -17,25 +17,32 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, Protocol
 
 from workbench_motion.arm_config import ArmConfig, load_arm_config
+from workbench_motion.controller import RobotState
+from workbench_motion.gazebo_adapter import GazeboActionStatus, GazeboTrajectoryController
 from workbench_motion.joint_limits import (
     JointLimit,
     Violation,
+    build_preflight_context,
     check_trajectory,
     effective_limits,
     load_hard_limits,
     load_hw_override,
+    preflight_trajectory,
 )
+from workbench_motion.trajectory_executor import state_hash
 
 SAFE_BEHAVIORS = frozenset({"rejected", "aborted"})
 FAIL_BEHAVIORS = frozenset({"clamped", "executed_over_limit", "timeout", "unclassified"})
 PHASE2_ACCEPTED_BEHAVIORS = SAFE_BEHAVIORS | {"clamped"}
+LEGAL_TRACKING_TOLERANCE_RAD = 0.05
+LEGAL_STOPPED_VELOCITY_TOLERANCE_RAD_S = 0.01
 FOLLOWERS = {
     "robotiq_85_right_knuckle_joint": -1.0,
     "robotiq_85_left_inner_knuckle_joint": 1.0,
@@ -74,6 +81,8 @@ class ActionObservation:
     before: JointSnapshot
     after: JointSnapshot
     samples: tuple[JointSnapshot, ...] = ()
+    gate: Mapping[str, Any] | None = None
+    execution: Mapping[str, Any] | None = None
 
 
 class ProbeIO(Protocol):
@@ -83,6 +92,9 @@ class ProbeIO(Protocol):
     def tf_chain(self, frames: Sequence[str], staleness_s: float) -> dict[str, Any]: ...
     def joint_snapshot(self, staleness_s: float) -> JointSnapshot: ...
     def execute_arm(self, target: Mapping[str, float], duration_s: float, staleness_s: float) -> ActionObservation: ...
+    def execute_raw_arm(
+        self, target: Mapping[str, float], duration_s: float, staleness_s: float
+    ) -> ActionObservation: ...
     def collision_check(self, states: Sequence[Mapping[str, float]]) -> dict[str, Any]: ...
     def execute_gripper(self, position: float, staleness_s: float) -> ActionObservation: ...
     def versions(self) -> Mapping[str, str]: ...
@@ -302,9 +314,59 @@ def validate_report(report: Mapping[str, Any]) -> None:
     if kind not in SAFE_BEHAVIORS | FAIL_BEHAVIORS:
         raise ValueError(f"invalid over-limit classification: {kind!r}")
     legal = report["legal_trajectory"]
+    if legal.get("execution_path") != "accepted_trajectory_adapter":
+        raise ValueError("legal_trajectory.execution_path must identify the accepted trajectory adapter")
+    over_limit = report["observed_controller_over_limit_behavior"]
+    if over_limit.get("execution_path") != "raw_safety_probe":
+        raise ValueError("over-limit execution_path must identify the raw safety probe")
     smoothness = legal.get("smoothness") if isinstance(legal, Mapping) else None
     if not isinstance(smoothness, Mapping) or not isinstance(smoothness.get("valid"), bool):
         raise ValueError("legal_trajectory.smoothness is missing or invalid")
+    execution = legal.get("execution") if isinstance(legal, Mapping) else None
+    if not isinstance(execution, Mapping):
+        raise ValueError("legal_trajectory.execution is missing or invalid")
+    gate = execution.get("gate")
+    action = execution.get("action")
+    if not isinstance(gate, Mapping) or not isinstance(action, Mapping):
+        raise ValueError("legal_trajectory.execution gate/action evidence is missing")
+    if action.get("convergence_status") not in {"verified", "not_converged"}:
+        raise ValueError("legal_trajectory.execution convergence status is invalid")
+    fresh_feedback = action.get("fresh_feedback")
+    if not isinstance(fresh_feedback, Mapping) or not isinstance(fresh_feedback.get("advanced"), bool):
+        raise ValueError("legal_trajectory.execution fresh feedback evidence is missing")
+
+
+def legal_execution_verified(
+    observation: ActionObservation,
+    *,
+    position_tolerance_rad: float = LEGAL_TRACKING_TOLERANCE_RAD,
+    velocity_tolerance_rad_s: float = LEGAL_STOPPED_VELOCITY_TOLERANCE_RAD_S,
+) -> bool:
+    """Require gate, dispatch, action, feedback, and convergence evidence."""
+    gate = observation.gate
+    action = observation.execution
+    if not isinstance(gate, Mapping) or not isinstance(action, Mapping):
+        return False
+    fresh = action.get("fresh_feedback")
+    max_position_error = action.get("max_position_error")
+    max_velocity = action.get("max_velocity")
+    metrics = (max_position_error, max_velocity)
+    return (
+        observation.accepted
+        and not observation.timed_out
+        and observation.status == GazeboActionStatus.SUCCEEDED.value
+        and gate.get("status") == "accepted"
+        and gate.get("dispatch_attempted") is True
+        and action.get("status") == GazeboActionStatus.SUCCEEDED.value
+        and action.get("convergence_status") == "verified"
+        and isinstance(fresh, Mapping)
+        and fresh.get("advanced") is True
+        and all(
+            isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value) for value in metrics
+        )
+        and max_position_error <= position_tolerance_rad
+        and max_velocity <= velocity_tolerance_rad_s
+    )
 
 
 def atomic_write_report(path: Path, report: Mapping[str, Any]) -> None:
@@ -355,6 +417,53 @@ def _deb_version(package: str) -> str:
 
 def _snapshot_dict(snapshot: JointSnapshot) -> dict[str, Any]:
     return {"stamp_s": snapshot.stamp_s, "positions": snapshot.positions}
+
+
+def _gate_dict(gate: Any) -> dict[str, Any]:
+    reason = getattr(gate, "reason", None)
+    return {
+        "status": getattr(getattr(gate, "status", None), "value", getattr(gate, "status", None)),
+        "reason": getattr(reason, "value", reason),
+        "dispatch_attempted": bool(getattr(gate, "dispatch_attempted", False)),
+        "expected_state_hash": getattr(gate, "expected_state_hash", None),
+        "observed_state_hash": getattr(gate, "observed_state_hash", None),
+        "expected_context_hash": getattr(gate, "expected_context_hash", None),
+        "observed_context_hash": getattr(gate, "observed_context_hash", None),
+    }
+
+
+def _execution_dict(result: Any, expected_state: RobotState | None = None) -> dict[str, Any]:
+    status = getattr(getattr(result, "status", None), "value", getattr(result, "status", None))
+    final_state = getattr(result, "final_state", None)
+    fresh_feedback = {
+        "expected_sequence": getattr(expected_state, "sequence", None),
+        "expected_timestamp_ns": getattr(expected_state, "timestamp_ns", None),
+        "sequence": getattr(final_state, "sequence", None),
+        "timestamp_ns": getattr(final_state, "timestamp_ns", None),
+        "advanced": (
+            final_state is not None
+            and expected_state is not None
+            and final_state.sequence > expected_state.sequence
+            and final_state.timestamp_ns > expected_state.timestamp_ns
+        ),
+    }
+    convergence_status = (
+        "verified"
+        if status == GazeboActionStatus.SUCCEEDED.value
+        and fresh_feedback["advanced"]
+        and getattr(result, "max_position_error", None) is not None
+        and getattr(result, "max_velocity", None) is not None
+        else "not_converged"
+    )
+    return {
+        "status": status,
+        "action_error_code": getattr(result, "action_error_code", None),
+        "detail": getattr(result, "detail", None),
+        "max_position_error": getattr(result, "max_position_error", None),
+        "max_velocity": getattr(result, "max_velocity", None),
+        "fresh_feedback": fresh_feedback,
+        "convergence_status": convergence_status,
+    }
 
 
 def _violation_dict(violation: Violation | None) -> dict[str, Any] | None:
@@ -445,13 +554,15 @@ def run_probe(
         ]
         smoothness = smoothness_report(legal_samples, legal_target)
         tracking_ok = snapshot_is_complete(legal.after, arm.joints) and all(
-            abs(legal.after.positions[j] - legal_target[j]) <= 0.05 for j in arm.joints
+            abs(legal.after.positions[j] - legal_target[j]) <= LEGAL_TRACKING_TOLERANCE_RAD for j in arm.joints
         )
-        if legal.status != "succeeded" or not tracking_ok or not smoothness["valid"] or not collision.get("all_valid"):
+        execution_ok = legal_execution_verified(legal)
+        if not execution_ok or not tracking_ok or not smoothness["valid"] or not collision.get("all_valid"):
             return fail(
                 2,
                 f"legal trajectory gate failed: status={legal.status}, "
-                f"tracking_ok={tracking_ok}, smoothness={smoothness}, collision={collision}",
+                f"execution_ok={execution_ok}, tracking_ok={tracking_ok}, "
+                f"smoothness={smoothness}, collision={collision}",
             )
 
         over_target = dict(legal_target)
@@ -463,7 +574,7 @@ def run_probe(
         validator = check_trajectory(validator_traj, {j: legal.after.positions[j] for j in arm.joints}, limits)
         if validator is None:
             return fail(2, "local validator accepted the over-limit trajectory")
-        over = io.execute_arm(over_target, 2.0, staleness_s)
+        over = io.execute_raw_arm(over_target, 2.0, staleness_s)
         kind = classify_over_limit(over, limits)
         gate = behavior_gate(kind)
 
@@ -490,14 +601,21 @@ def run_probe(
             "tf_chain": tf_report,
             "gripper_mimic": mimic,
             "legal_trajectory": {
-                "tracking_tolerance_rad": 0.05,
+                "execution_path": "accepted_trajectory_adapter",
+                "tracking_tolerance_rad": LEGAL_TRACKING_TOLERANCE_RAD,
+                "stopped_velocity_tolerance_rad_s": LEGAL_STOPPED_VELOCITY_TOLERANCE_RAD_S,
                 "joint_states_before": _snapshot_dict(legal.before),
                 "joint_states_after": _snapshot_dict(legal.after),
                 "tracking_ok": tracking_ok,
+                "execution": {
+                    "gate": dict(legal.gate or {}),
+                    "action": dict(legal.execution or {}),
+                },
                 "smoothness": smoothness,
                 "collision": collision,
             },
             "observed_controller_over_limit_behavior": {
+                "execution_path": "raw_safety_probe",
                 "kind": kind,
                 "gate": gate,
                 "is_phase4_bypass_risk": kind in {"clamped", "executed_over_limit"},
@@ -526,7 +644,13 @@ def run_probe(
 class RosProbeIO:
     """Small synchronous adapter over the ROS services/actions used by the probe."""
 
-    def __init__(self, arm: ArmConfig, timeout_s: float = 10.0):
+    def __init__(
+        self,
+        arm: ArmConfig,
+        timeout_s: float = 10.0,
+        *,
+        context_provider: Callable[[], Any] | None = None,
+    ):
         import rclpy
         from control_msgs.action import FollowJointTrajectory, GripperCommand
         from controller_manager_msgs.srv import ListControllers
@@ -541,6 +665,7 @@ class RosProbeIO:
         self.rclpy = rclpy
         self.arm = arm
         self.timeout_s = timeout_s
+        self.context_provider = context_provider or (lambda: build_preflight_context(expected_joint_names=arm.joints))
         self.node = Node(
             "phase2_probe",
             parameter_overrides=[Parameter("use_sim_time", Parameter.Type.BOOL, True)],
@@ -556,6 +681,7 @@ class RosProbeIO:
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
         self.latest: JointSnapshot | None = None
         self.history: list[JointSnapshot] = []
+        self.gazebo_controller: GazeboTrajectoryController | None = None
         self.node.create_subscription(JointState, "/joint_states", self._on_joint_state, 50)
 
     def _spin(self, future, timeout_s: float | None = None):
@@ -571,6 +697,9 @@ class RosProbeIO:
         # consumer then times out/fails closed instead of treating them as a
         # safe action result.
         if snapshot_is_complete(snapshot, self.arm.joints):
+            controller = getattr(self, "gazebo_controller", None)
+            if controller is not None and not controller.ingest_joint_state(message):
+                return
             self.latest = snapshot
             self.history.append(snapshot)
 
@@ -639,7 +768,90 @@ class RosProbeIO:
                 return self.latest
         raise RuntimeError("fresh /joint_states unavailable")
 
+    def _ensure_gazebo_controller(self, snapshot: JointSnapshot) -> GazeboTrajectoryController:
+        if self.gazebo_controller is None:
+            initial_state = RobotState(
+                self.arm.joints,
+                tuple(snapshot.positions[joint] for joint in self.arm.joints),
+                timestamp_ns=max(0, round(snapshot.stamp_s * 1e9)),
+            )
+            self.gazebo_controller = GazeboTrajectoryController(
+                initial_state,
+                node=self.node,
+                action_name=f"/{self.arm.arm_trajectory_controller}/follow_joint_trajectory",
+                action_client=self.arm_action,
+                subscribe_joint_state=False,
+            )
+        return self.gazebo_controller
+
     def execute_arm(self, target: Mapping[str, float], duration_s: float, staleness_s: float) -> ActionObservation:
+        before = self.joint_snapshot(staleness_s)
+        history_start = len(self.history)
+        controller = self._ensure_gazebo_controller(before)
+        expected_state = controller.state
+        current = dict(zip(expected_state.joint_names, expected_state.positions, strict=True))
+        trajectory = {
+            "joint_names": list(expected_state.joint_names),
+            "points": [
+                {
+                    "positions": [target[joint] for joint in expected_state.joint_names],
+                    "time_from_start": duration_s,
+                }
+            ],
+        }
+        context = self.context_provider()
+        preflight = preflight_trajectory(trajectory, current, context=context)
+        if isinstance(preflight, Violation):
+            return ActionObservation(
+                False,
+                "rejected",
+                False,
+                dict(target),
+                before,
+                before,
+                gate={
+                    "status": "rejected",
+                    "reason": preflight.kind.value,
+                    "dispatch_attempted": False,
+                    "expected_state_hash": state_hash(expected_state),
+                    "observed_state_hash": state_hash(expected_state),
+                    "expected_context_hash": context.context_sha256,
+                    "observed_context_hash": None,
+                },
+                execution={
+                    "status": "rejected",
+                    "detail": preflight.message,
+                    "convergence_status": "not_converged",
+                },
+            )
+
+        result = controller.execute_accepted(
+            preflight,
+            expected_state=expected_state,
+            context_provider=self.context_provider,
+            timeout_s=duration_s + self.timeout_s,
+        )
+        if result.final_state is not None:
+            after = JointSnapshot(
+                dict(zip(result.final_state.joint_names, result.final_state.positions, strict=True)),
+                result.final_state.timestamp_ns / 1e9,
+            )
+        else:
+            after = self.joint_snapshot(staleness_s)
+        samples = tuple(self.history[history_start:])
+        return ActionObservation(
+            result.gate.status is not None and result.gate.status.value == "accepted",
+            result.status.value,
+            result.status is GazeboActionStatus.TIMEOUT,
+            dict(target),
+            before,
+            after,
+            samples,
+            gate=_gate_dict(result.gate),
+            execution=_execution_dict(result, expected_state),
+        )
+
+    def execute_raw_arm(self, target: Mapping[str, float], duration_s: float, staleness_s: float) -> ActionObservation:
         from action_msgs.msg import GoalStatus
         from control_msgs.action import FollowJointTrajectory
         from trajectory_msgs.msg import JointTrajectoryPoint
@@ -747,7 +959,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     arm = load_arm_config(args.arm_config)
     hard = load_hard_limits(arm.vendor_description_pkg, arm.ur_type)
-    limits = effective_limits(hard, load_hw_override(hard_limits=hard))
+    override = load_hw_override(hard_limits=hard)
+    limits = effective_limits(hard, override)
     output = _resolve_output_path(args.output)
     repo = next((parent for parent in (Path.cwd(), *Path.cwd().parents) if (parent / ".git").exists()), Path.cwd())
     if args.arm_config:
@@ -760,7 +973,15 @@ def main(argv: list[str] | None = None) -> int:
     import rclpy
 
     rclpy.init()
-    io = RosProbeIO(arm, args.timeout)
+
+    def context_provider():
+        return build_preflight_context(
+            expected_joint_names=arm.joints,
+            hard_limits=hard,
+            override_limits=override,
+        )
+
+    io = RosProbeIO(arm, args.timeout, context_provider=context_provider)
     try:
         return run_probe(
             io,
