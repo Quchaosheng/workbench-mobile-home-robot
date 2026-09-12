@@ -3,7 +3,7 @@ BSP-LINUX-001,linux,NVIDIA Jetson Orin Nano Super Developer Kit 8GB,1,use one bo
 BSP-STORAGE-001,linux,512GB NVMe SSD,1,use replaceable commodity storage,RECOMMENDED_PROTOTYPE,confirm endurance temperature and retained log budget
 BSP-CAN-001,linux,isolated USB-CAN-FD adapter,1,defer custom carrier CAN until prototype evidence,RECOMMENDED_PROTOTYPE,confirm SocketCAN support isolation CAN-FD bitrate and Linux driver
 BSP-CAMERA-001,perception,Intel RealSense D435,1,use one head RGB-D camera and add wrist cameras only from occlusion evidence,RECOMMENDED_PROTOTYPE,confirm exact SKU supply USB3 bandwidth mount envelope librealsense ROS2 compatibility and calibration
-BSP-BASE-001,mcu,STM32H563,1,combine traction encoders and lift on one MCU,RECOMMENDED_PROTOTYPE,confirm pin timer CAN-FD memory power and programming budget
+BSP-BASE-001,mcu,STM32G474RET6,1,combine traction encoders and lift on one MCU,RECOMMENDED_PROTOTYPE,confirm FDCAN pin/timer/ADC budget and programming path; replace legacy CH32V307 PCB U5 before CAN-FD bring-up
 BSP-SAFE-001,safety,STM32G0B1,1,use a small independent safety-domain MCU,RECOMMENDED_PROTOTYPE,confirm independent watchdog dual-channel IO reset and safety-owner review
 BSP-ARM-001,motion,vendor arm controller,2,avoid custom fourteen-joint controller development,SUPPLIER_TBD,obtain exact controller protocol firmware power reset and safety interface
 BSP-TOOL-001,motion,vendor tool controller or compact CAN-RS485 node,2,prefer integrated supplier controller,SUPPLIER_TBD,obtain exact tool protocol power limits firmware and reset behavior

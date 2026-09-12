@@ -13,7 +13,8 @@ Use this checklist before approving the prototype BSP baseline.
 
 - [ ] Jetson Orin Nano Super satisfies measured workload before any AGX upgrade.
 - [ ] NVMe, cooling and isolated CAN adapter are included in the prototype cost.
-- [ ] STM32H563 and STM32G0B1 lifecycle and lead time are acceptable.
+- [ ] STM32G474RET6 and STM32G0B1 lifecycle and lead time are acceptable.
+- [ ] The legacy CH32V307 PCB U5 is removed or explicitly isolated from the CAN-FD base-motion path.
 - [ ] Arm/tool controllers are included in supplier quotations and not double-counted.
 - [ ] No custom carrier-board spin is approved without measured prototype need.
 

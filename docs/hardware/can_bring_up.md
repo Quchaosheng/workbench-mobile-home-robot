@@ -80,7 +80,7 @@ Configure the adapter before enabling traffic:
 - install only the approved standard Wire V1 arbitration-ID filters and a
   separately reviewed CAN error filter;
 - keep standard, extended, RTR and error flag bits explicit;
-- require Classic CAN DLC 8 for Wire V1 and reject CAN-FD, truncation,
+- require Classic CAN DLC 8 for Wire V1 and reject CAN-FD payload frames,
   malformed ancillary data and contradictory raw IDs;
 - enable `SO_TIMESTAMPNS` and preserve the kernel timestamp, host monotonic
   observation, host wall-clock observation, source, interface and ingress
@@ -94,6 +94,10 @@ Configure the adapter before enabling traffic:
 Only complete ACK, STOP_ACK and telemetry frames cross the Wire V1 boundary.
 Malformed, duplicate, late, uncorrelated, error and post-shutdown frames are
 rejections and cannot refresh a command or claim completion.
+
+Wire V1 intentionally uses Classic CAN frames with DLC 8 while the selected
+STM32G474/STM32G0B1 controllers retain FDCAN hardware for a later reviewed
+transport upgrade. This does not make the legacy CH32V307 PCB a CAN-FD node.
 
 ## 4. Six-domain discovery and recovery
 

@@ -21,7 +21,7 @@ gates:
     owner: MCU and Electrical Owners
     status: BLOCKED
     evidence: NOT_ATTACHED
-    requirement: STM32H563 and STM32G0B1 pin budgets and programming paths are approved
+    requirement: STM32G474RET6 FDCAN base and STM32G0B1 safety pin budgets and programming paths are approved; legacy CH32V307 PCB U5 is removed or isolated
   - id: BSP-GATE-SAFETY
     owner: Safety Owner
     status: BLOCKED

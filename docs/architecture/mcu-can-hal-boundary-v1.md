@@ -134,7 +134,11 @@ No option is selected or inferred by Issue #180's platform-independent slice.
 | Host fake | `PASS` | `PASS` for bounded fake queues | No controller, wire or physical timing. |
 | RISC-V QEMU | `PASS` | `NOT_EXECUTED` | `hal_can_init/send/recv` remain false-returning stubs. |
 | Legacy CH32V307 target | build source absent | `NOT_EXECUTED` | No board HAL, linker/startup package or board run. |
-| BSP STM32H563 / STM32G0B1 | target absent | `NOT_EXECUTED` | No approved clock, pin, transceiver, filter, IRQ, linker or vendor HAL inputs. |
+| BSP STM32G474RET6 / STM32G0B1 | target absent | `NOT_EXECUTED` | No approved clock, pin, FDCAN, transceiver, filter, IRQ, linker or vendor HAL inputs. |
+
+CH32V307 remains a legacy PCB/firmware target only. Its CAN peripheral is
+classic CAN 2.0B, so it must not be used as the `MCU-BASE` endpoint on the
+CAN-FD backbone without an explicit architecture change and bus downgrade.
 
 The Host/QEMU tests prove envelope validation, codec reuse, direction gates,
 STOP-first dispatch and transport-handoff state semantics. They do not prove a

@@ -95,11 +95,14 @@ def validate() -> list[str]:
         "CONFIG_CAN=y",
         "CONFIG_CAN_RAW=y",
         "CONFIG_CAN_DEV=y",
+        "CONFIG_CAN_FD_MODE=y",
+        "CONFIG_CAN_PEAK_USB=m",
         "CONFIG_WATCHDOG=y",
         "CONFIG_PSTORE=y",
         "CONFIG_VIDEO_DEV=y",
         "CONFIG_VIDEO_V4L2=y",
         "CONFIG_USB_VIDEO_CLASS=y",
+        "CONFIG_BLK_DEV_NVME=y",
     }
     missing_symbols = sorted(symbol for symbol in required_symbols if symbol not in kernel_config.splitlines())
     if missing_symbols:
