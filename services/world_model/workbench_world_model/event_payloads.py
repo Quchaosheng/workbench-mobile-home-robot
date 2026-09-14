@@ -2,26 +2,51 @@
 
 from __future__ import annotations
 
-import json
 import math
 from copy import deepcopy
 from typing import Any
 
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 from workbench_contracts import (
+    ATTRIBUTE_SCHEMA_VERSION,
+    LEGACY_ATTRIBUTE_MIGRATION_VERSION,
+    MAX_ATTRIBUTE_COUNT,
+    MAX_ATTRIBUTE_EVIDENCE_REF_COUNT,
+    MAX_ATTRIBUTE_EVIDENCE_REF_LENGTH,
+    MAX_ATTRIBUTE_KEY_LENGTH,
+    MAX_ATTRIBUTE_METADATA_JSON_BYTES,
+    MAX_ATTRIBUTE_VALUE_LENGTH,
+    MAX_ATTRIBUTES_JSON_BYTES,
     ActionOutcome,
     ActionResult,
+    AttributeUpdateMode,
     ClockId,
     DeviceState,
     DispatchState,
     WorldEvent,
     WorldEventType,
+    legacy_attribute_keys_allowed,
+    materialize_attribute_metadata,
+    validate_attribute_evidence_refs,
+    validate_observed_attributes,
 )
 
-MAX_ATTRIBUTE_COUNT = 32
-MAX_ATTRIBUTE_KEY_LENGTH = 64
-MAX_ATTRIBUTE_VALUE_LENGTH = 256
-MAX_ATTRIBUTES_JSON_BYTES = 4096
+_ATTRIBUTE_SCHEMA_VERSION_FIELD = "attributes_schema_version"
+_MISSING = object()
+
+__all__ = [
+    "MAX_ATTRIBUTES_JSON_BYTES",
+    "MAX_ATTRIBUTE_COUNT",
+    "MAX_ATTRIBUTE_EVIDENCE_REF_COUNT",
+    "MAX_ATTRIBUTE_EVIDENCE_REF_LENGTH",
+    "MAX_ATTRIBUTE_KEY_LENGTH",
+    "MAX_ATTRIBUTE_METADATA_JSON_BYTES",
+    "MAX_ATTRIBUTE_VALUE_LENGTH",
+    "TypedActionResult",
+    "WorldEventPayloadValidationError",
+    "normalize_action_result_payload",
+    "normalize_world_event",
+]
 
 
 class WorldEventPayloadValidationError(ValueError):
@@ -34,50 +59,72 @@ def _strict_non_blank_string(value: object, field_name: str) -> str:
     return value
 
 
-def _normalize_attributes(value: object) -> dict[str, str]:
-    if type(value) is not dict:
-        raise WorldEventPayloadValidationError("attributes must be a string-to-string mapping")
-    if len(value) > MAX_ATTRIBUTE_COUNT:
-        raise WorldEventPayloadValidationError(f"attributes must contain at most {MAX_ATTRIBUTE_COUNT} entries")
-
-    normalized: dict[str, str] = {}
-    for key, item in value.items():
-        if type(key) is not str or not key.strip():
-            raise WorldEventPayloadValidationError("attributes keys must be non-empty strings")
-        if len(key) > MAX_ATTRIBUTE_KEY_LENGTH:
-            raise WorldEventPayloadValidationError(
-                f"attributes keys must be at most {MAX_ATTRIBUTE_KEY_LENGTH} characters"
-            )
-        if type(item) is not str or not item.strip():
-            raise WorldEventPayloadValidationError("attributes values must be non-empty strings")
-        if len(item) > MAX_ATTRIBUTE_VALUE_LENGTH:
-            raise WorldEventPayloadValidationError(
-                f"attributes values must be at most {MAX_ATTRIBUTE_VALUE_LENGTH} characters"
-            )
-        normalized[key] = item
-
+def _normalize_attributes(
+    value: object,
+    *,
+    entity_type: object | None = None,
+    allow_unknown_keys: bool = False,
+) -> dict[str, str]:
     try:
-        encoded = json.dumps(
-            normalized,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    except UnicodeEncodeError as error:
-        raise WorldEventPayloadValidationError("attributes must be valid UTF-8 JSON strings") from error
-    if len(encoded) > MAX_ATTRIBUTES_JSON_BYTES:
-        raise WorldEventPayloadValidationError(
-            f"attributes canonical UTF-8 JSON must be at most {MAX_ATTRIBUTES_JSON_BYTES} bytes"
+        return validate_observed_attributes(
+            value,
+            entity_type=entity_type if entity_type is not None else None,
+            allow_unknown_keys=allow_unknown_keys,
         )
-    return normalized
+    except ValueError as error:
+        raise WorldEventPayloadValidationError(str(error)) from error
 
 
-def _normalize_observation_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _normalize_attributes_mode(value: object) -> str:
+    if isinstance(value, AttributeUpdateMode):
+        return value.value
+    if type(value) is not str:
+        raise WorldEventPayloadValidationError("attributes_mode must be a string enum value")
+    try:
+        return AttributeUpdateMode(value).value
+    except ValueError as error:
+        raise WorldEventPayloadValidationError("attributes_mode must be 'complete' or 'partial'") from error
+
+
+def _normalize_attribute_schema_version(value: object) -> str:
+    if type(value) is not str:
+        raise WorldEventPayloadValidationError(f"{_ATTRIBUTE_SCHEMA_VERSION_FIELD} must be a string enum value")
+    if value not in {ATTRIBUTE_SCHEMA_VERSION, LEGACY_ATTRIBUTE_MIGRATION_VERSION}:
+        raise WorldEventPayloadValidationError(
+            f"{_ATTRIBUTE_SCHEMA_VERSION_FIELD} must be {ATTRIBUTE_SCHEMA_VERSION!r} "
+            f"or {LEGACY_ATTRIBUTE_MIGRATION_VERSION!r}"
+        )
+    return value
+
+
+def _looks_like_legacy_attribute_payload(payload: dict[str, Any]) -> bool:
+    # Old reducer events carried only entity/location/confidence. Once a
+    # producer supplies modern identity/timing fields, omission of the
+    # explicit version is treated as malformed rather than silently migrated.
+    return not any(field in payload for field in ("entity_type", "observed_at", "clock_id", "source"))
+
+
+def _normalize_observation_payload(
+    payload: dict[str, Any],
+    *,
+    event_occurred_at: object,
+    event_clock_id: object,
+    event_evidence_refs: object,
+) -> dict[str, Any]:
     normalized = deepcopy(payload)
 
     if "entity_id" not in normalized:
         raise WorldEventPayloadValidationError("entity_id is required")
     normalized["entity_id"] = _strict_non_blank_string(normalized["entity_id"], "entity_id")
+
+    for field_name in ("entity_type", "observed_at", "source"):
+        if field_name in normalized:
+            if normalized[field_name] is None:
+                raise WorldEventPayloadValidationError(f"{field_name} may be omitted but cannot be null")
+            normalized[field_name] = _strict_non_blank_string(normalized[field_name], field_name)
+
+    if "clock_id" in normalized and normalized["clock_id"] is None:
+        raise WorldEventPayloadValidationError("clock_id may be omitted but cannot be null")
 
     if "location" in normalized:
         normalized["location"] = _strict_non_blank_string(normalized["location"], "location")
@@ -92,8 +139,97 @@ def _normalize_observation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise WorldEventPayloadValidationError("confidence must be finite and between 0 and 1")
     normalized["confidence"] = confidence_value
 
-    if "attributes" in normalized:
-        normalized["attributes"] = _normalize_attributes(normalized["attributes"])
+    attribute_fields = {
+        "attributes_mode",
+        _ATTRIBUTE_SCHEMA_VERSION_FIELD,
+        "attribute_metadata",
+    }
+    if "attributes" not in normalized and attribute_fields.intersection(normalized):
+        raise WorldEventPayloadValidationError("attribute metadata and version fields require attributes")
+
+    if "attributes" not in normalized:
+        return normalized
+
+    raw_version = normalized.get(_ATTRIBUTE_SCHEMA_VERSION_FIELD, _MISSING)
+    if raw_version is _MISSING:
+        if not _looks_like_legacy_attribute_payload(normalized):
+            raise WorldEventPayloadValidationError(
+                f"{_ATTRIBUTE_SCHEMA_VERSION_FIELD} is required for modern attributes"
+            )
+        version = LEGACY_ATTRIBUTE_MIGRATION_VERSION
+    else:
+        version = _normalize_attribute_schema_version(raw_version)
+    is_legacy_version = version == LEGACY_ATTRIBUTE_MIGRATION_VERSION
+    allow_legacy = is_legacy_version and legacy_attribute_keys_allowed(normalized.get("entity_type"))
+    normalized[_ATTRIBUTE_SCHEMA_VERSION_FIELD] = version
+
+    if "attributes_mode" in normalized:
+        if normalized["attributes_mode"] is None:
+            raise WorldEventPayloadValidationError("attributes_mode may be omitted but cannot be null")
+        normalized["attributes_mode"] = _normalize_attributes_mode(normalized["attributes_mode"])
+    else:
+        normalized["attributes_mode"] = AttributeUpdateMode.COMPLETE.value
+
+    if normalized["attributes"] is None:
+        raise WorldEventPayloadValidationError(
+            "attributes may be omitted but cannot be null; attributes must be a string-to-string mapping"
+        )
+
+    normalized["attributes"] = _normalize_attributes(
+        normalized["attributes"],
+        entity_type=normalized.get("entity_type"),
+        allow_unknown_keys=allow_legacy,
+    )
+
+    try:
+        normalized_event_evidence_refs = validate_attribute_evidence_refs(
+            event_evidence_refs,
+            field_name="event evidence_refs",
+            require_non_empty=False,
+        )
+    except (TypeError, ValueError) as error:
+        raise WorldEventPayloadValidationError(str(error)) from error
+
+    raw_clock_id = normalized.get("clock_id", event_clock_id)
+    if raw_clock_id is None:
+        raw_clock_id = ClockId.MONOTONIC
+    if isinstance(raw_clock_id, ClockId):
+        raw_clock_id = raw_clock_id.value
+    if type(raw_clock_id) is not str or raw_clock_id not in {ClockId.MONOTONIC.value, ClockId.WALL.value}:
+        raise WorldEventPayloadValidationError("attribute metadata clock_id must be monotonic or wall")
+    event_clock_value = event_clock_id.value if isinstance(event_clock_id, ClockId) else event_clock_id
+    if event_clock_value is not None and raw_clock_id != event_clock_value:
+        raise WorldEventPayloadValidationError("attribute metadata clock_id must match the enclosing WorldEvent")
+    normalized["clock_id"] = raw_clock_id
+
+    if not is_legacy_version:
+        for field_name in ("entity_type", "observed_at", "source"):
+            if field_name not in normalized:
+                raise WorldEventPayloadValidationError(f"modern attributes require event-level {field_name}")
+        if not normalized_event_evidence_refs:
+            raise WorldEventPayloadValidationError("modern attributes require event-level evidence_refs")
+
+    observed_at = normalized.get("observed_at", event_occurred_at)
+    source = normalized.get("source")
+    normalized["observed_at"] = observed_at
+    if source is not None:
+        normalized["source"] = source
+    if "attribute_metadata" in normalized and normalized["attribute_metadata"] is None:
+        raise WorldEventPayloadValidationError("attribute_metadata may be omitted but cannot be null")
+    try:
+        normalized["attribute_metadata"] = materialize_attribute_metadata(
+            normalized["attributes"],
+            normalized.get("attribute_metadata"),
+            observed_at=observed_at,
+            confidence=normalized["confidence"],
+            evidence_refs=normalized_event_evidence_refs,
+            clock_id=raw_clock_id,
+            source=source,
+            entity_type=normalized.get("entity_type"),
+            allow_unknown_keys=allow_legacy,
+        )
+    except (TypeError, ValueError) as error:
+        raise WorldEventPayloadValidationError(str(error)) from error
 
     return normalized
 
@@ -199,7 +335,12 @@ def normalize_world_event(
     """Return a detached event with validated, normalized state-affecting payload."""
 
     if event.event_type is WorldEventType.OBSERVATION:
-        payload = _normalize_observation_payload(event.payload)
+        payload = _normalize_observation_payload(
+            event.payload,
+            event_occurred_at=event.occurred_at,
+            event_clock_id=event.clock_id,
+            event_evidence_refs=event.evidence_refs,
+        )
     elif event.event_type is WorldEventType.ACTION_RESULT:
         payload = normalize_action_result_payload(
             event.payload,

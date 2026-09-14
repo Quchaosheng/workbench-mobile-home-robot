@@ -8,7 +8,7 @@ bring-up remains a separate evidence gate.
 |---|---|---|---|
 | BSP-0 | six-domain topology, ownership and CAN contract | COMPLETE | architecture docs and manifest |
 | BSP-1 | Jetson board, carrier, power and thermal closure | BLOCKED | vendor schematic, load test, approved BOM |
-| BSP-2 | STM32H563 base and STM32G0B1 safety closure | BLOCKED | part/revision, pin budget, programming and safety review |
+| BSP-2 | STM32G474RET6 base and STM32G0B1 safety closure | BLOCKED | part/revision, FDCAN/pin budget, programming and safety review; legacy CH32V307 PCB ECO |
 | BSP-3 | kernel config, device tree and interface enumeration | READY_TO_START | BSP-1/BSP-2 inputs |
 | BSP-4 | bootloader, rootfs, firmware bundle and recovery image | READY_TO_START | reproducible build and recovery transcript |
 | BSP-5 | CAN discovery, six heartbeats, STOP and reset validation | NOT_EXECUTED | guarded hardware capture |

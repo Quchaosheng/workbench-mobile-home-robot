@@ -27,6 +27,8 @@ linux_board:
 controller_domains:
   - id: MCU-BASE
     node_id: 0x10
+    part: STM32G474RET6
+    can_controller: FDCAN
     role: traction_and_lift
     reset_domain: base_motion
   - id: ARM-L-CTRL
@@ -65,7 +67,8 @@ boundaries:
   physical_bringup_complete: false
 robot_owned_mcus:
   - id: MCU-BASE
-    part: STM32H563
+    part: STM32G474RET6
+    can_controller: FDCAN
     selection_status: recommended_prototype_selection
   - id: MCU-SAFETY
     part: STM32G0B1

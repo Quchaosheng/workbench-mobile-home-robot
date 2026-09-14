@@ -11,7 +11,7 @@ electrical approval are still required before purchase or safety release.
 | Linux storage | one  NVMe SSD, 512 GB minimum | avoids removable-SD wear for logs and models; capacity can be increased without changing the BSP |
 | Linux cooling | vendor active cooler plus chassis airflow | required for sustained vision workloads; no passive-only assumption |
 | Linux CAN during prototype | one isolated USB-CAN-FD adapter | avoids an immediate custom carrier-board CAN spin; replaceable during bring-up |
-| `MCU-BASE` | STM32H563, CAN-FD capable, 250 MHz class | one inexpensive MCU covers traction, encoders, lift and chassis telemetry with timing margin |
+| `MCU-BASE` | STM32G474RET6, FDCAN-capable motor-control MCU | one MCU covers traction, encoders, lift and chassis telemetry with the required FDCAN and timer/ADC peripherals |
 | `MCU-SAFETY` | STM32G0B1, independent CAN-FD and safety GPIO domain | low-cost, simple safety controller with separate reset and watchdog domain |
 | `ARM-L-CTRL` / `ARM-R-CTRL` | vendor arm controller supplied with each arm | do not duplicate a proprietary servo controller in the robot BSP |
 | `TOOL-L-CTRL` / `TOOL-R-CTRL` | integrated vendor tool controller where available; otherwise small vendor CAN/RS-485 node | select per end-effector; keep the interface domain independent |
@@ -38,8 +38,9 @@ integrated into an arm or tool.
 
 1. Confirm the Jetson carrier power input, sustained thermal envelope, camera
    count/bandwidth, and Linux BSP/JetPack release.
-2. Confirm the STM32H563 pin budget for traction, lift, encoders, CAN and
-   service programming; reserve safe output pins for hardware inhibit.
+2. Confirm the STM32G474RET6 FDCAN, timer, ADC, encoder, lift and service-
+   programming pin budget; reserve safe output pins for hardware inhibit and
+   replace the legacy CH32V307 PCB U5 before CAN-FD bring-up.
 3. Confirm the STM32G0B1 independent watchdog, dual-channel E-stop inputs,
    safe-enable outputs and reset behavior with the Safety Owner.
 4. Obtain arm and tool controller protocols, power limits, CAN IDs and reset

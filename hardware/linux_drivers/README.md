@@ -17,6 +17,10 @@ LINUX3 的软件 UART/SPI 帧契约和 fake transport 位于
 [`uart_spi/README.md`](uart_spi/README.md)。该实现只验证有界编码、CRC、序号、背压、
 重试和错误处理；真实控制器、pinmux、设备树、DMA 和 IRQ 参数仍由硬件负责人确认。
 
+LINUX6 的 IRQ 生命周期和 fake provider 位于
+[`irq/README.md`](irq/README.md)。它只验证共享线路、上半部/下半部、取消、flush 和
+停止同步；真实 IRQ 资源和 jitter 证据仍由硬件 Owner 确认。
+
 ## 分层边界
 
 ```text

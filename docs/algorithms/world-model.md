@@ -109,6 +109,76 @@ forwards, then assert the state is still correct.
 Timeout logic must use monotonic. With wall clock, a single NTP correction can
 fire or suppress a watchdog.
 
+### Bounded observed attributes
+
+Observed attributes follow the same evidence-first rule as pose and location:
+the value is useful only when the system can identify when, how confidently,
+and from which evidence it was observed. The public contract therefore carries
+three related fields on an entity or observation:
+
+```json
+{
+  "attributes": {"condition": "intact"},
+  "attributes_mode": "complete",
+  "attributes_schema_version": "observed-attributes-v1",
+  "attribute_metadata": {
+    "condition": {
+      "observed_at": "2026-08-25T00:00:00Z",
+      "confidence": 0.95,
+      "evidence_refs": ["frame://attribute/001"],
+      "belief": "observed",
+      "clock_id": "wall",
+      "source": "camera-01"
+    }
+  }
+}
+```
+
+The vocabulary is finite and entity-scoped. Common entities may report
+`colour`, `presence`, `identity`, and `orientation`; parcel entities may also
+report `label_status`, `condition`, `tracking_id`, `barcode`, and `parcel_uid`;
+appliances and managed slots use the documented door/rack and slot keys. An
+unknown entity type receives only the common keys. Values are strings, with a
+maximum of 32 entries, 64 characters per key, 256 characters per value, and
+4096 bytes of canonical UTF-8 JSON. Text must be printable, valid UTF-8, and
+free of surrounding whitespace. Enumerated keys are validated against the
+finite values in `workbench_contracts.observed_attributes`.
+
+Metadata is bounded independently: at most 32 keys and 16 KiB of canonical
+UTF-8 JSON; timestamps, sources, and evidence references are bounded text;
+evidence has one to 32 unique references; confidence is finite and in `[0, 1]`;
+and belief is one of `observed`, `inferred`, `stale`, or `lost`. Modern
+`observed-attributes-v1` payloads require metadata for every attribute. The
+explicit `legacy-observed-attributes-v0` marker is a compatibility path for
+older parcel events, not a way to introduce unknown keys or unbounded data.
+
+Reducer update semantics are intentionally asymmetric:
+
+| Update | Meaning | Required invariant |
+|---|---|---|
+| `complete` | Replace the entity's attribute values and metadata; omitted keys are removed. | Establishes or resets the complete baseline. |
+| `partial` | Merge only the named keys and retain other baseline keys. | A prior complete baseline must exist; older per-key metadata cannot overwrite newer metadata. |
+
+The reducer replays these updates by `sequence_no`, ignores provably older wall
+timestamps, and treats duplicate event IDs idempotently. A schema-version
+conflict is rejected except for an explicit legacy-to-modern complete migration.
+`ActionResult` events never enter this attribute update path, so a reported
+action cannot manufacture observation truth.
+
+Attribute metadata ages with the same explicit replay boundary as other world
+facts. Callers provide both an `ObservationFreshnessPolicy` for the exact
+`(source, entity_type)` pair and an `ObservationAgingBoundary`; the aging code
+does not read process time or apply a wildcard fallback. Comparable wall-clock
+metadata becomes `observed`, then `stale`, then `lost` at the configured
+thresholds. Missing, future, incomparable, or unconfigured timestamps are
+`lost`; an `inferred` value remains inferred while its observation is fresh.
+
+The canonical public `WorldState` projection includes attribute values, their
+schema version, metadata, and evidence in `state_hash` material. Snapshot
+timing metadata such as `reduced_at` is excluded from the semantic hash. This
+keeps replay integrity sensitive to a changed observed fact while avoiding a
+hash change caused only by when a snapshot was serialized.
+
 ---
 
 ## 2. Multi-hypothesis tracking

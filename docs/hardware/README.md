@@ -5,6 +5,7 @@ Hardware bring-up notes and integration guides.
 - [Hardware wiring](wiring.md): controlled connector map and safe connection order.
 - [Physical bring-up](bringup.md): HIL bench, staged power-up, evidence, debugging, and defects.
 - [HW1 UR5e extraction](hw1-ur5e-extraction.md): source and configuration notes.
+- [Hardware selection closure](hardware-selection-closure.md): purchase blockers, missing selections, owners, and acceptance evidence.
 
 General rule: all bring-up steps are scripted where possible. If a step
 requires manual action (physical wiring, screwdriver), it is documented

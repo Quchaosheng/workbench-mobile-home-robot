@@ -176,15 +176,20 @@ def test_generated_models_enforce_repository_constraints(tmp_path: Path) -> None
         )
 
 
-def test_generated_semantic_action_enforces_structural_navigate_constraints(tmp_path: Path) -> None:
+def test_generated_semantic_action_enforces_structural_bounded_action_constraints(tmp_path: Path) -> None:
     semantic_action = generated_model(tmp_path, "semantic_action", "SemanticAction")
 
-    assert semantic_action(
-        action_id="act-navigate",
-        action_type="navigate",
-        target_id="workbench_home",
-        parameters={},
-    )
+    for action_type, target_id in (
+        ("navigate", "workbench_home"),
+        ("open", "washer_door_fixture"),
+        ("close", "dishwasher_rack_fixture"),
+    ):
+        assert semantic_action(
+            action_id=f"act-{action_type}",
+            action_type=action_type,
+            target_id=target_id,
+            parameters={},
+        )
     assert semantic_action(
         action_id="act-place",
         action_type="place",
@@ -209,6 +214,18 @@ def test_generated_semantic_action_enforces_structural_navigate_constraints(tmp_
             "action_id": "act-navigate",
             "action_type": "navigate",
             "parameters": {},
+        },
+        {
+            "action_id": "act-open",
+            "action_type": "open",
+            "target_id": "washer_door_fixture",
+            "parameters": {"force": 1.0},
+        },
+        {
+            "action_id": "act-close",
+            "action_type": "close",
+            "target_id": "dishwasher_rack_fixture",
+            "parameters": {"velocity": 0.1},
         },
     )
     for payload in invalid_payloads:
@@ -237,6 +254,48 @@ def test_generated_models_validate_local_references(tmp_path: Path) -> None:
     valid["pose"]["position"]["x"] = "not-a-number"
     with pytest.raises(ValueError):
         observation(**valid)
+
+
+def test_generated_model_preserves_required_guard_on_const_conditional(tmp_path: Path) -> None:
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    (schema_dir / "conditional.schema.json").write_text(
+        json.dumps(
+            {
+                "title": "Conditional",
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "version": {"type": "string", "enum": ["v1", "legacy"]},
+                    "metadata": {"type": "object"},
+                },
+                "allOf": [
+                    {
+                        "if": {
+                            "required": ["version"],
+                            "properties": {"version": {"const": "v1"}},
+                        },
+                        "then": {"required": ["metadata"]},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    compiler = SchemaCompiler(schema_dir)
+    compiler.load_schemas()
+    output = tmp_path / "python"
+    compiler.compile_all(output, tmp_path / "typescript")
+    namespace = {}
+    generated = output / "conditional.py"
+    exec(compile(generated.read_text(encoding="utf-8"), str(generated), "exec"), namespace)
+    model = namespace["Conditional"]
+
+    assert model() is not None
+    assert model(version="legacy") is not None
+    assert model(version="v1", metadata={}) is not None
+    with pytest.raises(ValueError, match="metadata is required"):
+        model(version="v1")
 
 
 def test_generated_mcu_model_enforces_protocol_branches(tmp_path: Path) -> None:

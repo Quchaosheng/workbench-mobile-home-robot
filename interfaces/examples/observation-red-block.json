@@ -15,5 +15,18 @@
   "observed_at": "2026-08-04T00:00:00Z",
   "clock_id": "monotonic",
   "source": "gazebo_camera",
-  "evidence_refs": ["camera-frame-001"]
+  "evidence_refs": ["camera-frame-001"],
+  "attributes": {"colour": "red"},
+  "attributes_mode": "complete",
+  "attributes_schema_version": "observed-attributes-v1",
+  "attribute_metadata": {
+    "colour": {
+      "observed_at": "2026-08-04T00:00:00Z",
+      "confidence": 0.98,
+      "evidence_refs": ["camera-frame-001"],
+      "belief": "observed",
+      "clock_id": "monotonic",
+      "source": "gazebo_camera"
+    }
+  }
 }

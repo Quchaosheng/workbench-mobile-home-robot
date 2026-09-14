@@ -99,6 +99,10 @@ LINUX5/LINUX6 的实现必须在硬件资源确认后补充以下内容：
 寄存器/设备树资源和内核版本，再分别实现 CAN、UART/SPI、GPIO、DMA 和 IRQ 模块，
 并沿用本架构的错误回滚、数据所有权和证据要求。
 
+LINUX6 的 IRQ 生命周期和 fake provider 位于 `hardware/linux_drivers/irq/`。它固化
+共享线路、上半部确认、下半部 work、取消/flush 和停止同步测试，但不冻结真实 IRQ
+资源、调度优先级、PREEMPT_RT 或物理 jitter 预算。
+
 LINUX3 的 UART/SPI 软件契约和 fake transport 测试位于仓库的
 `hardware/linux_drivers/uart_spi/`。该契约是 owner-gated 的提案：它固化边界、CRC、
 序号、背压和重试测试，但不冻结物理控制器、pinmux、设备树、DMA 或 IRQ 参数。

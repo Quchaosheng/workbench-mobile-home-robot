@@ -520,6 +520,93 @@ def test_navigate_does_not_change_independent_stop_preemption() -> None:
 
 
 @pytest.mark.parametrize(
+    ("action_type", "target_id"),
+    [
+        (ActionType.OPEN, "washer_door_fixture"),
+        (ActionType.CLOSE, "dishwasher_rack_fixture"),
+    ],
+    ids=["open", "close"],
+)
+def test_open_and_close_forward_only_typed_intent(action_type: ActionType, target_id: str) -> None:
+    action = _action(f"act-{action_type.value}", action_type, target_id=target_id)
+    adapter = FakeAdapter()
+
+    report = _controller(adapter).execute(_graph(action))
+
+    assert report.terminal_state is ExecutionState.SUCCEEDED
+    assert adapter.calls == [action.action_id]
+    assert adapter.action_payloads == [
+        {
+            "action_id": action.action_id,
+            "action_type": action_type.value,
+            "target_id": target_id,
+            "parameters": {},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("action_type", "target_id"),
+    [
+        (ActionType.OPEN, "not-configured-door"),
+        (ActionType.CLOSE, "not-configured-rack"),
+    ],
+    ids=["open", "close"],
+)
+def test_unknown_articulated_target_is_an_explicit_adapter_failure(
+    action_type: ActionType,
+    target_id: str,
+) -> None:
+    action_id = f"act-{action_type.value}-unknown"
+    graph = _graph(_action(action_id, action_type, target_id=target_id))
+    unknown_target = ActionResult(
+        result_id=f"result-{action_id}",
+        action_id=action_id,
+        run_id="run-controller-test",
+        outcome=ActionOutcome.FAILED,
+        dispatch_state=DispatchState.SENT,
+        device_state=DeviceState.REJECTED,
+        error_reason="unknown_articulated_target",
+        started_at="2026-09-05T00:00:00Z",
+        ended_at="2026-09-05T00:00:01Z",
+    )
+    adapter = FakeAdapter({action_id: unknown_target})
+
+    report = _controller(adapter).execute(graph)
+
+    assert report.terminal_state is ExecutionState.FAILED
+    assert report.reason_code is ExecutionReasonCode.ACTION_FAILED
+    assert adapter.calls == [action_id]
+    assert report.records[0].result is not None
+    assert report.records[0].result.error_reason == "unknown_articulated_target"
+
+
+@pytest.mark.parametrize("action_type", [ActionType.OPEN, ActionType.CLOSE], ids=lambda item: item.value)
+def test_open_and_close_preserve_independent_stop_preemption(action_type: ActionType) -> None:
+    action = _action(f"act-{action_type.value}", action_type, target_id="fixture-target")
+    stop_action = _action("act-stop", ActionType.STOP)
+    controller: ExecutionController
+
+    def request_stop_after_action(dispatched: SemanticAction) -> None:
+        if dispatched.action_id == action.action_id:
+            assert controller.request_stop(stop_action) is StopRequestStatus.ACCEPTED
+
+    adapter = FakeAdapter(
+        {stop_action.action_id: _result(stop_action.action_id)},
+        before_return=request_stop_after_action,
+    )
+    controller = _controller(adapter)
+
+    report = controller.execute(_graph(action, _action("act-after")))
+
+    assert adapter.calls == [action.action_id, stop_action.action_id]
+    assert report.terminal_state is ExecutionState.STOPPED
+    assert report.reason_code is ExecutionReasonCode.STOP_DISPATCHED
+    assert report.records[1].transitions == (ExecutionState.PENDING,)
+    assert report.records[-1].action_id == stop_action.action_id
+
+
+@pytest.mark.parametrize(
     "invalid_result",
     [object(), _result("wrong-action-id")],
     ids=["non_action_result", "mismatched_action_id"],

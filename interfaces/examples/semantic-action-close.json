@@ -1,0 +1,6 @@
+{
+  "action_id": "act-close-dishwasher-rack",
+  "action_type": "close",
+  "target_id": "dishwasher_rack_fixture",
+  "parameters": {}
+}

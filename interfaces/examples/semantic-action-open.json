@@ -1,0 +1,6 @@
+{
+  "action_id": "act-open-washer-door",
+  "action_type": "open",
+  "target_id": "washer_door_fixture",
+  "parameters": {}
+}

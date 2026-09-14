@@ -1,4 +1,4 @@
-"""Parameter schemas for the seven semantic-action tools.
+"""Parameter schemas for the nine semantic-action tools.
 
 Each tool is defined by its ActionType, a set of required and optional parameter
 keys, and the expected Python type for each parameter value.  The schemas here
@@ -114,6 +114,24 @@ TOOL_SCHEMAS: dict[ActionType, dict[str, object]] = {
     },
     ActionType.NAVIGATE: {
         "description": "Navigate to a configured waypoint; the executor resolves target_id.",
+        "target_id_required": True,
+        "required_params": frozenset[str](),
+        "optional_params": frozenset[str](),
+        "param_types": {},
+        "param_constraints": {},
+        "relational_constraints": frozenset[str](),
+    },
+    ActionType.OPEN: {
+        "description": "Open a configured articulated entity; motion policy and geometry remain executor-owned.",
+        "target_id_required": True,
+        "required_params": frozenset[str](),
+        "optional_params": frozenset[str](),
+        "param_types": {},
+        "param_constraints": {},
+        "relational_constraints": frozenset[str](),
+    },
+    ActionType.CLOSE: {
+        "description": "Close a configured articulated entity; motion policy and geometry remain executor-owned.",
         "target_id_required": True,
         "required_params": frozenset[str](),
         "optional_params": frozenset[str](),

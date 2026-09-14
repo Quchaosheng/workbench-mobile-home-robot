@@ -14,7 +14,19 @@
       "belief": "observed",
       "confidence": 0.96,
       "last_observed_at": "2026-08-04T00:00:16.100Z",
-      "evidence_refs": ["obs-005"]
+      "evidence_refs": ["obs-005"],
+      "attributes": {"colour": "red"},
+      "attributes_schema_version": "observed-attributes-v1",
+      "attribute_metadata": {
+        "colour": {
+          "observed_at": "2026-08-04T00:00:16.100Z",
+          "confidence": 0.96,
+          "evidence_refs": ["obs-005"],
+          "belief": "observed",
+          "clock_id": "monotonic",
+          "source": "gazebo_camera"
+        }
+      }
     },
     {
       "entity_id": "tray",

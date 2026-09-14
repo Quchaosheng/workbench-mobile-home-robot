@@ -1,6 +1,7 @@
 # Safety MCU firmware
 
-Target: RISC-V rv32imac. Reference part: CH32V307.
+Legacy target: RISC-V rv32imac on CH32V307. The current BSP `MCU-BASE`
+candidate is STM32G474RET6 for FDCAN and requires a separate HAL/PCB ECO.
 Decision and rationale: `docs/decisions/ADR-0003-mcu-riscv-qemu.md`.
 
 ## Layout
@@ -10,7 +11,7 @@ core/           platform-independent C. State machine, frame codec,
                 HAL/Wire bridge, watchdog timing, dedup, ring buffers.
                 No peripheral registers. No vendor headers.
 hal/qemu/       QEMU target, CTU CAN FD over PCI. Used by CI.
-hal/ch32v307/   real board, CH32V307 CAN peripheral. P3.
+hal/ch32v307/   legacy real board, CH32V307 classic CAN peripheral. P3.
 hal/host/       x86_64 build, for fast logic tests.
 tests/          shared test suite, runs against all three targets.
 ```

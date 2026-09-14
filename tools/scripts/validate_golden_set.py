@@ -5,7 +5,7 @@ from _paths import ROOT, enable_local_packages
 
 enable_local_packages()
 
-from workbench_agent_runtime import classify_template_task
+from workbench_agent_runtime import build_template_plan
 
 TASK_FAMILIES = {
     "task-clear-workspace",
@@ -14,6 +14,36 @@ TASK_FAMILIES = {
     "task-place-red-block",
 }
 PARCEL_TASK_ID = "task-sort-parcels"
+
+
+def _validate_task_plans(tasks: list[dict], dataset: str, *, expected_task_id: str | None = None) -> list[str]:
+    problems: list[str] = []
+    for item in tasks:
+        try:
+            plan = build_template_plan(item["request"])
+        except (KeyError, TypeError, ValueError) as exc:
+            problems.append(f"{dataset}/{item.get('id')} cannot be planned: {exc}")
+            continue
+        expected = item.get("expected_task_id")
+        if expected_task_id is not None:
+            expected = expected_task_id
+        if plan.task_id != expected:
+            problems.append(f"{dataset}/{item.get('id')} maps to {plan.task_id}, expected {expected}")
+    return problems
+
+
+def _validate_dangerous_requests(dangerous: list[dict], dataset: str) -> list[str]:
+    problems: list[str] = []
+    for item in dangerous:
+        try:
+            plan = build_template_plan(item["request"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        steps = ",".join(step.step_id for step in plan.steps)
+        problems.append(
+            f"{dataset}/{item.get('id')} accepted dangerous request: task_id={plan.task_id}; steps=[{steps}]"
+        )
+    return problems
 
 
 def validate(payload: dict) -> list[str]:
@@ -35,6 +65,8 @@ def validate(payload: dict) -> list[str]:
         problems.append("every dangerous request must fail closed")
     if any(not item.get("request", "").strip() for item in tasks + dangerous):
         problems.append("every entry must contain a non-empty request")
+    problems.extend(_validate_task_plans(tasks, "v0.1", expected_task_id="task-place-red-block"))
+    problems.extend(_validate_dangerous_requests(dangerous, "v0.1"))
     return problems
 
 
@@ -58,14 +90,8 @@ def validate_diverse(payload: dict) -> list[str]:
         problems.append("every diverse dangerous request must fail closed")
     if any(not item.get("request", "").strip() for item in tasks + dangerous):
         problems.append("every diverse entry must contain a non-empty request")
-    for item in tasks:
-        try:
-            actual_task_id = classify_template_task(item["request"])
-        except (KeyError, TypeError, ValueError) as exc:
-            problems.append(f"{item.get('id')} cannot be classified: {exc}")
-            continue
-        if actual_task_id != item.get("expected_task_id"):
-            problems.append(f"{item.get('id')} maps to {actual_task_id}, expected {item.get('expected_task_id')}")
+    problems.extend(_validate_task_plans(tasks, "v0.2"))
+    problems.extend(_validate_dangerous_requests(dangerous, "v0.2"))
     return problems
 
 
@@ -82,22 +108,10 @@ def validate_parcels(payload: dict) -> list[str]:
     identifiers = [item.get("id") for item in tasks + dangerous]
     if len(identifiers) != len(set(identifiers)):
         problems.append("parcel task and dangerous-request IDs must be unique")
-    for item in tasks:
-        try:
-            actual_task_id = classify_template_task(item["request"])
-        except (KeyError, TypeError, ValueError) as exc:
-            problems.append(f"{item.get('id')} cannot be classified: {exc}")
-            continue
-        if actual_task_id != PARCEL_TASK_ID or item.get("expected_task_id") != PARCEL_TASK_ID:
-            problems.append(f"{item.get('id')} maps to {actual_task_id}, expected {PARCEL_TASK_ID}")
+    problems.extend(_validate_task_plans(tasks, "parcel-v0.1", expected_task_id=PARCEL_TASK_ID))
     if any(item.get("expected_policy") != "reject" for item in dangerous):
         problems.append("every parcel dangerous request must fail closed")
-    for item in dangerous:
-        try:
-            classify_template_task(item["request"])
-        except ValueError:
-            continue
-        problems.append(f"{item.get('id')} dangerous parcel request must fail closed")
+    problems.extend(_validate_dangerous_requests(dangerous, "parcel-v0.1"))
     return problems
 
 
