@@ -16,6 +16,8 @@
 
   <!-- ROS 2 runtime deps are apt/rosdep-managed, not uv-managed. -->
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>rosidl_runtime_py</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 

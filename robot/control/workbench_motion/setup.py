@@ -12,7 +12,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
-        ("share/" + package_name + "/config", glob("config/*.yaml") + glob("config/*.xacro")),
+        ("share/" + package_name + "/config", glob("config/*.yaml") + glob("config/*.xacro") + glob("config/*.rviz")),
         ("share/" + package_name + "/config/moveit", glob("config/moveit/*")),
         # The workbench world xacro is owned by robot/description (not a ROS
         # package, no package.xml). We *vendor a copy into our share* at build
@@ -33,6 +33,7 @@ setup(
             "scaffold_node = workbench_motion.scaffold_node:main",
             "reachability_check = workbench_motion.reachability_check:main",
             "phase2_probe = workbench_motion.phase2_probe:main",
+            "motion_benchmark = workbench_motion.motion_benchmark:main",
         ],
     },
 )

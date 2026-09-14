@@ -1,0 +1,26 @@
+# Conservative M1 simulation research envelope, NOT certified hardware limits.
+# Every value is explicit; both this envelope and vendor/hardware limits apply.
+version: 1
+policy:
+  max_state_age_s: 0.2
+  max_feedback_wall_age_s: 0.5
+  max_command_age_s: 0.5
+  start_position_tolerance_rad: 0.005
+  start_velocity_tolerance_rad_s: 0.01
+  tracking_tolerance_rad: 0.05
+  goal_tolerance_rad: 0.02
+  goal_time_s: 0.5
+  stopped_velocity_rad_s: 0.01
+  stopped_dwell_s: 0.2
+  max_braking_time_s: 5.0
+  collision_resolution_rad: 0.05
+  # Preserve the running prefix while validating and delivering a C2 splice.
+  dispatch_lead_s: 0.25
+  dispatch_margin_s: 0.02
+joint_limits:
+  shoulder_pan_joint: {min_position: -3.0, max_position: 3.0, max_velocity: 0.2, max_acceleration: 0.5, max_jerk: 2.0}
+  shoulder_lift_joint: {min_position: -3.0, max_position: 3.0, max_velocity: 0.2, max_acceleration: 0.5, max_jerk: 2.0}
+  elbow_joint: {min_position: -3.0, max_position: 3.0, max_velocity: 0.2, max_acceleration: 0.5, max_jerk: 2.0}
+  wrist_1_joint: {min_position: -3.0, max_position: 3.0, max_velocity: 0.2, max_acceleration: 0.5, max_jerk: 2.0}
+  wrist_2_joint: {min_position: -3.0, max_position: 3.0, max_velocity: 0.2, max_acceleration: 0.5, max_jerk: 2.0}
+  wrist_3_joint: {min_position: -3.0, max_position: 3.0, max_velocity: 0.2, max_acceleration: 0.5, max_jerk: 2.0}
