@@ -209,6 +209,14 @@ timeout, or unclassified behavior publishes diagnostic evidence and exits 1.
 Missing endpoints, stale data, collision, or mimic failures exit 2 without
 publishing a new artifact.
 
+The legal arm motion uses the ROS-free `AcceptedTrajectory` preflight snapshot and
+the `GazeboTrajectoryController` execution adapter (`execution_path` is
+`accepted_trajectory_adapter`). The report separates the
+preflight gate, action result, and fresh feedback convergence (`verified` versus
+`not_converged`). The over-limit action remains a separate raw safety probe
+(`execution_path` is `raw_safety_probe`); neither
+dispatch acknowledgement nor adapter convergence is a WorldState verification.
+
 An arm swap must additionally update the joint list and names in
 `config/controllers.yaml`, review `config/joint_limits.hw_override.yaml`, and
 rerun this probe. Vendor hard limits remain dynamic; never copy them here.
@@ -237,11 +245,11 @@ uv run --directory robot/control pytest -q \
   workbench_motion/test/test_phase2_probe.py
 ```
 
-Downstream Issue #52 must expose only `AcceptedTrajectory` to its execution
-port and materialize controller messages from `AcceptedTrajectory.snapshot`.
-It must also compare the accepted trajectory/context evidence with current
-readiness before dispatch. Runtime state/scene TOCTOU rechecks, controller
-materialization, zero-dispatch proof, #59 rejected-dispatch mapping, C3b sampled
-collision gating, execution monitoring, stopping evidence, and physical safety
-remain downstream work; Issue #57 makes no ROS, Gazebo, or physical execution
-claim.
+The phase-2 execution adapter now exposes only `AcceptedTrajectory` at its
+trajectory port, materializes controller messages from its immutable snapshot,
+and compares accepted trajectory/context evidence with current readiness before
+dispatch. It also performs a final state freshness recheck immediately before
+dispatch, so stale gates are proven zero-dispatch. Scene-level TOCTOU checks,
+#59 rejected-dispatch mapping, C3b sampled collision gating, execution
+monitoring, stopping evidence, and physical safety remain downstream work; this
+phase still makes no physical-robot execution claim.
