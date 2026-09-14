@@ -1,0 +1,78 @@
+{
+  "issue": "motion-m1-pr-integration",
+  "human_owner": "Quchaosheng",
+  "objective": "Integrate the owner-authorized M1 quintic execution, smooth-stop work and CUDA CI repair in PR 354. This packet covers the complete reviewed PR boundary; the component packets retain their implementation and evidence requirements.",
+  "allowed_paths": [
+    "Dockerfile",
+    "docker/build_motion_runtime.py",
+    "docker/patches/controller-manager-sim-time.patch",
+    "docs/evaluation/motion-m1-report.md",
+    "docs/evaluation/motion-m1-smoothness.md",
+    "docs/plans/2026-09-14-motion-control.md",
+    "docs/task_packets/container-cuda-baseline-ci.json",
+    "docs/task_packets/motion-m1-closed-loop.json",
+    "docs/task_packets/motion-m1-pr-integration.json",
+    "docs/task_packets/motion-m1-smoothness.json",
+    "docs/task_packets/motion-quintic-ptp-001.json",
+    "robot/control/workbench_motion/config/motion.rviz",
+    "robot/control/workbench_motion/config/motion_control.yaml",
+    "robot/control/workbench_motion/launch/sim_control.launch.py",
+    "robot/control/workbench_motion/package.xml",
+    "robot/control/workbench_motion/setup.py",
+    "robot/control/workbench_motion/test/test_controller.py",
+    "robot/control/workbench_motion/test/test_gazebo_adapter.py",
+    "robot/control/workbench_motion/test/test_motion_benchmark.py",
+    "robot/control/workbench_motion/test/test_motion_launch.py",
+    "robot/control/workbench_motion/test/test_motion_metrics.py",
+    "robot/control/workbench_motion/test/test_motion_runtime.py",
+    "robot/control/workbench_motion/test/test_motion_safety.py",
+    "robot/control/workbench_motion/test/test_quintic_trajectory.py",
+    "robot/control/workbench_motion/test/test_trajectory_executor.py",
+    "robot/control/workbench_motion/workbench_motion/controller.py",
+    "robot/control/workbench_motion/workbench_motion/gazebo_adapter.py",
+    "robot/control/workbench_motion/workbench_motion/motion_benchmark.py",
+    "robot/control/workbench_motion/workbench_motion/motion_metrics.py",
+    "robot/control/workbench_motion/workbench_motion/motion_safety.py",
+    "robot/control/workbench_motion/workbench_motion/motion_types.py",
+    "robot/control/workbench_motion/workbench_motion/quintic_trajectory.py",
+    "robot/control/workbench_motion/workbench_motion/reference_controller.py",
+    "robot/control/workbench_motion/workbench_motion/trajectory_executor.py",
+    "tests/unit/test_container_baseline.py"
+  ],
+  "read_only_paths": ["AGENTS.md", "interfaces", "libs", "services", "sim", "docs/DEVELOPMENT_ROADMAP.md"],
+  "forbidden": ["firmware", "hardware", "bsp", "tools/scripts/check_task_packet.py"],
+  "input_refs": [
+    "docs/task_packets/motion-quintic-ptp-001.json",
+    "docs/task_packets/motion-m1-closed-loop.json",
+    "docs/task_packets/motion-m1-smoothness.json",
+    "docs/task_packets/container-cuda-baseline-ci.json"
+  ],
+  "acceptance": [
+    "One explicit packet covers the entire PR base-to-head diff without changing the validator or granting wildcard write access.",
+    "All component packet acceptance criteria remain applicable; no new M2-M6 implementation or physical hardware commands are authorized.",
+    "Motion tests and required repository gates pass, including contract, deterministic scenarios, event persistence, replay and fail-closed behavior.",
+    "The CUDA base, metadata and GPU matrix remain consistent; existing vulnerability gates remain enforced.",
+    "Existing real Gazebo evidence is preserved with its original scope and identities; CI or scripted fixtures do not establish physical or verified task success."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py --all --base origin/main --head HEAD",
+    "python3 -m pytest tests/unit/test_task_packet.py tests/unit/test_container_baseline.py tests/unit/test_container_profiles.py -v",
+    "uv run --directory robot/control pytest -q",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "PR 354 exact base/head Task Packet validation output",
+    "Current-source project Docker regression output and hosted CI checks",
+    "docs/evaluation/motion-m1-smoothness.md",
+    "docs/evaluation/motion-m1-report.md"
+  ],
+  "stop_conditions": [
+    "A changed path falls outside the explicit authorized PR boundary.",
+    "Integration requires a public schema, task validator, firmware or hardware change.",
+    "A passing result would require fabricated physics, weakened limits or bypassed evidence gates."
+  ]
+}
