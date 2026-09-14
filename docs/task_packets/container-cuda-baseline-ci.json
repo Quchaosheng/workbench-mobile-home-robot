@@ -1,0 +1,44 @@
+{
+  "issue": "container-cuda-baseline-ci",
+  "human_owner": "Quchaosheng",
+  "objective": "Fix both PR 354 CI failures by restoring the validated CUDA 12.8.1 immutable base after synchronizing main, and guard consistency with image metadata and the GPU matrix.",
+  "allowed_paths": [
+    "Dockerfile",
+    "tests/unit/test_container_baseline.py",
+    "docs/task_packets/container-cuda-baseline-ci.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "docker/gpu-arch-matrix.json"],
+  "forbidden": ["interfaces/**", "robot/control/**", "firmware/**"],
+  "input_refs": [
+    "Dockerfile",
+    "docker/gpu-arch-matrix.json",
+    "docs/evaluation/motion-m1-smoothness.md"
+  ],
+  "acceptance": [
+    "The existing two container assertions fail before the fix and pass after it.",
+    "FROM, OCI base labels, build inventory and GPU matrix describe the same CUDA baseline and immutable digest.",
+    "Required repository tests, contracts, scenarios and context checks pass on the synchronized branch.",
+    "No control behavior, contract, vulnerability gate or test threshold is weakened."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_container_baseline.py tests/unit/test_container_profiles.py -v",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/container-cuda-baseline-ci.json"
+  ],
+  "evidence": [
+    "Before/after container test output in the project Docker image",
+    "Required-check output and PR 354 CI checks",
+    "Existing M1 runtime evidence in docs/evaluation/motion-m1-smoothness.md remains evidence for CUDA 12.8.1 only"
+  ],
+  "risks_and_fallbacks": [
+    "CUDA 13 adoption is deferred until image metadata, host driver requirements and GPU simulation are validated together; restoring the existing baseline does not establish CUDA 13 compatibility.",
+    "Dependabot can propose a future baseline change; the baseline and consistency tests must remain blocking."
+  ],
+  "stop_conditions": [
+    "A control, firmware or public contract change is required.",
+    "The validated CUDA 12.8.1 base cannot build or fails the existing supply-chain gate."
+  ]
+}
