@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -18,6 +19,21 @@ def test_runtime_and_devcontainer_use_the_same_immutable_base() -> None:
     assert IMMUTABLE_CUDA_BASE.fullmatch(base)
     assert not (ROOT / ".devcontainer/Dockerfile").exists()
     assert '"dockerfile": "../Dockerfile"' in (ROOT / ".devcontainer/devcontainer.json").read_text(encoding="utf-8")
+
+
+def test_cuda_base_matches_exported_inventory_and_gpu_compatibility_matrix() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    image = next(line.removeprefix("FROM ") for line in dockerfile.splitlines() if line.startswith("FROM "))
+    name, digest = image.split("@", 1)
+    cuda_version = name.removeprefix("nvidia/cuda:").split("-", 1)[0]
+    matrix = json.loads((ROOT / "docker/gpu-arch-matrix.json").read_text(encoding="utf-8"))
+
+    assert re.findall(r'org\.opencontainers\.image\.base\.name="([^"]+)"', dockerfile) == [name]
+    assert re.findall(r'org\.opencontainers\.image\.base\.digest="([^"]+)"', dockerfile) == [digest]
+    assert re.findall(r"'base=([^']+)'", dockerfile) == [name]
+    assert re.findall(r"'base_digest=([^']+)'", dockerfile) == [digest]
+    assert re.findall(r"'cuda=([^']+)'", dockerfile) == [cuda_version]
+    assert matrix["cuda_baseline"] == ".".join(cuda_version.split(".")[:2])
 
 
 def test_runtime_container_copies_installable_workbench_packages_before_install() -> None:

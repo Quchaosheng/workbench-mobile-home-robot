@@ -6,9 +6,17 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, OpaqueFunction, RegisterEventHandler, Shutdown
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+    RegisterEventHandler,
+    Shutdown,
+)
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from workbench_motion.arm_config import load_arm_config
 from workbench_motion.launch_utils import move_group_parameters, require_file, robot_description
@@ -79,7 +87,22 @@ def _setup(_context, *_args, **_kwargs):
     jsb = spawner(arm.joint_state_broadcaster)
     arm_controller = spawner(arm.arm_trajectory_controller)
     gripper = spawner(arm.gripper_controller)
+    gui = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(str(ros_gz_share / "launch" / "gz_sim.launch.py")),
+        launch_arguments={"gz_args": "-g -v 3"}.items(),
+        condition=IfCondition(LaunchConfiguration("gui")),
+    )
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        output="screen",
+        arguments=["-d", str(require_file(share / "config" / "motion.rviz", "motion RViz config"))],
+        parameters=[common_time],
+        condition=IfCondition(LaunchConfiguration("rviz")),
+    )
     return [
+        gui,
+        rviz,
         clock_bridge,
         gazebo,
         rsp,
@@ -103,4 +126,10 @@ def _setup(_context, *_args, **_kwargs):
 
 
 def generate_launch_description() -> LaunchDescription:
-    return LaunchDescription([OpaqueFunction(function=_setup)])
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument("gui", default_value="false", description="Gazebo GUI for this simulation server"),
+            DeclareLaunchArgument("rviz", default_value="false", description="RViz RobotModel and TF"),
+            OpaqueFunction(function=_setup),
+        ]
+    )
