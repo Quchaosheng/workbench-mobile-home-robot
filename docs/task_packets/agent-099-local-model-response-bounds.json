@@ -1,0 +1,59 @@
+{
+  "issue": 99,
+  "human_owner": "Quchaosheng",
+  "objective": "Make local-model HTTP responses resource-bounded and explicit about their contract, so an oversized, non-JSON, error-status, or malformed response is rejected as a bounded LocalModelError instead of being read into memory or parsed as provider content.",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/local_model.py",
+    "tests/unit/test_local_model.py",
+    "docs/task_packets/agent-099-local-model-response-bounds.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**"
+  ],
+  "acceptance": [
+    "a declared Content-Length above the response cap is refused before the body is read",
+    "a body without Content-Length is refused while reading, so the cap holds for chunked responses too",
+    "a malformed or negative Content-Length header is reported as a bounded LocalModelError",
+    "non-2xx HTTP status is reported by status code without echoing the response body",
+    "a missing or non-JSON Content-Type is rejected before JSON parsing is attempted",
+    "a truncated or malformed JSON body fails with a stable message rather than leaking the exception text of the parser",
+    "last_call telemetry is only recorded for a fully accepted route, so a rejected response cannot leave partial provider content behind",
+    "the loopback and allow-list endpoint policy from the existing implementation is unchanged",
+    "every new boundary is covered by a test that fails when the corresponding guard is removed"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_local_model.py -v",
+    "python3 -m ruff check services/agent_runtime/workbench_agent_runtime/local_model.py tests/unit/test_local_model.py",
+    "python3 -m ruff format --check services/agent_runtime/workbench_agent_runtime/local_model.py tests/unit/test_local_model.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/agent-099-local-model-response-bounds.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused boundary test output for oversized declared, oversized streamed, non-JSON, missing Content-Type, error status, truncated JSON, and malformed Content-Length responses",
+    "demonstration that the focused boundary tests fail against the previous implementation and pass against the fix",
+    "confirmation that the five pre-existing local-model tests still pass unchanged",
+    "full repository test and Task Packet gate output"
+  ],
+  "stop_conditions": [
+    "the fix requires a new third-party HTTP client or JSON dependency",
+    "the response cap must be configurable per caller, which is a policy decision rather than a boundary fix",
+    "an interfaces schema or libs/contracts change is required",
+    "a modification outside allowed_paths is required"
+  ]
+}

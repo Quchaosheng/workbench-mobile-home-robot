@@ -175,5 +175,167 @@ class LocalModelTests(unittest.TestCase):
             thread.join(timeout=2)
 
 
+class ResponseBoundaryTests(unittest.TestCase):
+    """Issue #99: a local endpoint is still an untrusted response source."""
+
+    def _provider_for(self, handler) -> tuple[OllamaModelProvider, ThreadingHTTPServer, threading.Thread]:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        provider = OllamaModelProvider("test-model", endpoint=f"http://127.0.0.1:{server.server_address[1]}")
+        return provider, server, thread
+
+    def _stop(self, server: ThreadingHTTPServer, thread: threading.Thread) -> None:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    def _assert_rejected(self, handler, pattern: str, *, expected_bytes: int | None = None) -> None:
+        provider, server, thread = self._provider_for(handler)
+        try:
+            with self.assertRaisesRegex(LocalModelError, pattern):
+                provider.route("Sort parcels")
+            self.assertEqual(provider.last_call, {})
+        finally:
+            self._stop(server, thread)
+
+    def test_oversized_declared_body_is_rejected_before_reading(self) -> None:
+        from workbench_agent_runtime.local_model import MAX_RESPONSE_BYTES
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(MAX_RESPONSE_BYTES + 1))
+                self.end_headers()
+                # Deliberately write nothing: a declared oversize must be refused
+                # without draining the stream.
+                self.close_connection = True
+
+        self._assert_rejected(Handler, "above the")
+
+    def test_oversized_undeclared_body_is_rejected_while_reading(self) -> None:
+        from workbench_agent_runtime.local_model import MAX_RESPONSE_BYTES
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                # No Content-Length: chunked/streamed, so only the read loop can
+                # stop it.
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                total = MAX_RESPONSE_BYTES + 4096
+                payload = b"x" * 4096
+                remaining = total
+                while remaining > 0:
+                    chunk = payload[: min(4096, remaining)]
+                    self.wfile.write(b"%x\r\n" % len(chunk) + chunk + b"\r\n")
+                    remaining -= len(chunk)
+                self.wfile.write(b"0\r\n\r\n")
+
+        self._assert_rejected(Handler, "exceeds the")
+
+    def test_non_json_content_type_is_rejected(self) -> None:
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                body = b"<html><body>proxy error</body></html>"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self._assert_rejected(Handler, "is not JSON")
+
+    def test_missing_content_type_is_rejected(self) -> None:
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                body = json.dumps({"message": {"content": "{}"}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self._assert_rejected(Handler, "missing a Content-Type")
+
+    def test_error_status_is_reported_without_echoing_the_body(self) -> None:
+        secret = "sk-live-do-not-leak"
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                body = json.dumps({"error": secret}).encode()
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        provider, server, thread = self._provider_for(Handler)
+        try:
+            with self.assertRaises(LocalModelError) as caught:
+                provider.route("Sort parcels")
+            message = str(caught.exception)
+            self.assertIn("503", message)
+            self.assertNotIn(secret, message)
+            self.assertEqual(provider.last_call, {})
+        finally:
+            self._stop(server, thread)
+
+    def test_truncated_json_body_is_rejected(self) -> None:
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                body = b'{"message": {"content": "{"task_family":'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self._assert_rejected(Handler, "not valid JSON")
+
+    def test_malformed_content_length_header_is_rejected(self) -> None:
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "not-a-number")
+                self.end_headers()
+                self.close_connection = True
+
+        self._assert_rejected(Handler, "malformed Content-Length")
+
+    def test_valid_response_still_routes_and_records_bounded_telemetry(self) -> None:
+        provider, server, thread = self._provider_for(FakeOllamaHandler)
+        try:
+            decision = provider.route("Sort parcels")
+            self.assertEqual(decision.task_family, "parcel_sorting")
+            self.assertEqual(provider.last_call["provider"], "ollama")
+            self.assertEqual(provider.last_call["endpoint_host"], "127.0.0.1")
+        finally:
+            self._stop(server, thread)
+
+
 if __name__ == "__main__":
     unittest.main()

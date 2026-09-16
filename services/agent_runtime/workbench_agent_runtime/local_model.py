@@ -60,6 +60,15 @@ class LocalModelError(RuntimeError):
     """Raised when a local model cannot produce a trustworthy route."""
 
 
+# A local endpoint is still an untrusted boundary: a misconfigured server, a
+# proxy that ignored our ProxyHandler, or a hostile process on the same host can
+# return an unbounded stream. The cap is checked while reading, so a body larger
+# than this is never fully materialized in memory.
+MAX_RESPONSE_BYTES = 1_048_576
+_READ_CHUNK_BYTES = 65_536
+_JSON_CONTENT_TYPES = frozenset({"application/json", "text/json"})
+
+
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, response, code, msg, headers, newurl):
         raise LocalModelError(f"local model endpoint redirect rejected: {newurl}")
@@ -119,6 +128,53 @@ def validate_local_endpoint(endpoint: str, allowed_hosts: set[str] | None = None
     return endpoint.rstrip("/")
 
 
+def _read_bounded_body(response: object) -> bytes:
+    """Read an HTTP response body without materializing an unbounded stream.
+
+    `HTTPResponse.read()` with no argument consumes whatever the server sends.
+    Reading in bounded chunks and rejecting the first overrun keeps a runaway or
+    hostile endpoint from exhausting memory before the size is ever considered.
+    """
+    declared = getattr(response, "headers", {}).get("Content-Length")
+    if declared is not None:
+        try:
+            declared_length = int(declared)
+        except (TypeError, ValueError):
+            raise LocalModelError("local model response has a malformed Content-Length header") from None
+        if declared_length < 0:
+            raise LocalModelError("local model response has a negative Content-Length header")
+        if declared_length > MAX_RESPONSE_BYTES:
+            raise LocalModelError(
+                f"local model response declares {declared_length} bytes, above the {MAX_RESPONSE_BYTES} byte limit"
+            )
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = response.read(_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_RESPONSE_BYTES:
+            raise LocalModelError(f"local model response exceeds the {MAX_RESPONSE_BYTES} byte limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _require_json_content_type(response: object) -> None:
+    """Reject a body the endpoint never claimed was JSON.
+
+    Parsing first and validating afterwards is how an HTML error page turns into
+    a confusing JSON diagnostic instead of a clear contract violation.
+    """
+    raw = getattr(response, "headers", {}).get("Content-Type")
+    if raw is None:
+        raise LocalModelError("local model response is missing a Content-Type header")
+    media_type = raw.split(";", 1)[0].strip().lower()
+    if media_type not in _JSON_CONTENT_TYPES:
+        raise LocalModelError(f"local model response Content-Type {media_type!r} is not JSON")
+
+
 class OllamaModelProvider:
     """Call an Ollama-compatible API reachable only through an approved local host."""
 
@@ -164,9 +220,23 @@ class OllamaModelProvider:
         started = time.perf_counter()
         try:
             with self._opener.open(request, timeout=self.timeout_s) as response:
-                payload = json.loads(response.read())
-        except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
+                status = getattr(response, "status", None)
+                if status is not None and not 200 <= status < 300:
+                    raise LocalModelError(f"local model returned HTTP status {status}")
+                body = _read_bounded_body(response)
+                _require_json_content_type(response)
+        except LocalModelError:
+            raise
+        except urllib.error.HTTPError as exc:
+            # urllib raises for non-2xx before we see the body. Report the status
+            # rather than the exception, and never surface the error page text.
+            raise LocalModelError(f"local model returned HTTP status {exc.code}") from exc
+        except (OSError, TimeoutError, urllib.error.URLError) as exc:
             raise LocalModelError(f"local model request failed: {exc}") from exc
+        try:
+            payload = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise LocalModelError("local model response body is not valid JSON") from exc
         elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
         try:
             content = payload["message"]["content"]
