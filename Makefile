@@ -6,7 +6,8 @@ PYTHON ?= python3
 	uart-spi-test irq-test docs task-check check container-smoke pm-test sim sim-doctor sim-list sim-run \
 	container-build container-check container-colcon-build container-colcon-test container-image-verify \
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
-	container-gpu-matrix-check container-host-doctor container-dashboard-check container-project-check
+	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
+	container-project-check
 
 bootstrap:
 	$(PYTHON) -m pip install --upgrade pip
@@ -104,6 +105,9 @@ pm-test:
 
 dma-test:
 	$(PYTHON) -m pytest tests/unit/test_dma_contract.py -v
+
+gpio-test:
+	$(PYTHON) -m pytest tests/unit/test_gpio_contract.py -v
 
 dashboard:
 	$(PYTHON) -m workbench_backend.server --host 127.0.0.1 --port 8080

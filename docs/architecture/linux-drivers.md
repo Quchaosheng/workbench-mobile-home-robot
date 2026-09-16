@@ -115,3 +115,7 @@ LINUX8 的电源管理软件契约和 fake provider 位于
 LINUX5 的 DMA 软件契约和 fake provider 位于 `hardware/linux_drivers/dma/`。它固化
 预分配 buffer、CPU/DMA 所有权、固定描述符容量、取消和错误恢复测试，但不冻结真实
 DMA 控制器、cache 一致性、IRQ 资源或物理吞吐预算。
+
+LINUX4 的 GPIO 软件契约和 fake provider 位于 `hardware/linux_drivers/gpio/`。该契约
+只验证 character-device 语义、unknown 输入、边沿、去抖和有界队列；真实 GPIO 线路、
+设备树和安全回路仍由硬件与安全 Owner 确认。

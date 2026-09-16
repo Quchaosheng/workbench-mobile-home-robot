@@ -25,6 +25,10 @@ LINUX6 的 IRQ 生命周期和 fake provider 位于
 [`irq/README.md`](irq/README.md)。它只验证共享线路、上半部/下半部、取消、flush 和
 停止同步；真实 IRQ 资源和 jitter 证据仍由硬件 Owner 确认。
 
+LINUX4 的 GPIO 软件契约和 fake provider 位于
+[`gpio/README.md`](gpio/README.md)。它只验证 character-device 语义、unknown 输入、
+边沿、去抖和有界事件队列；真实 GPIO 线路和安全回路仍由硬件与安全 Owner 确认。
+
 ## 分层边界
 
 ```text
