@@ -930,6 +930,143 @@
     "navigation_footprint_matches_base": true,
     "stabilized_footprint_matches_support_polygon": true
   },
+  "scad_parameters": {
+    "checks": {
+      "scad_manifest_is_present": true,
+      "scad_manifest_revision_matches_spec": true,
+      "scad_manifest_declares_authoritative_source": true,
+      "scad_manifest_units_match_spec": true,
+      "scad_source_is_readable": true,
+      "scad_derived_and_visual_parameters_are_documented": true,
+      "scad_constants_are_classified_once": true,
+      "scad_constants_are_evaluable": true,
+      "scad_constants_are_non_negative": true,
+      "shared_parameters_match_design_spec": true
+    },
+    "errors": [],
+    "pass": true,
+    "parameters": {
+      "BASE_W": {
+        "spec_path": "chassis.width",
+        "scad_value": 540.0,
+        "spec_value": 540.0,
+        "pass": true
+      },
+      "BASE_D": {
+        "spec_path": "chassis.depth",
+        "scad_value": 520.0,
+        "spec_value": 520.0,
+        "pass": true
+      },
+      "GROUND": {
+        "spec_path": "chassis.ground_clearance",
+        "scad_value": 28.0,
+        "spec_value": 28.0,
+        "pass": true
+      },
+      "LIFT_TRAVEL": {
+        "spec_path": "lifting_platform.travel",
+        "scad_value": 350.0,
+        "spec_value": 350.0,
+        "pass": true
+      },
+      "TORSO_BOTTOM_STOWED": {
+        "spec_path": "coordinate_system.torso_bottom_stowed_z_mm",
+        "scad_value": 500.0,
+        "spec_value": 500.0,
+        "pass": true
+      },
+      "TORSO_W": {
+        "spec_path": "torso.width",
+        "scad_value": 420.0,
+        "spec_value": 420.0,
+        "pass": true
+      },
+      "TORSO_D": {
+        "spec_path": "torso.depth",
+        "scad_value": 330.0,
+        "spec_value": 330.0,
+        "pass": true
+      },
+      "TORSO_H": {
+        "spec_path": "torso.height",
+        "scad_value": 430.0,
+        "spec_value": 430.0,
+        "pass": true
+      },
+      "HEAD_W": {
+        "spec_path": "head.width",
+        "scad_value": 260.0,
+        "spec_value": 260.0,
+        "pass": true
+      },
+      "HEAD_D": {
+        "spec_path": "head.depth",
+        "scad_value": 105.0,
+        "spec_value": 105.0,
+        "pass": true
+      },
+      "HEAD_H": {
+        "spec_path": "head.height",
+        "scad_value": 128.0,
+        "spec_value": 128.0,
+        "pass": true
+      },
+      "HEAD_TILT": {
+        "spec_path": "head.tilt_deg",
+        "scad_value": 6.0,
+        "spec_value": 6.0,
+        "pass": true
+      },
+      "HEAD_TOP_STOWED": {
+        "spec_path": "coordinate_system.head_top_stowed_z_mm",
+        "scad_value": 1100.0,
+        "spec_value": 1100.0,
+        "pass": true
+      }
+    },
+    "resolved_constants": {
+      "BASE_D": 520.0,
+      "BASE_H": 112.0,
+      "BASE_TOP": 140.0,
+      "BASE_W": 540.0,
+      "GROUND": 28.0,
+      "HEAD_BOTTOM": 1356.436831,
+      "HEAD_D": 105.0,
+      "HEAD_H": 128.0,
+      "HEAD_MODEL_Z": 1341.767517,
+      "HEAD_TILT": 6.0,
+      "HEAD_TOP": 1450.0,
+      "HEAD_TOP_STOWED": 1100.0,
+      "HEAD_W": 260.0,
+      "LIFT_EXTENSION": 350.0,
+      "LIFT_TRAVEL": 350.0,
+      "TORSO_BOTTOM": 850.0,
+      "TORSO_BOTTOM_STOWED": 500.0,
+      "TORSO_D": 330.0,
+      "TORSO_H": 430.0,
+      "TORSO_W": 420.0
+    },
+    "visual_only_parameters": [
+      "STABILIZERS_DEPLOYED"
+    ],
+    "source_hashes": {
+      "desk_robot_scad_sha256": "7e417e4a846b506753b721b044dc6b1bbf01aac3859f996906daa4e39dd0c3c8",
+      "scad_parameter_manifest_sha256": "cd8981ef0ac8752d01f9273dd55cee7c87c4e979dbd5228827c1832325e0a3f1"
+    }
+  },
+  "scad_parameter_checks": {
+    "scad_manifest_is_present": true,
+    "scad_manifest_revision_matches_spec": true,
+    "scad_manifest_declares_authoritative_source": true,
+    "scad_manifest_units_match_spec": true,
+    "scad_source_is_readable": true,
+    "scad_derived_and_visual_parameters_are_documented": true,
+    "scad_constants_are_classified_once": true,
+    "scad_constants_are_evaluable": true,
+    "scad_constants_are_non_negative": true,
+    "shared_parameters_match_design_spec": true
+  },
   "generated_geometry": {
     "status": "MEASURED",
     "assembly_bounds_mm": {

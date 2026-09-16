@@ -1,0 +1,56 @@
+{
+  "issue": 328,
+  "human_owner": "Quchaosheng",
+  "objective": "Add a deterministic synchronization check between the authoritative Revision D design specification and the OpenSCAD parameter set so generated STEP, drawings and BOM cannot be produced from drifted geometry.",
+  "allowed_paths": [
+    "hardware/mechanical/cad/scad-parameter-manifest.json",
+    "hardware/mechanical/tools/generate_artifacts.py",
+    "hardware/mechanical/generated/analysis.json",
+    "hardware/mechanical/README.md",
+    "tests/hardware/test_mechanical_issue_328.py",
+    "docs/task_packets/issue-328-scad-spec-sync.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "hardware/mechanical/design-spec.json",
+    "hardware/mechanical/cad/desk_robot.scad"
+  ],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "firmware/**", "robot/control/**"],
+  "acceptance": [
+    "design-spec.json and revision D are declared the authoritative source for shared product dimensions and units",
+    "every OpenSCAD constant is classified exactly once as shared, derived or visual-only, with a documented reason and owner for the latter two",
+    "shared parameters are validated with explicit units and tolerances and reject missing, duplicate, non-finite or negative values",
+    "derived values are evaluated through a restricted arithmetic AST and verified against their declared expressions",
+    "unsupported OpenSCAD expressions and unknown identifiers are rejected instead of executed",
+    "generator and CI fail when a spec dimension changes without a matching SCAD update",
+    "generated evidence records the SCAD and manifest hashes, the comparison result and CONCEPT_PHYSICAL_VALIDATION_REQUIRED status",
+    "regression tests cover a changed spec dimension, a promoted derived constant, a missing spec path, a unit mismatch and an unclassified constant"
+  ],
+  "commands": [
+    "python3 -m pytest tests/hardware/test_mechanical_issue_328.py tests/hardware/test_mechanical_issue_325_326.py tests/hardware/test_operations_readiness.py -v",
+    "python3 -m ruff check hardware/mechanical/tools/generate_artifacts.py tests/hardware/test_mechanical_issue_328.py",
+    "python3 -m ruff format --check hardware/mechanical/tools/generate_artifacts.py tests/hardware/test_mechanical_issue_328.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-328-scad-spec-sync.json",
+    "python3 hardware/mechanical/tools/generate_artifacts.py",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused SCAD synchronization test output including a drifting dimension failing the check",
+    "generator exit status and error message for a drifted SCAD constant",
+    "generated analysis.json showing the recorded SCAD and manifest hashes",
+    "full repository test output and Task Packet gate output"
+  ],
+  "stop_conditions": [
+    "a design dimension itself must change, which is a design decision, not a test fix",
+    "CadQuery or OpenSCAD must be installed to evaluate the check",
+    "an interfaces schema or libs/contracts change is required",
+    "a modification outside allowed_paths is required"
+  ]
+}

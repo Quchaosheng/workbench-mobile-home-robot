@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import ast
 import csv
 import hashlib
 import json
 import math
+import operator
+import re
 from itertools import pairwise
 from pathlib import Path
 
@@ -276,6 +279,208 @@ def _invalid_analysis(validation: dict[str, object]) -> dict[str, object]:
     }
 
 
+SCAD_PATH = ROOT / "cad" / "desk_robot.scad"
+SCAD_MANIFEST_PATH = ROOT / "cad" / "scad-parameter-manifest.json"
+SCAD_ASSIGNMENT = re.compile(r"^([A-Z][A-Z0-9_]*)\s*=\s*([^;]+);", re.MULTILINE)
+_SCAD_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+}
+SCAD_BOOLEAN_LITERALS = frozenset({"true", "false"})
+SCAD_ALLOWED_FUNCTIONS = {"abs": abs, "cos": math.cos, "sin": math.sin, "sqrt": math.sqrt, "tan": math.tan}
+
+
+def _evaluate_scad_expression(expression: str, resolved: dict[str, float]) -> float:
+    """Evaluate one OpenSCAD constant expression with a restricted AST walk.
+
+    OpenSCAD constants in this file are plain arithmetic over millimetre
+    literals. Anything outside that grammar is rejected rather than executed,
+    so a hand-edited SCAD file cannot smuggle arbitrary code into validation.
+    """
+    try:
+        tree = ast.parse(expression.strip(), mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"malformed OpenSCAD expression: {expression!r}") from exc
+
+    def visit(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return visit(node.body)
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+                raise ValueError(f"unsupported OpenSCAD constant: {expression!r}")
+            return float(node.value)
+        if isinstance(node, ast.Name):
+            if node.id in SCAD_BOOLEAN_LITERALS:
+                raise ValueError(f"{node.id} is a boolean flag, not a dimension: {expression!r}")
+            if node.id not in resolved:
+                raise ValueError(f"unknown OpenSCAD identifier: {node.id}")
+            return resolved[node.id]
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub | ast.UAdd):
+            value = visit(node.operand)
+            return -value if isinstance(node.op, ast.USub) else value
+        if isinstance(node, ast.BinOp):
+            operation = _SCAD_OPERATORS.get(type(node.op))
+            if operation is None:
+                raise ValueError(f"unsupported OpenSCAD operator: {expression!r}")
+            return operation(visit(node.left), visit(node.right))
+        if isinstance(node, ast.Call):
+            if not isinstance(node.func, ast.Name) or node.keywords or len(node.args) != 1:
+                raise ValueError(f"unsupported OpenSCAD call: {expression!r}")
+            function = SCAD_ALLOWED_FUNCTIONS.get(node.func.id)
+            if function is None:
+                raise ValueError(f"unsupported OpenSCAD function: {node.func.id}")
+            return function(visit(node.args[0]))
+        raise ValueError(f"unsupported OpenSCAD expression: {expression!r}")
+
+    value = visit(tree)
+    if not math.isfinite(value):
+        raise ValueError(f"OpenSCAD constant is not finite: {expression!r}")
+    return value
+
+
+def read_scad_constants(path: Path) -> dict[str, str]:
+    """Return the raw top-level ``NAME = expression`` assignments of a SCAD file."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"cannot read OpenSCAD source: {exc}") from exc
+    return {name: expression for name, expression in SCAD_ASSIGNMENT.findall(text)}
+
+
+def resolve_spec_path(spec: dict[str, object], path: str) -> float:
+    """Follow a dotted ``a.b.c`` path in the design specification."""
+    node: object = spec
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise ValueError(f"design specification has no {path}")
+        node = node[part]
+    if not _is_finite_number(node):
+        raise ValueError(f"design specification {path} is not a finite number")
+    return float(node)
+
+
+def _scad_result(checks: dict[str, bool], errors: list[str], **extra: object) -> dict[str, object]:
+    return {"checks": checks, "errors": errors, "pass": all(checks.values()), **extra}
+
+
+def validate_scad_parameters(spec: dict[str, object] | None = None) -> dict[str, object]:
+    """Check the OpenSCAD parameter set against the authoritative design spec.
+
+    The SCAD file hard-codes Revision D dimensions independently of the design
+    specification, so the generated STEP, drawings and BOM can be regenerated
+    from inputs that no longer describe the same geometry. Every SCAD constant
+    must therefore be classified, and every shared value must match the spec.
+    """
+    source = SPEC if spec is None else spec
+    checks: dict[str, bool] = {}
+    errors: list[str] = []
+    try:
+        manifest = json.loads(SCAD_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return _scad_result({"scad_manifest_is_present": False}, [f"cannot read the SCAD parameter manifest: {exc}"])
+
+    checks["scad_manifest_is_present"] = isinstance(manifest, dict)
+    checks["scad_manifest_revision_matches_spec"] = manifest.get("revision") == source.get("revision")
+    checks["scad_manifest_declares_authoritative_source"] = (
+        manifest.get("authoritative_source") == "hardware/mechanical/design-spec.json"
+    )
+    checks["scad_manifest_units_match_spec"] = manifest.get("units") == source.get("units")
+
+    try:
+        raw_constants = read_scad_constants(SCAD_PATH)
+        scad_hash = sha256_file(SCAD_PATH)
+        manifest_hash = sha256_file(SCAD_MANIFEST_PATH)
+    except (OSError, ValueError) as exc:
+        return _scad_result({**checks, "scad_source_is_readable": False}, [f"cannot read OpenSCAD source: {exc}"])
+    checks["scad_source_is_readable"] = bool(raw_constants)
+
+    shared = [entry for entry in manifest.get("shared_parameters", []) if isinstance(entry, dict)]
+    derived = [entry for entry in manifest.get("derived_parameters", []) if isinstance(entry, dict)]
+    visual_only = [entry for entry in manifest.get("visual_only_parameters", []) if isinstance(entry, dict)]
+    dimensional = {entry.get("scad") for entry in [*shared, *derived]}
+    flags = {entry.get("scad") for entry in visual_only}
+
+    classified = [entry.get("scad") for entry in [*shared, *derived, *visual_only]]
+    duplicates = sorted({name for name in classified if classified.count(name) > 1})
+    unclassified = sorted(set(raw_constants) - set(classified))
+    stray = sorted(set(classified) - set(raw_constants))
+    undocumented = sorted(
+        entry.get("scad")
+        for entry in [*derived, *visual_only]
+        if not str(entry.get("reason", "")).strip()
+        or (entry in visual_only and not str(entry.get("owner", "")).strip())
+    )
+    checks["scad_derived_and_visual_parameters_are_documented"] = bool(derived) and bool(visual_only) and not undocumented
+    if undocumented:
+        errors.append(f"SCAD parameters without a documented reason or owner: {undocumented}")
+
+    checks["scad_constants_are_classified_once"] = (
+        bool(classified)
+        and not duplicates
+        and not unclassified
+        and not stray
+        and set(dimensional).isdisjoint(flags)
+    )
+    if unclassified:
+        errors.append(f"unclassified OpenSCAD constants: {unclassified}")
+    if stray:
+        errors.append(f"SCAD manifest references missing constants: {stray}")
+    if duplicates:
+        errors.append(f"duplicate SCAD manifest entries: {duplicates}")
+
+    # Only shared and derived parameters are dimensions, so only they need a
+    # numeric value; a visual-only entry may legitimately be a boolean flag.
+    resolved: dict[str, float] = {}
+    try:
+        # File order respects OpenSCAD's define-before-use rule, so a derived
+        # expression always sees its inputs already resolved.
+        for name in raw_constants:
+            if name in dimensional:
+                resolved[name] = _evaluate_scad_expression(raw_constants[name], resolved)
+    except (KeyError, TypeError, ValueError) as exc:
+        return _scad_result(
+            {**checks, "scad_constants_are_evaluable": False},
+            [*errors, f"cannot evaluate OpenSCAD constants: {exc}"],
+        )
+    checks["scad_constants_are_evaluable"] = True
+    negatives = sorted(name for name, value in resolved.items() if value < 0)
+    if negatives:
+        errors.append(f"negative OpenSCAD constants: {negatives}")
+    checks["scad_constants_are_non_negative"] = not negatives
+
+    parameters: dict[str, dict[str, object]] = {}
+    drift: list[str] = []
+    for entry in shared:
+        name = str(entry.get("scad"))
+        spec_path = str(entry.get("spec_path"))
+        try:
+            expected = resolve_spec_path(source, spec_path)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        actual = resolved.get(name)
+        tolerance = float(entry.get("tolerance", manifest.get("default_tolerance", 0.0)))
+        matches = actual is not None and abs(actual - expected) <= tolerance
+        parameters[name] = {"spec_path": spec_path, "scad_value": actual, "spec_value": expected, "pass": matches}
+        if not matches:
+            drift.append(f"{name}={actual} does not match {spec_path}={expected}")
+    checks["shared_parameters_match_design_spec"] = bool(shared) and not drift and set(parameters) == {
+        entry.get("scad") for entry in shared
+    }
+    errors.extend(drift)
+
+    return _scad_result(
+        checks,
+        errors,
+        parameters=parameters,
+        resolved_constants={name: round(value, 6) for name, value in sorted(resolved.items())},
+        visual_only_parameters=sorted(flags),
+        source_hashes={"desk_robot_scad_sha256": scad_hash, "scad_parameter_manifest_sha256": manifest_hash},
+    )
+
+
 def geometry_context() -> dict[str, float | str]:
     """Return the shared raised-pose Z datums used by every mechanical exporter."""
     coordinate = SPEC["coordinate_system"]
@@ -307,6 +512,7 @@ def analyse() -> dict[str, object]:
     validation = validate_mass_model(SPEC, ledger_rows)
     if not validation["pass"]:
         return _invalid_analysis(validation)
+    scad_validation = validate_scad_parameters(SPEC)
     components = [item for item in SPEC["components"] if item["inclusion_rule"] == "AUTHORITATIVE_CURRENT"]
     total = float(validation["total_mass_kg"])
     arm_mass = max(float(item["mass_kg"]) for item in components if item["name"].endswith("seven_axis_arm"))
@@ -630,6 +836,8 @@ def analyse() -> dict[str, object]:
             <= float(SPEC["coordinate_system"]["height_tolerance_mm"]),
             "torso_starts_above_base": geometry["torso_bottom_raised_z"] > geometry["base_top_z"],
         },
+        "scad_parameters": scad_validation,
+        "scad_parameter_checks": scad_validation["checks"],
     }
 
 
@@ -1124,6 +1332,11 @@ def main() -> None:
     report = analyse()
     if not all(report["checks"].values()):
         raise SystemExit(f"mechanical design check failed: {report['checks']}")
+    if not all(report["scad_parameter_checks"].values()):
+        raise SystemExit(
+            "OpenSCAD parameters drifted from the design specification: "
+            f"{report['scad_parameters']['errors'] or report['scad_parameter_checks']}"
+        )
     step_path = OUT / "enclosure.step"
     cad_exported = export_cad_package()
     if not cad_exported and not export_solid_step(step_path) and not step_path.exists():

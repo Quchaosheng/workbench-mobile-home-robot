@@ -1,0 +1,65 @@
+{
+  "revision": "D",
+  "authoritative_source": "hardware/mechanical/design-spec.json",
+  "units": "mm",
+  "default_tolerance": 0.0,
+  "shared_parameters": [
+    { "scad": "BASE_W", "spec_path": "chassis.width" },
+    { "scad": "BASE_D", "spec_path": "chassis.depth" },
+    { "scad": "GROUND", "spec_path": "chassis.ground_clearance" },
+    { "scad": "LIFT_TRAVEL", "spec_path": "lifting_platform.travel" },
+    { "scad": "TORSO_BOTTOM_STOWED", "spec_path": "coordinate_system.torso_bottom_stowed_z_mm" },
+    { "scad": "TORSO_W", "spec_path": "torso.width" },
+    { "scad": "TORSO_D", "spec_path": "torso.depth" },
+    { "scad": "TORSO_H", "spec_path": "torso.height" },
+    { "scad": "HEAD_W", "spec_path": "head.width" },
+    { "scad": "HEAD_D", "spec_path": "head.depth" },
+    { "scad": "HEAD_H", "spec_path": "head.height" },
+    { "scad": "HEAD_TILT", "spec_path": "head.tilt_deg" },
+    { "scad": "HEAD_TOP_STOWED", "spec_path": "coordinate_system.head_top_stowed_z_mm" }
+  ],
+  "derived_parameters": [
+    {
+      "scad": "BASE_TOP",
+      "expression_of": ["GROUND", "BASE_H"],
+      "reason": "raised-pose datum; the authoritative value is coordinate_system.base_top_z_mm"
+    },
+    {
+      "scad": "BASE_H",
+      "expression_of": [],
+      "reason": "chassis body height between ground clearance and the z=140 base top"
+    },
+    {
+      "scad": "LIFT_EXTENSION",
+      "expression_of": ["LIFT_TRAVEL"],
+      "reason": "the generated package always renders the raised working pose"
+    },
+    {
+      "scad": "TORSO_BOTTOM",
+      "expression_of": ["TORSO_BOTTOM_STOWED", "LIFT_EXTENSION"],
+      "reason": "raised-pose torso bottom"
+    },
+    {
+      "scad": "HEAD_TOP",
+      "expression_of": ["HEAD_TOP_STOWED", "LIFT_EXTENSION"],
+      "reason": "raised-pose head top"
+    },
+    {
+      "scad": "HEAD_MODEL_Z",
+      "expression_of": ["HEAD_TOP", "HEAD_H", "HEAD_D", "HEAD_TILT"],
+      "reason": "display envelope centre after applying the documented tilt"
+    },
+    {
+      "scad": "HEAD_BOTTOM",
+      "expression_of": ["HEAD_MODEL_Z", "HEAD_D", "HEAD_TILT"],
+      "reason": "display envelope bottom after applying the documented tilt"
+    }
+  ],
+  "visual_only_parameters": [
+    {
+      "scad": "STABILIZERS_DEPLOYED",
+      "reason": "render switch selecting the deployed stabilizer pose; not a product dimension",
+      "owner": "Quchaosheng"
+    }
+  ]
+}

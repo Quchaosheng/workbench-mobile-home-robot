@@ -74,6 +74,15 @@ visually frames the head.
 python hardware/mechanical/tools/generate_artifacts.py
 ```
 
+Every `NAME = expression` constant in `cad/desk_robot.scad` must be classified in
+`cad/scad-parameter-manifest.json` as spec-backed (`shared_parameters`), derived
+(`derived_parameters`), or visual-only (`visual_only_parameters` with a reason and
+owner). `generate_artifacts.py` evaluates the SCAD arithmetic with a restricted
+AST walk and fails with a non-zero exit when a shared value drifts from
+`design-spec.json`, when a constant is unclassified, or when the manifest is
+missing, duplicated, or revision-mismatched. Change the design dimensions only in
+`design-spec.json`; never edit SCAD values to make the check pass.
+
 The command regenerates the analytical report, C revision general arrangement,
 thermal path, drop screen, BOM, assembly sequence, and CadQuery STEP package.
 It intentionally reports `CONCEPT_PHYSICAL_VALIDATION_REQUIRED`: no rendering
@@ -89,7 +98,7 @@ stability, force-limit, or guarded household-task tests on a serialized unit.
 - `generated/parts/*.step`: ten D revision concept parts, including the separate neck mount.
 - `generated/drawings/general-arrangement.svg`: D revision architecture and lift states.
 - `generated/drawings/thermal-flow.svg`: isolated electronics airflow path.
-- `generated/analysis.json`: hashed mass model, per-pose CG, four-direction drive/stabilized tip screens, payload moment, and clearances.
+- `generated/analysis.json`: hashed mass model, per-pose CG, four-direction drive/stabilized tip screens, payload moment, clearances, and the OpenSCAD parameter comparison.
 - `analysis.schema.json`: contract for the generated analytical evidence.
 - `generated/bom-manifest.json`: mass-model revision/hash binding for the generated BOM.
 - `revision-d-architecture.md`: bimanual workspace, task boundary, and architecture rationale.
