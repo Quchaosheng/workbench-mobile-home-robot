@@ -39,6 +39,8 @@ EVENT_TYPES = {
 MAX_EVENT_LOG_BYTES = 10 * 1024 * 1024
 MAX_EVENTS_PER_RUN = 10_000
 MAX_READ_ATTEMPTS = 2
+MAX_EVIDENCE_REFS = 256
+VERIFICATION_STATUSES = {"confirmed", "insufficient_evidence", "refuted"}
 
 
 class ReadModelError(ValueError):
@@ -60,6 +62,62 @@ def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise _DuplicateJsonKey(f"duplicate JSON key: {key!r}")
         payload[key] = value
     return payload
+
+
+def _validate_event_stream(events: list[Any], source: str) -> list[dict[str, Any]]:
+    """Apply the semantic event-stream contract to one candidate run.
+
+    The remote simulation host is a separate trust domain, so a payload it
+    returns must clear exactly the same checks as a local log before the
+    controller renders it as trusted state. Only the field names are echoed;
+    response bodies and payload contents are never included in the error.
+    """
+    if not isinstance(events, list) or not events:
+        raise ReadModelError(f"event stream has an invalid event count: {source}")
+    if len(events) > MAX_EVENTS_PER_RUN:
+        raise ReadModelError(f"event stream exceeds {MAX_EVENTS_PER_RUN} events: {source}")
+    if any(not isinstance(event, dict) for event in events):
+        raise ReadModelError(f"event stream contains a non-object event: {source}")
+    run_ids = [event.get("run_id") for event in events]
+    if any(not isinstance(run_id, str) or not run_id for run_id in run_ids) or any(
+        run_id != run_ids[0] for run_id in run_ids
+    ):
+        raise ReadModelError(f"event stream has inconsistent run_id values: {source}")
+    sequences = [event.get("sequence_no") for event in events]
+    if any(type(sequence) is not int for sequence in sequences) or sequences != list(range(len(events))):
+        raise ReadModelError(f"event stream sequence_no must be contiguous from zero: {source}")
+    event_ids = [event.get("event_id") for event in events]
+    if any(not isinstance(event_id, str) or not event_id for event_id in event_ids):
+        raise ReadModelError(f"event stream has an invalid event_id: {source}")
+    if len(event_ids) != len(set(event_ids)):
+        raise ReadModelError(f"event stream has duplicate event_id values: {source}")
+    for event in events:
+        event_type = event.get("event_type")
+        if not isinstance(event_type, str) or event_type not in EVENT_TYPES:
+            raise ReadModelError(f"event stream has an unknown event_type: {source}")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            raise ReadModelError(f"event payload must be an object: {source}")
+        # Whole-response size stays owned by MAX_RESPONSE_BYTES (413); this layer
+        # only rejects payloads that are not representable as finite JSON.
+        try:
+            json.dumps(payload, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ReadModelError(f"event payload is not finite JSON: {source}") from exc
+        if not isinstance(event.get("occurred_at"), str) or not event["occurred_at"].strip():
+            raise ReadModelError(f"event occurred_at must be a non-empty string: {source}")
+        evidence_refs = event.get("evidence_refs", [])
+        if (
+            not isinstance(evidence_refs, list)
+            or len(evidence_refs) > MAX_EVIDENCE_REFS
+            or any(not isinstance(reference, str) or not reference for reference in evidence_refs)
+        ):
+            raise ReadModelError(f"event evidence_refs must be a bounded string list: {source}")
+        if event_type == "verification":
+            status = payload.get("status")
+            if not isinstance(status, str) or status not in VERIFICATION_STATUSES:
+                raise ReadModelError(f"verification event has an unknown status: {source}")
+    return events
 
 
 class DashboardReadModel:
@@ -113,34 +171,7 @@ class DashboardReadModel:
                 raise ReadModelError(f"event log contains {exc}: {path.name}") from exc
             except json.JSONDecodeError as exc:
                 raise ReadModelError(f"event log is not valid JSONL: {path.name}") from exc
-            if not events or len(events) > MAX_EVENTS_PER_RUN:
-                raise ReadModelError(f"event log has an invalid event count: {path.name}")
-            if any(not isinstance(event, dict) for event in events):
-                raise ReadModelError(f"event log contains a non-object event: {path.name}")
-            run_ids = [event.get("run_id") for event in events]
-            if any(not isinstance(run_id, str) or not run_id for run_id in run_ids) or any(
-                run_id != run_ids[0] for run_id in run_ids
-            ):
-                raise ReadModelError(f"event log has inconsistent run_id values: {path.name}")
-            sequences = [event.get("sequence_no") for event in events]
-            if any(type(sequence) is not int for sequence in sequences) or sequences != list(range(len(events))):
-                raise ReadModelError(f"event log sequence_no must be contiguous from zero: {path.name}")
-            event_ids = [event.get("event_id") for event in events]
-            if any(not isinstance(event_id, str) or not event_id for event_id in event_ids):
-                raise ReadModelError(f"event log has an invalid event_id: {path.name}")
-            if len(event_ids) != len(set(event_ids)):
-                raise ReadModelError(f"event log has duplicate event_id values: {path.name}")
-            for event in events:
-                event_type = event.get("event_type")
-                if not isinstance(event_type, str) or event_type not in EVENT_TYPES:
-                    raise ReadModelError(f"event log has an unknown event_type: {path.name}")
-                if not isinstance(event.get("payload"), dict):
-                    raise ReadModelError(f"event payload must be an object: {path.name}")
-                if not isinstance(event.get("occurred_at"), str) or not event["occurred_at"]:
-                    raise ReadModelError(f"event occurred_at must be a non-empty string: {path.name}")
-                evidence_refs = event.get("evidence_refs", [])
-                if not isinstance(evidence_refs, list) or any(not isinstance(ref, str) for ref in evidence_refs):
-                    raise ReadModelError(f"event evidence_refs must be a string list: {path.name}")
+            events = _validate_event_stream(events, path.name)
             self._event_cache[path] = (stable_stat.st_mtime_ns, stable_stat.st_size, events)
             return events
 
@@ -263,21 +294,31 @@ class RemoteDashboardReadModel(DashboardReadModel):
     def list_runs(self) -> list[dict[str, Any]]:
         payload = self._request("/api/v1/runs")
         runs = payload.get("runs")
-        if not isinstance(runs, list) or not all(isinstance(run, dict) for run in runs):
+        if not isinstance(runs, list) or len(runs) > MAX_EVENTS_PER_RUN:
             raise ReadModelError("remote event source returned invalid runs")
+        if any(not isinstance(run, dict) for run in runs):
+            raise ReadModelError("remote event source returned invalid runs")
+        run_ids = [run.get("run_id") for run in runs]
+        if any(not isinstance(run_id, str) or not run_id for run_id in run_ids):
+            raise ReadModelError("remote event source returned a run without a run_id")
+        if len(run_ids) != len(set(run_ids)):
+            raise ReadModelError("remote event source returned duplicate run_id values")
+        for run in runs:
+            if not isinstance(run.get("event_count"), int) or isinstance(run.get("event_count"), bool):
+                raise ReadModelError("remote event source returned a run without an integer event_count")
         return runs
 
     def list_events(self, run_id: str) -> list[dict[str, Any]]:
         encoded = urllib.parse.quote(run_id, safe="")
         payload = self._request(f"/api/v1/runs/{encoded}/events")
         events = payload.get("events")
-        if not isinstance(events, list) or not all(isinstance(event, dict) for event in events):
+        if not isinstance(events, list) or any(not isinstance(event, dict) for event in events):
             raise ReadModelError("remote event source returned invalid events")
-        if not events or any(event.get("run_id") != run_id for event in events):
-            raise ReadModelError("remote event source returned inconsistent run_id values")
-        sequences = [event.get("sequence_no") for event in events]
-        if sequences != list(range(len(events))):
-            raise ReadModelError("remote event source sequence_no is not contiguous")
+        # The peer is a separate trust domain, so its events clear the same
+        # semantic contract as a local log before the controller displays them.
+        events = _validate_event_stream(events, "remote event source")
+        if any(event["run_id"] != run_id for event in events):
+            raise ReadModelError("remote event source returned unexpected run_id values")
         return events
 
     def expression_contract(self) -> dict[str, Any]:

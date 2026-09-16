@@ -27,7 +27,7 @@ from run_evaluation import (
     validate_label,
     write_jsonl,
 )
-from scenario_tools import canonical_hash, materialize_scenario
+from scenario_tools import canonical_hash, materialize_scenario, validate_simulation_manifest
 from validate_golden_set import validate, validate_diverse, validate_parcels
 
 
@@ -224,6 +224,30 @@ class EvaluationPipelineTests(unittest.TestCase):
             path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(EvaluationInputError, "unknown simulation manifest fields"):
                 load_scenario_manifests([path])
+
+    def test_standalone_and_runner_manifest_validation_agree_on_noncanonical_types(self) -> None:
+        manifest = json.loads((ROOT / "sim" / "scenarios" / "frozen" / "normal-001.json").read_text(encoding="utf-8"))
+        coercible = {
+            **manifest,
+            "seed": str(manifest["seed"]),
+            "timeout_s": str(manifest["timeout_s"]),
+            "oracle_allowed": "false",
+        }
+        # The standalone validator must not coerce values the runner rejects.
+        with self.assertRaisesRegex(ValueError, "seed"):
+            validate_simulation_manifest(coercible)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "coercible.json"
+            path.write_text(json.dumps(coercible), encoding="utf-8")
+            with self.assertRaisesRegex(EvaluationInputError, "invalid scenario manifest"):
+                load_scenario_manifests([path])
+
+        # Unknown fields stay rejected by both entrypoints, and the reviewed
+        # scene_variant extension is still accepted.
+        with self.assertRaisesRegex(ValueError, "unknown simulation manifest fields"):
+            validate_simulation_manifest({**manifest, "unreviewed_extension": True})
+        self.assertEqual(validate_simulation_manifest(manifest).scenario_id, manifest["scenario_id"])
 
     def test_event_log_rejects_bad_json_missing_verification_and_boolean_sequence(self) -> None:
         manifest = json.loads((ROOT / "sim" / "scenarios" / "frozen" / "normal-001.json").read_text(encoding="utf-8"))

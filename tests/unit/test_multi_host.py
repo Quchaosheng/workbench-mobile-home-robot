@@ -178,6 +178,63 @@ class MultiHostReadModelTests(unittest.TestCase):
         with response_server(lambda path: (200, json_headers(body), body)) as (base_url, _):
             self.assertFalse(RemoteDashboardReadModel(base_url).ready())
 
+    def test_remote_events_clear_the_same_semantic_contract_as_local_logs(self) -> None:
+        def event(**overrides: object) -> dict:
+            base = {
+                "event_id": "evt-0",
+                "run_id": "run-remote",
+                "sequence_no": 0,
+                "event_type": "verification",
+                "occurred_at": "2026-08-08T00:00:00Z",
+                "payload": {"status": "confirmed"},
+                "evidence_refs": ["frame-1"],
+            }
+            base.update(overrides)
+            return base
+
+        cases = {
+            "unknown event_type": [event(event_type="not_a_real_event")],
+            "unknown verification status": [event(payload={"status": "maybe"})],
+            "non-object payload": [event(payload=[])],
+            "blank occurred_at": [event(occurred_at="  ")],
+            "non-string evidence refs": [event(evidence_refs=[1])],
+            "duplicate event_id": [event(), event(**{"sequence_no": 1})],
+            "sequence gap": [event(), event(**{"event_id": "evt-2", "sequence_no": 2})],
+            "run_id drift": [event(), event(**{"event_id": "evt-1", "sequence_no": 1, "run_id": "other"})],
+        }
+        for label, events in cases.items():
+            with self.subTest(case=label):
+                body = json.dumps({"events": events}).encode()
+                with response_server(lambda path, body=body: (200, json_headers(body), body)) as (base_url, _):
+                    with self.assertRaisesRegex(ReadModelError, "remote event source") as caught:
+                        RemoteDashboardReadModel(base_url).list_events("run-remote")
+                self.assertNotIn(json.dumps(events), str(caught.exception))
+
+        # A canonical remote stream still projects.
+        body = json.dumps({"events": [event(event_type="task_accepted", payload={"task_id": "task-1"})]}).encode()
+        with response_server(lambda path, body=body: (200, json_headers(body), body)) as (base_url, _):
+            events = RemoteDashboardReadModel(base_url).list_events("run-remote")
+        self.assertEqual([item["event_id"] for item in events], ["evt-0"])
+
+    def test_remote_run_summaries_are_validated_before_display(self) -> None:
+        summaries = {
+            "missing run_id": [{"event_count": 1}],
+            "duplicate run_id": [{"run_id": "a", "event_count": 1}, {"run_id": "a", "event_count": 2}],
+            "non-integer event_count": [{"run_id": "a", "event_count": "1"}],
+            "non-object run": ["not-an-object"],
+        }
+        for label, runs in summaries.items():
+            with self.subTest(case=label):
+                body = json.dumps({"runs": runs}).encode()
+                with response_server(lambda path, body=body: (200, json_headers(body), body)) as (base_url, _):
+                    with self.assertRaisesRegex(ReadModelError, "remote event source"):
+                        RemoteDashboardReadModel(base_url).list_runs()
+
+        body = json.dumps({"runs": [{"run_id": "a", "event_count": 3}]}).encode()
+        with response_server(lambda path, body=body: (200, json_headers(body), body)) as (base_url, _):
+            runs = RemoteDashboardReadModel(base_url).list_runs()
+        self.assertEqual(runs, [{"run_id": "a", "event_count": 3}])
+
     def test_controller_reads_remote_source_and_fails_ready_when_peer_is_down(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             data_dir = Path(directory)

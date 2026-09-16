@@ -1,0 +1,50 @@
+{
+  "issue": 65,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the split-host remote read model apply the same semantic event-stream validation as local logs, and validate remote run summaries before they are projected.",
+  "allowed_paths": [
+    "services/backend/workbench_backend/read_model.py",
+    "tests/unit/test_multi_host.py",
+    "tests/unit/test_evaluation_tools.py",
+    "docs/task_packets/issue-65-remote-payload-validation.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/backend/workbench_backend/server.py",
+    "services/backend/workbench_backend/remote_http.py",
+    "firmware/**",
+    "robot/control/**"
+  ],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "firmware/**", "robot/control/**"],
+  "acceptance": [
+    "local logs and remote payloads are validated by one shared semantic event-stream function",
+    "unknown event types, unknown verification status, non-object payloads, blank occurred_at, non-string or unbounded evidence refs, duplicate event IDs and inconsistent run_id all fail closed for remote events",
+    "remote payload failures stay inside the existing ReadModelError boundary and never echo the response body",
+    "remote run summaries are validated for object type, non-empty unique run_id and integer event_count before display",
+    "a canonical remote stream and summary still project unchanged",
+    "the pre-existing 413 response-size contract is not duplicated or weakened"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_multi_host.py tests/unit/test_dashboard_backend.py -v",
+    "python3 -m ruff check services/backend/workbench_backend/read_model.py tests/unit/test_multi_host.py",
+    "python3 -m ruff format --check services/backend/workbench_backend/read_model.py tests/unit/test_multi_host.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-65-remote-payload-validation.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused remote semantic-parity and run-summary test output",
+    "local dashboard backend regression output",
+    "full repository test output and Task Packet gate output"
+  ],
+  "stop_conditions": [
+    "an interfaces schema, Pydantic contract or server route change is required",
+    "a remote authentication or TLS scheme is required",
+    "a new dependency outside the standard library is required",
+    "a modification outside allowed_paths is required"
+  ]
+}
