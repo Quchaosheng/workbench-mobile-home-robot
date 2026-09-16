@@ -9,6 +9,8 @@ from pathlib import Path
 from statistics import NormalDist
 from typing import Any
 
+from _jsonio import load_json
+
 
 def wilson_interval(successes: int, total: int, confidence: float = 0.95) -> tuple[float, float]:
     if total <= 0:
@@ -87,7 +89,7 @@ def main() -> int:
     args = parser.parse_args()
     labels = [label.strip() for label in args.labels.split(",") if label.strip()]
     payload = compare(
-        [json.loads(path.read_text(encoding="utf-8")) for path in args.metrics],
+        [load_json(path) for path in args.metrics],
         labels,
     )
     args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -1,6 +1,6 @@
-import json
 from collections import Counter
 
+from _jsonio import load_json
 from _paths import ROOT, enable_local_packages
 
 enable_local_packages()
@@ -21,7 +21,7 @@ def main() -> int:
         raise RuntimeError("no scenario manifests found")
     manifests = []
     for path in scenario_files:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = load_json(path)
         validate_simulation_manifest(payload)
         first = materialize_scenario(payload)
         second = materialize_scenario(payload)

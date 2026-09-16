@@ -2,15 +2,16 @@
 """Generate a release-gate report from three evaluation metric files."""
 
 import argparse
-import json
 import math
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from _jsonio import load_json
+
 
 def load(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json(path)
 
 
 def count(value: int | None) -> str:
@@ -18,7 +19,13 @@ def count(value: int | None) -> str:
 
 
 def seconds(value: float | None) -> str:
-    return "无数据" if value is None else f"{value:.1f}s"
+    if value is None:
+        return "无数据"
+    if not isinstance(value, int | float) or isinstance(value, bool) or not math.isfinite(value):
+        return "无效"
+    if value < 0:
+        return f"无效 ({value:.1f}s)"
+    return f"{value:.1f}s"
 
 
 def percent(value: float | None) -> str:
@@ -44,6 +51,24 @@ def _finite_metric(value: Any) -> float | None:
         return None
 
 
+DURATION_LABELS = (("P50", "task_duration_p50_s"), ("P95", "task_duration_p95_s"))
+
+
+def _duration_reasons(metrics: dict[str, Any]) -> list[str]:
+    """Reject missing, non-finite or negative duration evidence."""
+    reasons: list[str] = []
+    for label, key in DURATION_LABELS:
+        raw = metrics.get(key)
+        if raw is None:
+            continue
+        value = _finite_metric(raw)
+        if value is None:
+            reasons.append(f"任务时间 {label} 不是可用数值: {raw!r}")
+        elif value < 0:
+            reasons.append(f"任务时间 {label} 为负数,时间证据不可信")
+    return reasons
+
+
 def release_reasons(metrics: dict[str, Any]) -> list[str]:
     reasons = []
     if not metrics.get("release_eligible"):
@@ -59,6 +84,10 @@ def release_reasons(metrics: dict[str, Any]) -> list[str]:
     vtcr = _finite_metric(metrics.get("vtcr"))
     if vtcr is None or vtcr < 0.8:
         reasons.append("VTCR 低于 80%")
+    # Durations are checked independently: a negative value means two clocks
+    # disagreed and a non-finite one is not a measurement, so neither may reach
+    # the pass path even when the other percentile looks acceptable.
+    reasons.extend(_duration_reasons(metrics))
     task_duration_p95_s = _finite_metric(metrics.get("task_duration_p95_s"))
     if task_duration_p95_s is None or task_duration_p95_s >= 120:
         reasons.append("任务 P95 缺失或未低于 120 秒")

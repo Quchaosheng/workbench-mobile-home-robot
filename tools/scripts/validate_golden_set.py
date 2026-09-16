@@ -1,6 +1,6 @@
-import json
 from collections import Counter
 
+from _jsonio import load_json
 from _paths import ROOT, enable_local_packages
 
 enable_local_packages()
@@ -119,9 +119,9 @@ def main() -> int:
     baseline_path = ROOT / "evaluation" / "golden-set-v0.1.json"
     diverse_path = ROOT / "evaluation" / "golden-set-v0.2.json"
     parcel_path = ROOT / "evaluation" / "golden-set-parcel-v0.1.json"
-    problems = validate(json.loads(baseline_path.read_text(encoding="utf-8")))
-    problems.extend(validate_diverse(json.loads(diverse_path.read_text(encoding="utf-8"))))
-    problems.extend(validate_parcels(json.loads(parcel_path.read_text(encoding="utf-8"))))
+    problems = validate(load_json(baseline_path))
+    problems.extend(validate_diverse(load_json(diverse_path)))
+    problems.extend(validate_parcels(load_json(parcel_path)))
     if problems:
         raise RuntimeError("; ".join(problems))
     print("golden set validation passed for 50 tasks across 5 families and 26 dangerous requests")

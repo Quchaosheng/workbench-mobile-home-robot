@@ -10,20 +10,136 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from _jsonio import JsonInputError, load_json, load_jsonl
+
 ALLOWED_ACTIONS = {"ask_confirm", "express", "grasp", "observe", "place", "stop"}
+EVENT_TYPES = {
+    "action_request",
+    "action_result",
+    "emotion",
+    "fault",
+    "observation",
+    "policy_violation",
+    "recovery_complete",
+    "recovery_started",
+    "task_accepted",
+    "task_graph",
+    "task_start",
+    "task_terminal",
+    "tool_call",
+    "verification",
+}
+
+
+def _validate_run_log(log_file: Path, events: list[Any]) -> str:
+    """Validate one JSONL run log before its events can influence metrics.
+
+    A log that is internally inconsistent is rejected rather than repaired:
+    trusting a partially valid file is how a run silently contributes wrong
+    numerators to the release gates.
+    """
+    if any(not isinstance(event, dict) for event in events):
+        raise RuntimeError(f"event log contains a non-object event: {log_file}")
+    run_id = events[0].get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise RuntimeError(f"event log has no run_id: {log_file}")
+    for event in events:
+        if event.get("run_id") != run_id:
+            raise RuntimeError(f"run_id drift in {log_file}: expected {run_id!r}, found {event.get('run_id')!r}")
+    sequences = [event.get("sequence_no") for event in events]
+    if any(type(sequence) is not int for sequence in sequences):
+        raise RuntimeError(f"non-integer sequence_no in {log_file}: {sequences}")
+    ordered = sorted(sequences)
+    if ordered != list(range(len(events))):
+        raise RuntimeError(f"non-contiguous sequence_no values in {log_file}: {sequences}")
+    event_ids = [event.get("event_id") for event in events]
+    if any(not isinstance(event_id, str) or not event_id for event_id in event_ids):
+        raise RuntimeError(f"missing event_id in {log_file}")
+    if len(event_ids) != len(set(event_ids)):
+        raise RuntimeError(f"duplicate event_id in {log_file}")
+    for event in events:
+        event_type = event.get("event_type")
+        if not isinstance(event_type, str) or event_type not in EVENT_TYPES:
+            raise RuntimeError(f"unknown event_type in {log_file}: {event_type!r}")
+        if not isinstance(event.get("payload"), dict):
+            raise RuntimeError(f"event payload is not an object in {log_file}: {event.get('event_id')!r}")
+    return run_id
+
+
+def _conflicting_metadata(run_id: str, previous: dict[str, Any], current: dict[str, Any]) -> str | None:
+    """Report the first evaluation field whose value disagrees between files."""
+    for key in sorted(set(previous) | set(current)):
+        if previous.get(key) != current.get(key):
+            return f"conflicting {key}: {previous.get(key)!r} and {current.get(key)!r}"
+    return None
 
 
 def load_runs(run_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    """Load every run log under ``run_dir``.
+
+    ``run_evaluation.py`` writes logs as ``<output_dir>/<version>/*.jsonl`` while
+    a single version directory is also a valid input, so both the flat and the
+    documented nested layout are searched. A run ID appearing in more than one
+    file fails closed instead of silently overwriting whichever file was read
+    first, and the offending paths are named in the error.
+    """
+    if not run_dir.exists():
+        raise RuntimeError(f"run directory does not exist: {run_dir}")
+    if not run_dir.is_dir():
+        raise RuntimeError(f"run directory is not a directory: {run_dir}")
     runs: dict[str, list[dict[str, Any]]] = {}
-    for log_file in sorted(run_dir.glob("*.jsonl")):
-        events = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    sources: dict[str, Path] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    for log_file in sorted(run_dir.rglob("*.jsonl")):
+        try:
+            events = load_jsonl(log_file)
+        except JsonInputError as exc:
+            raise RuntimeError(f"unreadable JSONL event log: {exc}") from exc
         if not events:
             continue
-        run_id = str(events[0].get("run_id", ""))
-        if not run_id:
-            raise RuntimeError(f"event log has no run_id: {log_file}")
-        runs[run_id] = sorted(events, key=lambda event: event.get("sequence_no", -1))
+        run_id = _validate_run_log(log_file, events)
+        current_metadata = next(
+            (event.get("evaluation") for event in events if isinstance(event.get("evaluation"), dict)),
+            {},
+        )
+        if run_id in runs:
+            conflict = _conflicting_metadata(run_id, metadata[run_id], current_metadata)
+            detail = f" ({conflict})" if conflict else ""
+            raise RuntimeError(
+                f"duplicate run_id {run_id!r} in {sources[run_id]} and {log_file}{detail}; "
+                "refusing to overwrite one run with another"
+            )
+        sources[run_id] = log_file
+        metadata[run_id] = current_metadata
+        runs[run_id] = sorted(events, key=lambda event: event["sequence_no"])
     return runs
+
+
+def run_metadata(runs: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+    """Preserve the version, runner, commit and scenario each run declares."""
+    preserved: dict[str, dict[str, Any]] = {}
+    for run_id, events in runs.items():
+        evaluation = next(
+            (event.get("evaluation") for event in events if isinstance(event.get("evaluation"), dict)),
+            {},
+        )
+        preserved[run_id] = {
+            key: evaluation.get(key) for key in ("commit", "scenario_id", "seed", "runner", "task_id", "scene_variant")
+        }
+    return preserved
+
+
+def _load_summary(summary_path: Path) -> dict[str, Any]:
+    """Read the optional run summary, rejecting ambiguous evidence."""
+    if not summary_path.is_file():
+        return {}
+    try:
+        payload = load_json(summary_path)
+    except JsonInputError as exc:
+        raise RuntimeError(f"unreadable run summary: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"run summary is not a JSON object: {summary_path}")
+    return payload
 
 
 def verification_statuses(events: list[dict[str, Any]]) -> list[str]:
@@ -45,18 +161,72 @@ def percentile(values: list[float], quantile: float) -> float | None:
     return ordered[index]
 
 
+MONOTONIC_CLOCK = "runner_monotonic_elapsed"
+WALL_CLOCK = "occurred_at_wall_clock"
+
+
+def _wall_clock_duration(run_id: str, events: list[dict[str, Any]]) -> float:
+    """Derive a duration by subtracting two wall-clock timestamps.
+
+    ``occurred_at`` is written by whichever node produced the event, so this is
+    cross-node wall-clock arithmetic and is only used when the runner recorded
+    no monotonic elapsed evidence of its own.
+    """
+    try:
+        start = datetime.fromisoformat(str(events[0]["occurred_at"]).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(events[-1]["occurred_at"]).replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"run {run_id!r} has unusable occurred_at timestamps") from exc
+    if start.tzinfo is None or end.tzinfo is None:
+        raise RuntimeError(f"run {run_id!r} has timezone-naive occurred_at timestamps")
+    return (end - start).total_seconds()
+
+
+def _measured_elapsed(run_id: str, events: list[dict[str, Any]]) -> float | None:
+    """Return the runner's own monotonic elapsed measurement, if it recorded one.
+
+    Only the runner-owned ``evaluation`` metadata is consulted, so an unrelated
+    ``elapsed_s`` inside an event payload cannot silently become a duration.
+    """
+    for event in reversed(events):
+        elapsed = event.get("evaluation", {}).get("elapsed_s")
+        if elapsed is None:
+            continue
+        if isinstance(elapsed, bool) or not isinstance(elapsed, int | float):
+            raise RuntimeError(f"run {run_id!r} has a non-numeric elapsed_s measurement: {elapsed!r}")
+        return float(elapsed)
+    return None
+
+
 def durations(runs: dict[str, list[dict[str, Any]]]) -> list[float]:
-    result = []
-    for events in runs.values():
+    """Return per-run task durations, failing closed on unusable clocks.
+
+    Runner-measured monotonic elapsed time is preferred, because subtracting
+    ``occurred_at`` values across two clock domains can invent or hide time. A
+    run that cannot produce a finite, non-negative duration is invalid
+    evidence: silently skipping it would bias the percentile metrics upward.
+    """
+    result: list[float] = []
+    for run_id, events in runs.items():
         if len(events) < 2:
             continue
-        try:
-            start = datetime.fromisoformat(events[0]["occurred_at"].replace("Z", "+00:00"))
-            end = datetime.fromisoformat(events[-1]["occurred_at"].replace("Z", "+00:00"))
-        except (KeyError, TypeError, ValueError):
-            continue
-        result.append((end - start).total_seconds())
+        measured = _measured_elapsed(run_id, events)
+        duration = _wall_clock_duration(run_id, events) if measured is None else measured
+        if not math.isfinite(duration) or duration < 0:
+            raise RuntimeError(f"run {run_id!r} has an invalid task duration: {duration}")
+        result.append(duration)
     return result
+
+
+def duration_sources(runs: dict[str, list[dict[str, Any]]]) -> dict[str, str]:
+    """Name the clock behind every task duration so reports can qualify it."""
+    sources: dict[str, str] = {}
+    for run_id, events in runs.items():
+        if len(events) < 2:
+            continue
+        measured = _measured_elapsed(run_id, events)
+        sources[run_id] = MONOTONIC_CLOCK if measured is not None else WALL_CLOCK
+    return sources
 
 
 def replay_digest(events: list[dict[str, Any]]) -> str:
@@ -83,7 +253,10 @@ def audit_false_completions(
 ) -> tuple[int | None, bool, str | None]:
     if audit_path is None:
         return None, False, None
-    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    try:
+        audit = load_json(audit_path)
+    except JsonInputError as exc:
+        raise RuntimeError(f"unreadable human audit: {exc}") from exc
     decisions = audit.get("runs", {})
     missing = sorted(set(runs) - set(decisions))
     if missing:
@@ -154,7 +327,7 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
         evaluated_condition_count += len(required_set & evaluated_set)
 
     summary_path = run_dir.parent / "summary.json"
-    summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {}
+    summary = _load_summary(summary_path)
     return {
         "false_completion_count": false_completions,
         "false_completion_reviewed": audit_complete,
@@ -167,6 +340,7 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
         "vtcr": verified / len(final_statuses) if final_statuses else 0.0,
         "task_duration_p50_s": percentile(task_durations, 0.5),
         "task_duration_p95_s": percentile(task_durations, 0.95),
+        "task_duration_sources": duration_sources(runs),
         "recovery_rate": recovered / len(recoverable) if recoverable else None,
         "tool_call_validity": (
             sum(event.get("payload", {}).get("action_type") in ALLOWED_ACTIONS for event in action_requests)

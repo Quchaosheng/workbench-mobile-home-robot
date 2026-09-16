@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from _jsonio import JsonInputError, iter_jsonl, load_json
 from _paths import enable_local_packages
 
 enable_local_packages()
@@ -41,6 +42,27 @@ class EvaluationInputError(ValueError):
     """Raised before execution when an evaluation input is unsafe or ambiguous."""
 
 
+def parse_rfc3339(value: Any, *, field: str, path: Path, line_number: int, event_id: Any) -> datetime:
+    """Parse an explicit timezone-aware RFC 3339 timestamp.
+
+    Naive or malformed values are rejected instead of being compared as if the
+    writer and reader shared a clock: a naive timestamp cannot be ordered
+    against an aware one, and silently assuming UTC turns an unknown offset into
+    a plausible-looking duration.
+    """
+    location = f"{path}:{line_number} event {event_id!r}"
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"{location}: missing {field}")
+    text = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise RuntimeError(f"{location}: malformed {field}: {value!r}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise RuntimeError(f"{location}: timezone-naive {field}: {value!r}")
+    return parsed
+
+
 def validate_label(value: str, field: str) -> str:
     if not isinstance(value, str) or not SAFE_LABEL.fullmatch(value):
         raise EvaluationInputError(f"{field} must be a filesystem-safe label: {value!r}")
@@ -52,9 +74,9 @@ def load_scenario_manifests(paths: list[Path]) -> list[tuple[Path, dict[str, Any
     seen_ids: dict[str, Path] = {}
     for path in paths:
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = load_json(path)
             validate_simulation_manifest(payload)
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        except (JsonInputError, OSError, UnicodeError, ValueError) as exc:
             raise EvaluationInputError(f"invalid scenario manifest {path}: {exc}") from exc
         scenario_id = validate_label(payload["scenario_id"], "scenario_id")
         if scenario_id in seen_ids:
@@ -455,11 +477,18 @@ def validate_event_log(
     try:
         if path.stat().st_size > MAX_EVENT_LOG_BYTES:
             raise RuntimeError(f"event log exceeds {MAX_EVENT_LOG_BYTES} bytes: {path}")
-        events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        events = []
+        line_numbers = []
+        for line_number, event in iter_jsonl(path):
+            events.append(event)
+            line_numbers.append(line_number)
     except RuntimeError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"runner produced an unreadable JSONL event log: {path}") from exc
+    except JsonInputError as exc:
+        # JsonInputError already carries the file, line and duplicate field name.
+        raise RuntimeError(f"runner produced an unreadable JSONL event log: {exc}") from exc
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise RuntimeError(f"runner produced an unreadable JSONL event log: {path}: {exc}") from exc
     if not events:
         raise RuntimeError(f"runner produced an empty event log: {path}")
     if len(events) > MAX_EVENTS_PER_RUN:
@@ -476,12 +505,17 @@ def validate_event_log(
         raise RuntimeError(f"missing event_id in {path}")
     if len(event_ids) != len(set(event_ids)):
         raise RuntimeError(f"duplicate event_id in {path}")
-    for event in events:
+    for index, event in enumerate(events):
         event_type = event.get("event_type")
         if not isinstance(event_type, str) or event_type not in EVENT_TYPES:
             raise RuntimeError(f"unknown event_type in {path}: {event_type!r}")
-        if not isinstance(event.get("occurred_at"), str) or not event["occurred_at"]:
-            raise RuntimeError(f"missing occurred_at in {path}")
+        parse_rfc3339(
+            event.get("occurred_at"),
+            field="occurred_at",
+            path=path,
+            line_number=line_numbers[index],
+            event_id=event.get("event_id"),
+        )
         if not isinstance(event.get("payload"), dict):
             raise RuntimeError(f"event payload is not an object in {path}")
         evidence_refs = event.get("evidence_refs", [])

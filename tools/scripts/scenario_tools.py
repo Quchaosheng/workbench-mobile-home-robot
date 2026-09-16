@@ -4,6 +4,7 @@ import random
 from pathlib import Path
 from typing import Any
 
+from _jsonio import load_json
 from workbench_contracts import ScenarioManifest
 
 FROZEN_DISTRIBUTION = {
@@ -185,7 +186,7 @@ def materialize_scenario(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json(path)
 
 
 def reproducibility_hash(path: Path) -> str:

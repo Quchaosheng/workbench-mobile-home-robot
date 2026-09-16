@@ -7,8 +7,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "scripts"))
 
-from collect_metrics import collect
+from _jsonio import JsonInputError, load_jsonl, loads
+from collect_metrics import (
+    audit_false_completions,
+    collect,
+    duration_sources,
+    durations,
+    load_runs,
+    run_metadata,
+)
 from compare_evaluations import compare, wilson_interval
+from generate_report import load as load_metrics
 from generate_report import release_reasons
 from run_evaluation import (
     EvaluationInputError,
@@ -259,6 +268,71 @@ class EvaluationPipelineTests(unittest.TestCase):
                     commit="abc123",
                 )
 
+    def test_duplicate_json_object_keys_are_rejected_at_every_evidence_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            manifest = root / "manifest.json"
+            manifest.write_text('{"scenario_id": "a", "seed": 1, "seed": 2}', encoding="utf-8")
+            with self.assertRaisesRegex(EvaluationInputError, "duplicate JSON object key: 'seed'"):
+                load_scenario_manifests([manifest])
+
+            log = root / "events.jsonl"
+            log.write_text('{"run_id": "attacker", "run_id": "v-test--normal-001"}\n', encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "duplicate JSON object key: 'run_id'"):
+                validate_event_log(log, "v-test--normal-001")
+
+            scenario = json.loads(
+                (ROOT / "sim" / "scenarios" / "frozen" / "normal-001.json").read_text(encoding="utf-8")
+            )
+            run_dir = root / "v-test"
+            run_dir.mkdir()
+            write_jsonl(run_dir / "normal-001.jsonl", scripted_events("v-test", scenario, "abc123", 1000))
+            (root / "summary.json").write_text(
+                '{"runner": "scripted", "release_eligible": true, "release_eligible": false}', encoding="utf-8"
+            )
+            with self.assertRaisesRegex(RuntimeError, "duplicate JSON object key: 'release_eligible'"):
+                collect(run_dir)
+
+            audit = root / "audit.json"
+            audit.write_text(
+                '{"runs": {"a": {"oracle_status": "complete", "oracle_status": "incomplete"}}}', encoding="utf-8"
+            )
+            with self.assertRaisesRegex(RuntimeError, "duplicate JSON object key: 'oracle_status'"):
+                audit_false_completions({"a": []}, audit)
+
+            metrics = root / "metrics.json"
+            metrics.write_text('{"vtcr": 0.9, "vtcr": 0.1}', encoding="utf-8")
+            with self.assertRaisesRegex(JsonInputError, "duplicate JSON object key: 'vtcr'"):
+                load_metrics(metrics)
+
+    def test_duplicate_json_keys_are_rejected_at_any_nesting_level(self) -> None:
+        with self.assertRaisesRegex(JsonInputError, "duplicate JSON object key: 'timeout_s'"):
+            loads('{"scenario": {"timeout_s": 1, "timeout_s": 120}}', "manifest.json")
+        with self.assertRaisesRegex(JsonInputError, "duplicate JSON object key: 'ok'"):
+            loads('[{"ok": 1, "ok": 2}]', "golden-set.json")
+
+    def test_strict_json_errors_identify_source_and_never_echo_the_body(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "events.jsonl"
+            path.write_text('{"run_id": "a"}\n{"secret": "hunter2", "secret": "hunter2"}\n', encoding="utf-8")
+            with self.assertRaises(JsonInputError) as context:
+                load_jsonl(path)
+        message = str(context.exception)
+        self.assertIn("events.jsonl:2", message)
+        self.assertIn("'secret'", message)
+        self.assertNotIn("hunter2", message)
+
+    def test_valid_canonical_evaluation_inputs_still_load(self) -> None:
+        manifest = load_scenario_manifests([ROOT / "sim" / "scenarios" / "frozen" / "normal-001.json"])
+        self.assertEqual(manifest[0][1]["scenario_id"], "normal-001")
+        events = scripted_events("v-test", manifest[0][1], "abc123", 1000)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "events.jsonl"
+            write_jsonl(path, events)
+            self.assertEqual(len(load_jsonl(path)), len(events))
+            self.assertEqual(len(validate_event_log(path, "v-test--normal-001")), len(events))
+
     def test_statistical_report_marks_identical_versions_not_significant(self) -> None:
         metrics = [
             {"run_count": 30, "vtcr": 0.8},
@@ -322,6 +396,215 @@ class EvaluationPipelineTests(unittest.TestCase):
                 with self.subTest(metric=metric, invalid_value=invalid_value):
                     candidate = {**metrics, metric: invalid_value}
                     self.assertIn(expected_reason, release_reasons(candidate))
+
+    def _scenario(self) -> dict:
+        return json.loads((ROOT / "sim" / "scenarios" / "frozen" / "normal-001.json").read_text(encoding="utf-8"))
+
+    def test_metrics_reject_duplicate_run_ids_and_duplicate_json_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            events = scripted_events("v-test", self._scenario(), "abc123", 1000)
+            for name in ("first.jsonl", "second.jsonl"):
+                write_jsonl(root / name, events)
+            with self.assertRaisesRegex(RuntimeError, "duplicate run_id"):
+                load_runs(root)
+
+            duplicate_keys = root / "nested"
+            duplicate_keys.mkdir()
+            (duplicate_keys / "keys.jsonl").write_text(
+                '{"run_id": "run-1", "run_id": "run-2", "sequence_no": 0}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "duplicate JSON object key"):
+                load_runs(duplicate_keys)
+
+    def test_metrics_reject_duplicate_run_ids_with_conflicting_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "v-test"
+            run_dir.mkdir()
+            events = scripted_events("v-test", self._scenario(), "abc123", 1000)
+            write_jsonl(run_dir / "normal-001.jsonl", events)
+            drifted = [dict(event) for event in events]
+            for event in drifted:
+                event["evaluation"] = {**event["evaluation"], "commit": "different-commit"}
+            write_jsonl(root / "drifted.jsonl", drifted)
+            with self.assertRaisesRegex(RuntimeError, "conflicting commit"):
+                load_runs(root)
+
+    def test_metrics_fail_closed_on_inconsistent_run_logs(self) -> None:
+        def drift_one_action(events: list[dict]) -> None:
+            events[-1]["run_id"] = "other-run"
+
+        cases = {
+            "missing event_id": lambda events: [event.pop("event_id") for event in events],
+            "duplicate event_id": lambda events: [event.update({"event_id": "shared"}) for event in events],
+            "unknown event_type": lambda events: [event.update({"event_type": "not_a_real_event"}) for event in events],
+            "non-contiguous sequence_no": lambda events: events[1].update({"sequence_no": 99}),
+            "run_id drift": drift_one_action,
+        }
+        for expected, mutate in cases.items():
+            with self.subTest(case=expected), tempfile.TemporaryDirectory() as temp_dir:
+                events = scripted_events("v-test", self._scenario(), "abc123", 1000)
+                mutate(events)
+                path = Path(temp_dir) / "normal-001.jsonl"
+                write_jsonl(path, events)
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    load_runs(Path(temp_dir))
+
+    def test_metrics_fail_closed_on_absent_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(RuntimeError, "does not exist"):
+                load_runs(Path(temp_dir) / "missing")
+
+            empty = Path(temp_dir) / "empty"
+            empty.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "no JSON Lines event logs"):
+                collect(empty)
+
+    def test_metrics_preserve_version_runner_and_scenario_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "v-test"
+            run_dir.mkdir()
+            write_jsonl(run_dir / "normal-001.jsonl", scripted_events("v-test", self._scenario(), "abc123", 1000))
+            metadata = run_metadata(load_runs(run_dir))
+        self.assertEqual(
+            metadata["v-test--normal-001"],
+            {
+                "commit": "abc123",
+                "scenario_id": "normal-001",
+                "seed": 1000 + self._scenario()["seed"],
+                "runner": "scripted",
+                "task_id": metadata["v-test--normal-001"]["task_id"],
+                "scene_variant": metadata["v-test--normal-001"]["scene_variant"],
+            },
+        )
+
+    def test_metrics_ingest_nested_version_directories(self) -> None:
+        manifest = json.loads((ROOT / "sim" / "scenarios" / "frozen" / "normal-001.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            version_dir = root / "v-nested"
+            version_dir.mkdir()
+            write_jsonl(version_dir / "normal-001.jsonl", scripted_events("v-nested", manifest, "abc123", 1000))
+            (root / "summary.json").write_text(
+                json.dumps({"runner": "scripted", "release_eligible": False}),
+                encoding="utf-8",
+            )
+            nested = collect(root)
+            flat = collect(version_dir)
+        self.assertEqual(nested["run_count"], 1)
+        self.assertEqual(nested["run_count"], flat["run_count"])
+        self.assertEqual(nested["vtcr"], flat["vtcr"])
+
+    def test_runner_monotonic_elapsed_is_preferred_over_cross_node_wall_clock(self) -> None:
+        wall = {"run": [{"occurred_at": "2026-01-01T00:00:00Z"}, {"occurred_at": "2026-01-01T00:10:00Z"}]}
+        self.assertEqual(durations(wall), [600.0])
+        self.assertEqual(duration_sources(wall), {"run": "occurred_at_wall_clock"})
+
+        measured = {
+            "run": [
+                {"occurred_at": "2026-01-01T00:10:00Z", "evaluation": {"elapsed_s": 12.5}},
+                {"occurred_at": "2026-01-01T00:00:00Z", "evaluation": {"elapsed_s": 0.0}},
+            ]
+        }
+        # Wall clocks moved backwards, but the runner measured the real elapsed time.
+        self.assertEqual(durations(measured), [0.0])
+        self.assertEqual(duration_sources(measured), {"run": "runner_monotonic_elapsed"})
+
+    def test_invalid_runner_elapsed_measurements_fail_closed(self) -> None:
+        for elapsed in ("12.5", True, float("nan"), float("inf"), -1.0):
+            with self.subTest(elapsed=elapsed):
+                run = {
+                    "run": [
+                        {"occurred_at": "2026-01-01T00:00:00Z", "evaluation": {"elapsed_s": elapsed}},
+                        {"occurred_at": "2026-01-01T00:00:10Z"},
+                    ]
+                }
+                with self.assertRaisesRegex(RuntimeError, "invalid task duration|non-numeric elapsed_s"):
+                    durations(run)
+
+    def test_release_gate_rejects_negative_and_non_finite_durations(self) -> None:
+        metrics = {
+            "release_eligible": True,
+            "false_completion_count": 0,
+            "collision_count": 0,
+            "policy_violation_count": 0,
+            "vtcr": 0.9,
+            "evidence_coverage": 1.0,
+            "recovery_rate": 0.8,
+            "state_hash_consistency": 1.0,
+            "replay_success_rate": 1.0,
+            "task_family_count": 5,
+            "complex_task_rate": 0.6,
+            "mean_observed_entities": 2.0,
+            "goal_condition_coverage": 1.0,
+            "task_duration_p95_s": 100.0,
+            "task_duration_p50_s": 80.0,
+        }
+        self.assertEqual(release_reasons(metrics), [])
+
+        negative = {**metrics, "task_duration_p95_s": -600.0}
+        self.assertIn("任务时间 P95 为负数,时间证据不可信", release_reasons(negative))
+
+        non_finite = {**metrics, "task_duration_p50_s": float("nan")}
+        self.assertTrue(any("P50" in reason for reason in release_reasons(non_finite)))
+
+        # A reversed run cannot reach the release gates as a passing duration.
+        reversed_run = {
+            "run": [
+                {"occurred_at": "2026-08-21T00:10:00Z"},
+                {"occurred_at": "2026-08-21T00:00:00Z"},
+            ]
+        }
+        with self.assertRaisesRegex(RuntimeError, "invalid task duration"):
+            durations(reversed_run)
+
+    def test_naive_and_malformed_timestamps_fail_with_file_line_and_event_id(self) -> None:
+        events = scripted_events("v-test", self._scenario(), "abc123", 1000)
+        for label, value, expected in (
+            ("naive", "2026-01-01T00:00:00", "timezone-naive occurred_at"),
+            ("malformed", "not-a-timestamp", "malformed occurred_at"),
+            ("empty", "", "missing occurred_at"),
+        ):
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp_dir:
+                broken = [dict(event) for event in events]
+                broken[0]["occurred_at"] = value
+                path = Path(temp_dir) / "events.jsonl"
+                write_jsonl(path, broken)
+                with self.assertRaisesRegex(RuntimeError, expected) as context:
+                    validate_event_log(path, "v-test--normal-001")
+                message = str(context.exception)
+                self.assertIn("events.jsonl:1", message)
+                self.assertIn("v-test--normal-001-evt-000", message)
+
+    def test_sequence_order_stays_authoritative_when_wall_clocks_move_backwards(self) -> None:
+        events = scripted_events("v-test", self._scenario(), "abc123", 1000)
+        # Diagnostic wall timestamps from a second clock domain move backwards
+        # mid-run; replay order must still follow sequence_no.
+        skewed = [dict(event) for event in events]
+        for index, event in enumerate(skewed):
+            event["occurred_at"] = f"2026-01-01T00:00:{59 - index:02d}Z"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "events.jsonl"
+            write_jsonl(path, skewed)
+            loaded = validate_event_log(path, "v-test--normal-001")
+        self.assertEqual([event["sequence_no"] for event in loaded], list(range(len(loaded))))
+
+    def test_task_durations_fail_closed_on_negative_or_unusable_timestamps(self) -> None:
+        negative = {"run": [{"occurred_at": "2026-01-01T00:00:10Z"}, {"occurred_at": "2026-01-01T00:00:00Z"}]}
+        with self.assertRaisesRegex(RuntimeError, "invalid task duration"):
+            durations(negative)
+
+        unusable = {"run": [{"occurred_at": "not-a-timestamp"}, {"occurred_at": "2026-01-01T00:00:00Z"}]}
+        with self.assertRaisesRegex(RuntimeError, "unusable occurred_at timestamps"):
+            durations(unusable)
+
+        self.assertEqual(
+            durations({"run": [{"occurred_at": "2026-01-01T00:00:00Z"}, {"occurred_at": "2026-01-01T00:00:10Z"}]}),
+            [10.0],
+        )
 
 
 if __name__ == "__main__":

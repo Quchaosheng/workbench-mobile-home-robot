@@ -1,0 +1,68 @@
+{
+  "issues": [69, 91, 178, 187],
+  "issue": 69,
+  "human_owner": "Quchaosheng",
+  "objective": "Make evaluation evidence intake strict: reject duplicate JSON object keys, duplicate run IDs with conflicting metadata, unusable or negative task durations and inconsistent run logs before they can reach the release gates.",
+  "allowed_paths": [
+    "tools/scripts/_jsonio.py",
+    "tools/scripts/collect_metrics.py",
+    "tools/scripts/compare_evaluations.py",
+    "tools/scripts/generate_report.py",
+    "tools/scripts/run_evaluation.py",
+    "tools/scripts/scenario_tools.py",
+    "tools/scripts/validate_golden_set.py",
+    "tools/scripts/validate_scenarios.py",
+    "tests/unit/test_evaluation_tools.py",
+    "docs/task_packets/issues-69-91-178-187.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**",
+    "firmware/**",
+    "robot/control/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**"
+  ],
+  "acceptance": [
+    "manifest, JSONL event, audit, summary, metrics and comparison inputs reject duplicate object keys at every nesting level",
+    "duplicate-key errors identify the input file and JSONL line and duplicate field name without echoing the untrusted body",
+    "duplicate run IDs across files fail closed and name both conflicting paths plus any conflicting evaluation metadata",
+    "each run log is validated for run_id consistency, contiguous sequence_no, event IDs and known event types before aggregation",
+    "nested <output_dir>/<version>/*.jsonl and flat single-version layouts are both ingested with no silent omission",
+    "occurred_at is parsed as an explicit timezone-aware RFC 3339 value, reporting file, line and event ID on failure",
+    "runner-measured monotonic elapsed time is preferred over cross-node wall-clock subtraction, and each duration records its clock",
+    "negative and non-finite durations fail closed and can never be reported as a passing release metric",
+    "causal replay order remains sequence_no even when wall clocks move backwards",
+    "version, runner, commit and scenario metadata survive ingestion"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_evaluation_tools.py -v",
+    "python3 -m ruff check tools/scripts tests/unit/test_evaluation_tools.py",
+    "python3 -m ruff format --check tools/scripts tests/unit/test_evaluation_tools.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issues-69-91-178-187.json",
+    "make evaluation-check",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make golden-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused evaluation tool test output covering duplicate keys, duplicate run IDs, inconsistent logs and invalid durations",
+    "release gate output showing a negative duration cannot pass",
+    "full repository test output",
+    "Task Packet, contract, scenario, golden and context gate output"
+  ],
+  "stop_conditions": [
+    "a distributed clock synchronization service is required",
+    "an interfaces schema, Pydantic contract, World Model ordering or runner semantics change is required",
+    "a new JSON or serialization dependency is required",
+    "a modification outside allowed_paths is required"
+  ]
+}
