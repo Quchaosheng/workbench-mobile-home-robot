@@ -4,8 +4,10 @@
   "objective": "Pin every third-party GitHub Action used by repository workflows to an immutable commit SHA while retaining a human-readable release comment.",
   "allowed_paths": [
     ".github/workflows/ci.yml",
+    ".github/workflows/container-full-stack.yml",
     ".github/workflows/nightly-regression.yml",
     ".github/workflows/release-image.yml",
+    ".github/workflows/security.yml",
     "docs/task_packets/github-actions-pinning.json"
   ],
   "read_only_paths": [

@@ -84,14 +84,14 @@ jobs:
           exit 1
       - name: Container contract and deterministic checks
         run: make container-project-check
-      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+      - uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26  # v0.24.2
         with:
           image: workbench-1:container-ci
           format: spdx-json
           output-file: workbench-1-full-stack.spdx.json
           upload-artifact: false
           upload-release-assets: false
-      - uses: anchore/scan-action@8964e60c6fabdb85fdbbbfd9834d8f19c97a3086  # v7.4.1
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
         with:
           image: workbench-1:container-ci
           fail-build: true
