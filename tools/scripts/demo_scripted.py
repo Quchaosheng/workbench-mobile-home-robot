@@ -69,7 +69,7 @@ def run_once(run_id: str, logger: StructuredLogger) -> dict:
             run_id,
             2,
             WorldEventType.OBSERVATION,
-            {"entity_id": "tray", "location": "table", "confidence": 0.99},
+            {"entity_id": "tray", "location": "on:table", "confidence": 0.99},
             ["camera-frame-002"],
         ),
         event(
