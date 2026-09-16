@@ -412,16 +412,14 @@ def validate_scad_parameters(spec: dict[str, object] | None = None) -> dict[str,
         if not str(entry.get("reason", "")).strip()
         or (entry in visual_only and not str(entry.get("owner", "")).strip())
     )
-    checks["scad_derived_and_visual_parameters_are_documented"] = bool(derived) and bool(visual_only) and not undocumented
+    checks["scad_derived_and_visual_parameters_are_documented"] = (
+        bool(derived) and bool(visual_only) and not undocumented
+    )
     if undocumented:
         errors.append(f"SCAD parameters without a documented reason or owner: {undocumented}")
 
     checks["scad_constants_are_classified_once"] = (
-        bool(classified)
-        and not duplicates
-        and not unclassified
-        and not stray
-        and set(dimensional).isdisjoint(flags)
+        bool(classified) and not duplicates and not unclassified and not stray and set(dimensional).isdisjoint(flags)
     )
     if unclassified:
         errors.append(f"unclassified OpenSCAD constants: {unclassified}")
@@ -466,9 +464,9 @@ def validate_scad_parameters(spec: dict[str, object] | None = None) -> dict[str,
         parameters[name] = {"spec_path": spec_path, "scad_value": actual, "spec_value": expected, "pass": matches}
         if not matches:
             drift.append(f"{name}={actual} does not match {spec_path}={expected}")
-    checks["shared_parameters_match_design_spec"] = bool(shared) and not drift and set(parameters) == {
-        entry.get("scad") for entry in shared
-    }
+    checks["shared_parameters_match_design_spec"] = (
+        bool(shared) and not drift and set(parameters) == {entry.get("scad") for entry in shared}
+    )
     errors.extend(drift)
 
     return _scad_result(

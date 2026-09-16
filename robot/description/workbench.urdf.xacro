@@ -195,11 +195,19 @@
             rpy="0 0 0"/>
   </joint>
 
+  <!-- The camera housing is an obstacle for planning, so it carries collision
+       geometry with the same box as its visual. A visual-only body is invisible
+       to MoveIt, which then accepts approaches that clip the housing. -->
+  <xacro:property name="camera_body_size" value="0.05 0.05 0.03"/>
+
   <link name="camera_body">
     <visual>
-      <geometry><box size="0.05 0.05 0.03"/></geometry>
+      <geometry><box size="${camera_body_size}"/></geometry>
       <material name="black"/>
     </visual>
+    <collision>
+      <geometry><box size="${camera_body_size}"/></geometry>
+    </collision>
     <xacro:box_inertia m="0.1" x="0.05" y="0.05" z="0.03"/>
   </link>
 

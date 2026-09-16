@@ -1,0 +1,59 @@
+{
+  "issue": 261,
+  "human_owner": "Quchaosheng",
+  "objective": "Give the workbench camera_body link explicit collision geometry matching its visual box so MoveIt sees the housing as an obstacle, and prove with a deterministic structural test that the description cannot regress to a visual-only camera body.",
+  "allowed_paths": [
+    "robot/description/workbench.urdf.xacro",
+    "robot/description/FRAMES.md",
+    "tests/unit/test_robot_description_camera_collision.py",
+    "docs/task_packets/description-261-camera-body-collision.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/**"
+  ],
+  "acceptance": [
+    "camera_body declares collision geometry with the same 0.05 0.05 0.03 box as its visual and the same default origin",
+    "no duplicate link, joint, frame or second collision source is introduced for the camera body",
+    "the camera_body, camera_optical and camera_post link and joint names and their transforms are unchanged",
+    "the description still expands with xacro and yields exactly one valid tree rooted at world",
+    "a deterministic structural test fails closed when camera_body loses collision geometry or when visual and collision boxes diverge",
+    "existing robot-description, reachability and contract checks pass unchanged"
+  ],
+  "commands": [
+    "python3 -c \"import xacro; xacro.process_file('robot/description/workbench.urdf.xacro')\"",
+    "python3 -m pytest tests/unit/test_robot_description_camera_collision.py -v",
+    "python3 -m pytest tests/unit/test_hardware_urdf.py tests/unit/test_reachability.py -v",
+    "python3 -m ruff check robot/description tests/unit/test_robot_description_camera_collision.py",
+    "python3 -m ruff format --check robot/description tests/unit/test_robot_description_camera_collision.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/description-261-camera-body-collision.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "xacro expansion output showing camera_body carrying both visual and collision geometry",
+    "focused structural test output, including the failure produced when collision geometry is removed",
+    "confirmation that camera_body, camera_optical, camera_post and post_to_camera names and transforms are byte-identical to the previous revision",
+    "full repository test and Task Packet gate output"
+  ],
+  "stop_conditions": [
+    "measured camera housing geometry differs from the current 0.05 0.05 0.03 visual box and no owner-approved source exists",
+    "the fix requires frame renaming, sensor extrinsic changes, or Motion controller writes",
+    "an interfaces schema or libs/contracts change is required",
+    "a modification outside allowed_paths is required"
+  ]
+}

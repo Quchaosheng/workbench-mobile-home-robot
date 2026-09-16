@@ -129,6 +129,25 @@ structure, not whether a rotation makes physical sense.
 
 ---
 
+## `camera_optical` has no collision, `camera_body` must
+
+`camera_optical` is a convention frame, not a solid object, so it carries no
+visual and no collision geometry. Adding a collision volume to it would make the
+planner treat a zero-size frame as an obstacle.
+
+`camera_body` is the solid housing and therefore carries **both** a visual and a
+collision box of `0.05 0.05 0.03`. This was missing (#261): the housing was
+visible in RViz but invisible to MoveIt, so a C3 path could be accepted that
+clips it. Both elements share one `camera_body_size` property, and the two box
+sizes are equal by construction rather than by two literals staying in sync.
+
+`tests/unit/test_robot_description_camera_collision.py` fails if the collision
+element is removed or if the two boxes diverge. Collision geometry here is a
+planning obstacle only — it is not continuous collision safety and does not
+authorize execution.
+
+---
+
 ## Camera noise is non-zero on purpose
 
 `stddev = 0.007`.
