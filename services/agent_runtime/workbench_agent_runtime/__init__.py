@@ -16,6 +16,7 @@ from .local_model import (
     validate_local_endpoint,
 )
 from .planner import (
+    GoalBoundaryViolation,
     build_clear_workspace_plan,
     build_inspection_plan,
     build_kitting_plan,
@@ -32,6 +33,7 @@ __all__ = [
     "ExecutionReasonCode",
     "ExecutionReport",
     "ExecutionState",
+    "GoalBoundaryViolation",
     "LocalModelError",
     "ModelProvider",
     "OllamaModelProvider",

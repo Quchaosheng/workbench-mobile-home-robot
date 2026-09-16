@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from workbench_contracts import TaskGraph
 
 from .planner import (
+    GoalBoundaryViolation,
     build_clear_workspace_plan,
     build_inspection_plan,
     build_kitting_plan,
@@ -188,6 +189,8 @@ class OllamaModelProvider:
 
 def build_local_model_plan(goal: str, provider: ModelProvider) -> TaskGraph:
     """Use a model for routing, then build actions through trusted deterministic code."""
+    if not isinstance(goal, str) or not goal.strip():
+        raise LocalModelError("task goal must be a non-empty string")
     known_family: str | None = None
     try:
         known_family = {
@@ -197,11 +200,14 @@ def build_local_model_plan(goal: str, provider: ModelProvider) -> TaskGraph:
             "task-clear-workspace": "clearance",
             "task-sort-parcels": "parcel_sorting",
         }.get(classify_template_task(goal))
-    except ValueError as exc:
-        if any(token in str(exc).lower() for token in ("outside", "requires", "cannot", "must")):
-            message = str(exc)
-            code = "requires_navigation" if "navigation" in message.lower() else "unsupported_request"
-            raise LocalModelError(f"{code}: {message}") from exc
+    except GoalBoundaryViolation as exc:
+        # An explicit boundary violation aborts planning outright; the model must
+        # never be asked to route a goal that already crosses a hard boundary.
+        raise LocalModelError(f"{exc.code}: {exc.message}") from exc
+    except ValueError:
+        # The goal simply does not match a deterministic family. The provider may
+        # still classify it, and any plan it enables is validated further down.
+        known_family = None
     decision = provider.route(goal)
     if known_family and decision.task_family != known_family:
         raise LocalModelError(

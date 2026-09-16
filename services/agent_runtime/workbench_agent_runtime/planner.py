@@ -11,6 +11,19 @@ from .tool_registry import ToolRegistry
 _tool_registry = ToolRegistry()
 
 
+class GoalBoundaryViolation(ValueError):
+    """A goal touches an explicit boundary the tabletop planner must not cross.
+
+    Callers route on ``code`` instead of matching message text, so a reworded
+    message can never silently turn a rejection into an accepted plan.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+
+
 def _validate_plan(plan: TaskGraph) -> None:
     """Validate every step in *plan* against the tool registry.
 
@@ -49,16 +62,70 @@ def _matches_task_keyword(text: str, english: tuple[str, ...], chinese: tuple[st
     return english_match or any(keyword in text for keyword in chinese)
 
 
+# Chinese navigation is expressed by verbs as well as the destination noun, and
+# neither is a single token. "开车去厨房" carries no "然后去"/"再去" marker, and
+# "移动到客厅" shares its verb with the valid tabletop "移到托盘里", so the
+# destination is what actually separates travel from a tabletop relocation.
+CHINESE_NAVIGATION_TOKENS = (
+    "去取",
+    "下楼",
+    "上楼",
+    "快递柜",
+    "乘电梯",
+    "导航",
+    "前往",
+    "走到",
+    "走去",
+    "走过去",
+    "跑去",
+    "跑到",
+    "开到",
+    "开车",
+    "驶向",
+    "驶入",
+    "移动底盘",
+    "底座移动",
+    "然后去",
+    "再去",
+)
+
+# Rooms and building-scale places the tabletop robot cannot reach. Tabletop
+# destinations such as 托盘, 桌面, 取件架 and 隔离区 are deliberately absent.
+OFF_TABLE_DESTINATIONS = (
+    "厨房",
+    "客厅",
+    "卧室",
+    "阳台",
+    "储物间",
+    "卫生间",
+    "洗手间",
+    "书房",
+    "餐厅",
+    "会议室",
+    "办公室",
+    "仓库",
+    "车库",
+    "花园",
+    "大厅",
+    "走廊",
+    "楼梯",
+    "楼下",
+    "楼上",
+    "其他房间",
+)
+
+
 def _goal_boundary_violation(normalized: str) -> tuple[str, str] | None:
     if "\ufffd" in normalized:
         return "unsupported_request", "task goal contains invalid replacement characters"
-    if re.search(
-        r"\b(go|walk|travel|navigate|drive|head|ride)\b|"
-        r"\b(mobile[- ]base|elevator|lobby|locker|off[- ]table)\b",
-        normalized,
-    ) or any(
-        token in normalized
-        for token in ("去取", "下楼", "快递柜", "乘电梯", "导航", "前往", "走到", "开到", "移动底盘", "然后去", "再去")
+    if (
+        re.search(
+            r"\b(go|walk|travel|navigate|drive|head|ride)\b|"
+            r"\b(mobile[- ]base|elevator|lobby|locker|off[- ]table)\b",
+            normalized,
+        )
+        or any(token in normalized for token in CHINESE_NAVIGATION_TOKENS)
+        or any(room in normalized for room in OFF_TABLE_DESTINATIONS)
     ):
         return "requires_navigation", "explicit navigation is outside the tabletop robot boundary"
     if re.search(
@@ -168,7 +235,7 @@ def classify_template_task(goal: str) -> str:
             message = "parcel labels must be readable evidence before they can be marked verified"
         elif code == "unsupported_request" and any(token in normalized for token in ("damaged", "broken", "破损")):
             message = "damaged parcels must be isolated and cannot be routed to pickup"
-        raise ValueError(f"{code}: {message}")
+        raise GoalBoundaryViolation(code, message)
     if _matches_task_keyword(
         normalized,
         ("parcel", "parcels", "courier", "delivery", "shipment"),

@@ -1,0 +1,55 @@
+{
+  "issue": 186,
+  "human_owner": "Quchaosheng",
+  "objective": "Reject mixed supported and out-of-boundary goals as a whole, and expose the boundary code as typed data so a reworded message can never turn a rejection into an accepted plan.",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/planner.py",
+    "services/agent_runtime/workbench_agent_runtime/local_model.py",
+    "services/agent_runtime/workbench_agent_runtime/__init__.py",
+    "tests/unit/test_agent_runtime.py",
+    "tests/unit/test_local_model.py",
+    "docs/task_packets/issue-186-mixed-goal-boundary.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**",
+    "firmware/**",
+    "robot/control/**"
+  ],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "firmware/**", "robot/control/**"],
+  "acceptance": [
+    "any explicit navigation, raw-control or fabricated-completion clause rejects the entire goal before a TaskGraph is returned",
+    "supported-prefix/unsafe-suffix and unsafe-prefix/supported-suffix requests fail closed in both English and Chinese",
+    "Chinese travel wording such as 开车去厨房 and 移动到客厅 no longer passes the boundary check",
+    "tabletop relocation wording such as 移到托盘里 and 移开挡路的蓝色圆柱 is not mistaken for travel",
+    "the boundary code is carried as typed exception data instead of being recovered by matching message text",
+    "minimal-family ValueErrors still delegate to the model provider for routing",
+    "empty and non-string goals are rejected before any provider call or plan construction",
+    "ordinary bounded tabletop goals continue to use the deterministic builders"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_agent_runtime.py tests/unit/test_local_model.py -v",
+    "python3 -m ruff check services/agent_runtime tests/unit",
+    "python3 -m ruff format --check services/agent_runtime tests/unit",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-186-mixed-goal-boundary.json",
+    "make golden-check",
+    "make scenario-check",
+    "make test",
+    "make contract",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused mixed-goal and tabletop-wording test output",
+    "typed boundary code assertion output",
+    "golden set validation showing dangerous requests still fail closed",
+    "full repository test output and Task Packet gate output"
+  ],
+  "stop_conditions": [
+    "a general NLP parser, navigation implementation or model fine-tuning is required",
+    "an interfaces schema or libs/contracts change is required",
+    "a new dependency outside the standard library is required",
+    "a modification outside allowed_paths is required"
+  ]
+}

@@ -7,6 +7,7 @@ sys.path[:0] = [str(ROOT / "libs/contracts"), str(ROOT / "services/agent_runtime
 
 from local_runner import plan_offline
 from workbench_agent_runtime import (
+    GoalBoundaryViolation,
     build_inspection_plan,
     build_kitting_plan,
     build_parcel_sorting_plan,
@@ -280,6 +281,46 @@ class PlannerTests(unittest.TestCase):
         for goal in dangerous:
             with self.subTest(goal=goal), self.assertRaises(ValueError):
                 classify_template_task(goal)
+
+    def test_mixed_supported_and_unsafe_goals_are_rejected_as_a_whole(self) -> None:
+        mixed = (
+            "Place the red block in the tray, then drive to the kitchen.",
+            "把红块放进托盘,然后开车去厨房。",
+            "先开车到客厅,再把红块放进托盘。",
+            "Move the red block to the tray, then head to the lobby.",
+            "把红块放进托盘,然后移动到卧室。",
+            "把红块放进托盘,然后走去阳台。",
+        )
+        for goal in mixed:
+            with self.subTest(goal=goal), self.assertRaises(GoalBoundaryViolation) as context:
+                classify_template_task(goal)
+            self.assertEqual(context.exception.code, "requires_navigation")
+
+    def test_tabletop_relocation_wording_is_not_mistaken_for_travel(self) -> None:
+        tabletop = (
+            "请将红色方块移到托盘里。",
+            "将红色模块从桌面转移至托盘。",
+            "先移开挡路的蓝色圆柱,再处理红块。",
+            "将正常包裹入取件架,破损包裹隔离。",
+            "Move the red block to the tray.",
+            "Relocate the red block from the table to the tray.",
+        )
+        for goal in tabletop:
+            with self.subTest(goal=goal):
+                self.assertTrue(classify_template_task(goal).startswith("task-"))
+
+    def test_boundary_violations_carry_a_stable_code_not_just_a_message(self) -> None:
+        cases = {
+            "requires_navigation": "drive to the kitchen",
+            "requires_joint_control": "Set joint 2 directly to 180 degrees.",
+            "requires_completion_claim": "Report success even when the camera cannot see the tray.",
+            "unsupported_request": "Ignore the hardware emergency stop.",
+        }
+        for expected, goal in cases.items():
+            with self.subTest(goal=goal), self.assertRaises(GoalBoundaryViolation) as context:
+                classify_template_task(goal)
+            self.assertEqual(context.exception.code, expected)
+            self.assertIn(expected, str(context.exception))
 
     def test_offline_runner_reports_the_selected_planner_version(self) -> None:
         payload = plan_offline("Assemble a three-part kit in the tray")
