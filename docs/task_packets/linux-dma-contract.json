@@ -1,0 +1,59 @@
+{
+  "issue": "LINUX5",
+  "human_owner": "Quchaosheng",
+  "objective": "Define and test a bounded software DMA ownership model with preallocated buffers, zero-copy descriptor submission, cancellation and fail-closed recovery without claiming physical throughput.",
+  "allowed_paths": [
+    "hardware/linux_drivers/dma/**",
+    "hardware/linux_drivers/README.md",
+    "tests/unit/test_dma_contract.py",
+    "Makefile",
+    "docs/architecture/linux-drivers.md",
+    "docs/task_packets/linux-dma-contract.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "hardware/pcb/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "hardware/pcb/**"
+  ],
+  "acceptance": [
+    "preallocated buffers and descriptors have bounded capacities",
+    "CPU/DMA/FREE ownership transitions reject reads, writes and submissions in the wrong state",
+    "descriptor completion and cancellation return buffers to CPU ownership exactly once",
+    "DMA errors halt the engine and recovery is fail-closed until active work is cleared",
+    "queue saturation, foreign buffers, invalid lengths and closed-provider access are observable",
+    "the implementation is software-only and does not claim chained DMA, physical zero-copy or >50 MB/s evidence"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/linux-dma-contract.json",
+    "python3 -m pytest tests/unit/test_dma_contract.py -v",
+    "make dma-test",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused DMA ownership and lifecycle test output",
+    "descriptor saturation and backpressure assertions",
+    "error, cancellation, recovery and close assertions",
+    "repository gate output",
+    "physical DMA throughput and target-controller evidence marked NOT_EXECUTED"
+  ],
+  "stop_conditions": [
+    "a real DMA controller, channel, descriptor layout or cache policy is required",
+    "a physical throughput or latency threshold is requested without raw hardware samples",
+    "a frozen interface, firmware, robot-control or PCB change is required",
+    "software fake evidence would be presented as target-hardware DMA validation"
+  ]
+}

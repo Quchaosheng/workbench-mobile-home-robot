@@ -111,3 +111,7 @@ LINUX8 的电源管理软件契约和 fake provider 位于
 `hardware/linux_drivers/pm/`。它固化资源逆序挂起、顺序恢复、截止时间和故障闭锁，
 但不声称真实 Linux suspend/resume、runtime-PM 或唤醒功耗证据。目标板的 regulator、
 时钟、唤醒源和系统 PM notifier 必须在硬件接口及内核版本确认后补充。
+
+LINUX5 的 DMA 软件契约和 fake provider 位于 `hardware/linux_drivers/dma/`。它固化
+预分配 buffer、CPU/DMA 所有权、固定描述符容量、取消和错误恢复测试，但不冻结真实
+DMA 控制器、cache 一致性、IRQ 资源或物理吞吐预算。

@@ -5,7 +5,7 @@ PYTHON ?= python3
 	performance-test benchmark-startup benchmark-resources performance-regression-test offline-integration \
 	uart-spi-test irq-test docs task-check check container-smoke pm-test sim sim-doctor sim-list sim-run \
 	container-build container-check container-colcon-build container-colcon-test container-image-verify \
-	container-python-test container-sim-check container-mujoco-check container-hardware-doctor \
+	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	container-gpu-matrix-check container-host-doctor container-dashboard-check container-project-check
 
 bootstrap:
@@ -101,6 +101,9 @@ irq-test:
 
 pm-test:
 	$(PYTHON) -m pytest tests/unit/test_pm_contract.py -v
+
+dma-test:
+	$(PYTHON) -m pytest tests/unit/test_dma_contract.py -v
 
 dashboard:
 	$(PYTHON) -m workbench_backend.server --host 127.0.0.1 --port 8080
