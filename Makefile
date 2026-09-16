@@ -1,10 +1,11 @@
 PYTHON ?= python3
 
-.PHONY: bootstrap lint fmt test contract scenario-check golden-check evaluation-check evaluation-scripted context-check \
-	dashboard-test dashboard demo demo-scripted demo-offline demo-model model-provision performance-test benchmark-startup \
-	benchmark-resources performance-regression-test offline-integration uart-spi-test irq-test docs task-check check container-smoke \
-	sim sim-doctor sim-list sim-run container-build container-check container-colcon-build container-colcon-test \
-	container-image-verify container-python-test container-sim-check container-mujoco-check container-hardware-doctor \
+.PHONY: bootstrap lint fmt test contract scenario-check golden-check evaluation-check evaluation-scripted \
+	context-check dashboard-test dashboard demo demo-scripted demo-offline demo-model model-provision \
+	performance-test benchmark-startup benchmark-resources performance-regression-test offline-integration \
+	uart-spi-test irq-test docs task-check check container-smoke pm-test sim sim-doctor sim-list sim-run \
+	container-build container-check container-colcon-build container-colcon-test container-image-verify \
+	container-python-test container-sim-check container-mujoco-check container-hardware-doctor \
 	container-gpu-matrix-check container-host-doctor container-dashboard-check container-project-check
 
 bootstrap:
@@ -97,6 +98,9 @@ uart-spi-test:
 
 irq-test:
 	$(PYTHON) -m pytest tests/unit/test_irq_contract.py -v
+
+pm-test:
+	$(PYTHON) -m pytest tests/unit/test_pm_contract.py -v
 
 dashboard:
 	$(PYTHON) -m workbench_backend.server --host 127.0.0.1 --port 8080

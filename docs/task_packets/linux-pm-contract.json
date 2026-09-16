@@ -1,0 +1,56 @@
+{
+  "issue": "LINUX8",
+  "human_owner": "Quchaosheng",
+  "objective": "Define and test a software-only Linux driver suspend/resume lifecycle with ordered resources, bounded deadlines and fail-closed recovery without claiming physical power or wake evidence.",
+  "allowed_paths": [
+    "hardware/linux_drivers/pm/**",
+    "tests/unit/test_pm_contract.py",
+    "Makefile",
+    "docs/architecture/linux-drivers.md",
+    "docs/task_packets/linux-pm-contract.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "hardware/pcb/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "hardware/pcb/**"
+  ],
+  "acceptance": [
+    "resources suspend in reverse dependency order and resume in registration order",
+    "suspend and resume enforce positive bounded deadlines",
+    "partial suspend or resume timeout enters fault and cannot claim active or suspended state",
+    "invalid transitions and duplicate resource names are rejected",
+    "close is idempotent and closed providers reject further lifecycle operations",
+    "the implementation is software-only and does not claim real suspend, wake latency or power measurements"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/linux-pm-contract.json",
+    "python3 -m pytest tests/unit/test_pm_contract.py -v",
+    "make pm-test",
+    "make test",
+    "make contract",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused suspend/resume lifecycle test output",
+    "resource ordering and timeout fail-closed assertions",
+    "Task Packet and repository gate output",
+    "physical suspend, wake and power evidence marked NOT_EXECUTED"
+  ],
+  "stop_conditions": [
+    "a real regulator, clock, wake source, device-tree resource or kernel PM notifier is required",
+    "physical power draw, suspend latency or wake reliability is requested",
+    "a frozen interface, firmware, robot-control or PCB change is required",
+    "fake provider evidence would be presented as target-hardware validation"
+  ]
+}
