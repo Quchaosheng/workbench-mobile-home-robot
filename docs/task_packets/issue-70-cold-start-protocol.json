@@ -1,0 +1,53 @@
+{
+  "issue": 70,
+  "human_owner": "Quchaosheng",
+  "objective": "Enforce the documented three-person clean-machine cold-start protocol, rejecting incomplete, placeholder, out-of-order and unbounded participant records.",
+  "allowed_paths": [
+    "tools/scripts/validate_cold_start.py",
+    "tests/unit/test_evidence_gates.py",
+    "docs/evaluation/cold-start-results.template.json",
+    "docs/evaluation/cold-start-test.md",
+    "docs/task_packets/issue-70-cold-start-protocol.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/backend/**",
+    "firmware/**",
+    "robot/control/**"
+  ],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "firmware/**", "robot/control/**"],
+  "acceptance": [
+    "exactly three participant records are required, not a minimum of three",
+    "every documented field is mandatory and template placeholder values are rejected",
+    "timestamps parse as timezone-aware UTC and satisfy started_at <= first_health_at <= first_ready_at",
+    "pass records require a log reference and elapsed_minutes at or below 60",
+    "fail records require a blocking log reference",
+    "invalid results and non-finite or negative elapsed values fail closed",
+    "the checked-in template is proven not to be acceptable evidence",
+    "the evidence file is read through the shared strict JSON loader"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_evidence_gates.py -v",
+    "python3 -m ruff check tools/scripts/validate_cold_start.py tests/unit/test_evidence_gates.py",
+    "python3 -m ruff format --check tools/scripts/validate_cold_start.py tests/unit/test_evidence_gates.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-70-cold-start-protocol.json",
+    "python3 tools/scripts/validate_cold_start.py docs/evaluation/cold-start-results.template.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused cold-start validation test output covering incomplete, out-of-order, duplicate, placeholder, pass and fail records",
+    "CLI output showing a valid panel is accepted and the template is rejected",
+    "full repository test output and Task Packet gate output"
+  ],
+  "stop_conditions": [
+    "real participant or hardware evidence is required",
+    "an interfaces schema or libs/contracts change is required",
+    "a new dependency outside the standard library is required",
+    "a modification outside allowed_paths is required"
+  ]
+}

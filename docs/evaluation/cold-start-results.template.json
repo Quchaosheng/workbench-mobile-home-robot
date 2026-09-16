@@ -11,7 +11,8 @@
       "first_ready_at": "fill-in",
       "elapsed_minutes": 0,
       "result": "fail",
-      "blocking_log_reference": "fill-in"
+      "blocking_log_reference": "fill-in",
+      "log_reference": "fill-in"
     },
     {
       "participant_id": "participant-2",
@@ -23,7 +24,8 @@
       "first_ready_at": "fill-in",
       "elapsed_minutes": 0,
       "result": "fail",
-      "blocking_log_reference": "fill-in"
+      "blocking_log_reference": "fill-in",
+      "log_reference": "fill-in"
     },
     {
       "participant_id": "participant-3",
@@ -35,7 +37,8 @@
       "first_ready_at": "fill-in",
       "elapsed_minutes": 0,
       "result": "fail",
-      "blocking_log_reference": "fill-in"
+      "blocking_log_reference": "fill-in",
+      "log_reference": "fill-in"
     }
   ]
 }

@@ -1,6 +1,10 @@
 # External cold-start protocol
 
-Acceptance requires at least two of three participants to reach a healthy dashboard within 60 minutes from a clean machine.
+Acceptance requires exactly three participant records and at least two of them reaching a healthy
+dashboard within 60 minutes from a clean machine. Every field is mandatory: placeholder values such
+as `fill-in` are rejected, timestamps must parse as UTC and satisfy `started_at <= first_health_at <=
+first_ready_at`, a `pass` needs its `log_reference` and at most 60 minutes, and a `fail` needs its
+`blocking_log_reference`.
 
 ## Participant records
 
@@ -23,7 +27,8 @@ The command intentionally fails until at least two of three real participants pa
 | First `/readyz` 200 at | |
 | Elapsed minutes | |
 | Result | pass / fail |
-| Blocking log reference | |
+| Log reference | required for `pass` |
+| Blocking log reference | required for `fail` |
 
 ## Path under test
 
