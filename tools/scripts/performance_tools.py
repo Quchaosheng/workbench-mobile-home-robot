@@ -33,6 +33,37 @@ MEMORY_UNITS = {
 }
 
 
+# Reviewed upper bounds. A value above these is not a slow robot, it is a broken
+# producer or a fabricated record, and either way it must not become a percentile.
+MAX_DURATION_MS = 24 * 60 * 60 * 1000.0
+MAX_CPU_PERCENT = 100.0 * 1024
+MAX_MEMORY_BYTES = 1 << 50  # 1 PiB, above any plausible container limit
+
+# Identity fields must be non-empty strings so grouping keys stay hashable and
+# comparable; `details` is the only free-form object and is validated per event.
+_TELEMETRY_STRING_FIELDS = ("timestamp", "level", "service", "source", "run_id", "event", "message")
+_TELEMETRY_FINITE_FIELDS = (("duration_ms", MAX_DURATION_MS),)
+
+
+def _finite_bounded(value: object, label: str, maximum: float) -> float:
+    """Return a finite, non-negative float no greater than `maximum`.
+
+    `bool` is rejected explicitly: it is an `int` subclass, so `type(value) in
+    (int, float)` already excludes it, but accepting it here would silently turn
+    a flag into a measurement.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise RuntimeError(f"{label} must be a finite number")
+    converted = float(value)
+    if not math.isfinite(converted):
+        raise RuntimeError(f"{label} must be a finite number")
+    if converted < 0:
+        raise RuntimeError(f"{label} must not be negative")
+    if converted > maximum:
+        raise RuntimeError(f"{label} must not exceed {maximum}")
+    return converted
+
+
 def software_environment() -> dict[str, str]:
     """Return the stable environment identity shared by software reports."""
     return {
@@ -40,6 +71,21 @@ def software_environment() -> dict[str, str]:
         "python": platform.python_version(),
         "machine": platform.machine(),
     }
+
+
+def write_json_report(path: Path, report: dict[str, Any]) -> None:
+    """Serialize a report atomically and without non-standard JSON tokens.
+
+    `allow_nan=False` turns a leaked NaN/Infinity into an error at write time
+    instead of emitting a file that is not valid JSON. The rename means a report
+    is either the previous complete file or the new complete file, never a
+    half-written one left behind by a failure in the middle of serialization.
+    """
+    encoded = json.dumps(report, indent=2, allow_nan=False) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(encoded, encoding="utf-8")
+    temporary.replace(path)
 
 
 def percentile(values: list[float], quantile: float) -> float | None:
@@ -94,12 +140,21 @@ def load_telemetry(inputs: list[Path]) -> tuple[list[dict[str, Any]], list[Path]
                 raise RuntimeError(f"invalid JSON at {path}:{line_number}") from exc
             if not isinstance(record, dict) or not REQUIRED_TELEMETRY_FIELDS.issubset(record):
                 raise RuntimeError(f"invalid telemetry fields at {path}:{line_number}")
+            for field in _TELEMETRY_STRING_FIELDS:
+                value = record[field]
+                if not isinstance(value, str) or not value.strip():
+                    raise RuntimeError(f"telemetry {field} must be a non-empty string at {path}:{line_number}")
             if record["source"] not in ALLOWED_SOURCES:
                 raise RuntimeError(f"unknown telemetry source at {path}:{line_number}")
             if type(record["sequence_no"]) is not int or record["sequence_no"] < 0:
                 raise RuntimeError(f"invalid telemetry sequence at {path}:{line_number}")
             if not isinstance(record["details"], dict):
                 raise RuntimeError(f"telemetry details must be an object at {path}:{line_number}")
+            # A non-finite duration would be serialized as bare NaN/Infinity,
+            # which is not JSON and silently poisons every percentile it enters.
+            for field, maximum in _TELEMETRY_FINITE_FIELDS:
+                if field in record["details"] and record["details"][field] is not None:
+                    _finite_bounded(record["details"][field], f"telemetry {field} at {path}:{line_number}", maximum)
             records.append(record)
     sequences: dict[tuple[str, str, str], list[int]] = defaultdict(list)
     for record in records:
@@ -139,9 +194,11 @@ def summarize_telemetry(
             continue
         stage = record["details"].get("stage")
         duration_ms = record["details"].get("duration_ms")
-        if not isinstance(stage, str) or not stage or type(duration_ms) not in (int, float) or duration_ms < 0:
-            raise RuntimeError("stage_completed records require a stage and non-negative duration_ms")
-        stage_values[record["source"]][stage].append(float(duration_ms))
+        if not isinstance(stage, str) or not stage:
+            raise RuntimeError("stage_completed records require a non-empty stage")
+        stage_values[record["source"]][stage].append(
+            _finite_bounded(duration_ms, "stage_completed duration_ms", MAX_DURATION_MS)
+        )
     if not stage_values:
         raise RuntimeError("telemetry contains no stage_completed samples")
     if "hardware" in stage_values and hardware_evidence is None:
@@ -185,7 +242,18 @@ def parse_memory_bytes(value: str) -> int:
     unit = normalized[split_at:].lower() or "b"
     if not number or unit not in MEMORY_UNITS:
         raise ValueError(f"unsupported memory value: {value}")
-    return round(float(number) * MEMORY_UNITS[unit])
+    try:
+        magnitude = float(number)
+    except ValueError:
+        raise ValueError(f"unsupported memory value: {value}") from None
+    if not math.isfinite(magnitude):
+        raise ValueError(f"memory value must be finite: {value}")
+    if magnitude < 0:
+        raise ValueError(f"memory value must not be negative: {value}")
+    bytes_value = round(magnitude * MEMORY_UNITS[unit])
+    if bytes_value > MAX_MEMORY_BYTES:
+        raise ValueError(f"memory value is above the {MAX_MEMORY_BYTES} byte bound: {value}")
+    return bytes_value
 
 
 def summarize_resource_samples(samples: list[dict[str, Any]]) -> dict[str, Any]:
@@ -195,10 +263,11 @@ def summarize_resource_samples(samples: list[dict[str, Any]]) -> dict[str, Any]:
         if not isinstance(name, str) or not name:
             raise RuntimeError("docker stats sample has no container name")
         try:
-            cpu = float(str(sample["CPUPerc"]).rstrip("%"))
+            raw_cpu = float(str(sample["CPUPerc"]).rstrip("%"))
             memory = parse_memory_bytes(str(sample["MemUsage"]).split("/")[0])
         except (KeyError, ValueError) as exc:
             raise RuntimeError(f"invalid docker stats sample for {name}") from exc
+        cpu = _finite_bounded(raw_cpu, f"docker stats CPU percent for {name}", MAX_CPU_PERCENT)
         grouped[name].append({"cpu_percent": cpu, "memory_bytes": float(memory)})
     return {
         name: {

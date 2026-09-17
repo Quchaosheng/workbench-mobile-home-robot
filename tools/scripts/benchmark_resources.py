@@ -9,7 +9,7 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
-from performance_tools import software_environment, summarize_resource_samples
+from performance_tools import software_environment, summarize_resource_samples, write_json_report
 
 
 def docker_stats(containers: list[str]) -> list[dict]:
@@ -73,8 +73,7 @@ def main() -> int:
         "interval_s": args.interval,
         "resources": summarize_resource_samples(samples),
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    write_json_report(args.output, report)
     print(json.dumps(report, indent=2))
     return 0
 

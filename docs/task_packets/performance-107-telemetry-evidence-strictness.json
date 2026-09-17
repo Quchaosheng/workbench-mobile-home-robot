@@ -1,0 +1,60 @@
+{
+  "issue": 107,
+  "human_owner": "Quchaosheng",
+  "objective": "Make performance and resource evidence strict, finite and portable before any percentile or report is produced, so NaN, Infinity, negative values, malformed units and wrong identity types fail closed with path and line diagnostics instead of entering a report.",
+  "allowed_paths": [
+    "tools/scripts/performance_tools.py",
+    "tools/scripts/analyze_telemetry.py",
+    "tools/scripts/benchmark_resources.py",
+    "tests/unit/test_performance_tools.py",
+    "docs/task_packets/performance-107-telemetry-evidence-strictness.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/**"
+  ],
+  "acceptance": [
+    "timestamp, level, service, source, run_id, event and message are validated as non-empty strings so grouping keys stay hashable and comparable",
+    "an unhashable or non-string run_id produces a path and line diagnostic instead of an internal TypeError during grouping",
+    "durations are finite, non-negative and bounded, and the bound is a named constant rather than a literal",
+    "docker CPU percentages and memory values are finite, non-negative and bounded, and a genuine multi-core reading above 100 percent is still accepted",
+    "negative and malformed memory values such as -1MiB are rejected",
+    "reports are serialized with allow_nan=False and written atomically, so a non-finite value cannot produce a file that is not valid JSON and a failure cannot leave a half-written report",
+    "sequence, hardware-hash and source validation from the existing implementation are unchanged",
+    "every new boundary has a test that fails when the corresponding guard is removed"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_performance_tools.py tests/unit/test_performance_regression.py -v",
+    "python3 -m ruff check tools/scripts/performance_tools.py tools/scripts/analyze_telemetry.py tools/scripts/benchmark_resources.py tests/unit/test_performance_tools.py",
+    "python3 -m ruff format --check tools/scripts tests/unit/test_performance_tools.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/performance-107-telemetry-evidence-strictness.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused evidence-boundary test output for non-finite and negative durations, non-finite and negative CPU, negative and oversized memory, wrong identity types, and atomic report writing",
+    "demonstration that the focused tests fail when the guards are neutralized and pass with the fix",
+    "confirmation that the pre-existing performance tool tests still pass unchanged",
+    "full repository test and Task Packet gate output"
+  ],
+  "stop_conditions": [
+    "an upper bound must differ per deployment, which is a policy decision rather than an evidence-validation fix",
+    "worker-count normalisation for multi-core CPU percentages is required, which would change what the metric means",
+    "an interfaces schema or libs/contracts change is required",
+    "a modification outside allowed_paths is required"
+  ]
+}
