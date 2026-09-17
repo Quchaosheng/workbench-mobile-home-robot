@@ -1,0 +1,36 @@
+{
+  "issue": 47,
+  "human_owner": "Quchaosheng",
+  "objective": "Port the deterministic snapshot replay tests from PR 347 onto the current WorldState contract.",
+  "allowed_paths": [
+    "tests/unit/test_world_state_snapshot_replay.py",
+    "docs/task_packets/issue-47-snapshot-replay-tests.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**"
+  ],
+  "acceptance": [
+    "snapshot replay tests pass against the shipped WorldState contract",
+    "hash material excludes reduced_at and clock_id",
+    "two independent processes with different PYTHONHASHSEED agree on state_hash"
+  ],
+  "commands": [
+    "make test",
+    "make contract"
+  ],
+  "evidence": [
+    "pytest output for tests/unit/test_world_state_snapshot_replay.py",
+    "state_hash for the canonical single-observation snapshot"
+  ],
+  "stop_conditions": [
+    "interface conflict",
+    "snapshot contract disagreement",
+    "missing fixture"
+  ]
+}
