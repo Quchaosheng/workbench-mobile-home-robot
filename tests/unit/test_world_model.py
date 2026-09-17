@@ -1,5 +1,6 @@
 import sys
 import unittest
+from functools import partial
 from itertools import permutations
 from pathlib import Path
 from unittest.mock import patch
@@ -8,18 +9,41 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "libs/contracts"), str(ROOT / "services/world_model")]
 
 from workbench_contracts import ReasonCode, RecoveryHint, VerificationStatus, WorldEvent, WorldEventType
+from workbench_world_model import VerificationContext, apply_event, reduce_events
 from workbench_world_model import (
-    apply_event,
-    reduce_events,
-    verify_inspection_evidence,
-    verify_kit_contents,
-    verify_object_in_tray,
-    verify_parcel_policy,
-    verify_parcel_sorting,
-    verify_workspace_clearance,
+    verify_inspection_evidence as _verify_inspection_evidence,
+)
+from workbench_world_model import (
+    verify_kit_contents as _verify_kit_contents,
+)
+from workbench_world_model import (
+    verify_object_in_tray as _verify_object_in_tray,
+)
+from workbench_world_model import (
+    verify_parcel_policy as _verify_parcel_policy,
+)
+from workbench_world_model import (
+    verify_parcel_sorting as _verify_parcel_sorting,
+)
+from workbench_world_model import (
+    verify_workspace_clearance as _verify_workspace_clearance,
 )
 from workbench_world_model.event_payloads import WorldEventPayloadValidationError
 from workbench_world_model.reducer import WorldState
+
+# Verification metadata is injected at the boundary, never invented by the
+# verifier. These wrappers pin one deterministic boundary for the unit suite.
+TEST_VERIFICATION_CONTEXT = VerificationContext(
+    state_hash="a" * 64,
+    verified_at="2026-08-27T12:34:56Z",
+    clock_id="wall",
+)
+verify_inspection_evidence = partial(_verify_inspection_evidence, context=TEST_VERIFICATION_CONTEXT)
+verify_kit_contents = partial(_verify_kit_contents, context=TEST_VERIFICATION_CONTEXT)
+verify_object_in_tray = partial(_verify_object_in_tray, context=TEST_VERIFICATION_CONTEXT)
+verify_parcel_policy = partial(_verify_parcel_policy, context=TEST_VERIFICATION_CONTEXT)
+verify_parcel_sorting = partial(_verify_parcel_sorting, context=TEST_VERIFICATION_CONTEXT)
+verify_workspace_clearance = partial(_verify_workspace_clearance, context=TEST_VERIFICATION_CONTEXT)
 
 
 def action_result_payload(**updates: object) -> dict[str, object]:

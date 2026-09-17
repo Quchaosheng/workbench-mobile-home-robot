@@ -39,10 +39,19 @@ from workbench_world_model import (
     FreshnessThresholds,
     ObservationAgingBoundary,
     ObservationFreshnessPolicy,
+    VerificationContext,
     create_world_state_snapshot,
     reduce_events,
     verify_parcel_policy,
     verify_parcel_sorting,
+)
+
+# Verification metadata is injected at the boundary, never invented by the
+# verifier; the attribute tests pin one deterministic boundary.
+TEST_VERIFICATION_CONTEXT = VerificationContext(
+    state_hash="b" * 64,
+    verified_at="2026-08-27T12:34:56Z",
+    clock_id="wall",
 )
 from workbench_world_model.event_payloads import (
     WorldEventPayloadValidationError,
@@ -440,6 +449,7 @@ def test_verifiers_use_attribute_evidence_and_distinguish_quality_failures() -> 
         "task-sort",
         parcel_routes={"parcel-a": "pickup"},
         expected_attributes={"parcel-a": {"label_status": "verified", "condition": "intact"}},
+        context=TEST_VERIFICATION_CONTEXT,
     )
     assert confirmed.status.value == "confirmed"
     assert confirmed.evidence_refs == ["frame://entity", "frame://condition", "frame://label"]
@@ -450,16 +460,17 @@ def test_verifiers_use_attribute_evidence_and_distinguish_quality_failures() -> 
         "task-sort",
         parcel_routes={"parcel-a": "pickup"},
         expected_attributes={"parcel-a": {"label_status": "verified", "condition": "intact"}},
+        context=TEST_VERIFICATION_CONTEXT,
     )
     assert low_confidence.reason_code.value == "confidence_below_threshold"
 
     state.entity_attribute_metadata["parcel-a"]["condition"]["confidence"] = 0.95
     state.entity_attribute_metadata["parcel-a"]["condition"]["belief"] = "stale"
-    stale = verify_parcel_policy(state, "task-policy", ["parcel-a"])
+    stale = verify_parcel_policy(state, "task-policy", ["parcel-a"], context=TEST_VERIFICATION_CONTEXT)
     assert stale.reason_code.value == "stale_observation"
 
 
-def test_verifier_default_context_is_finite_even_when_internal_state_contains_nan() -> None:
+def test_verifier_requires_an_injected_context_and_survives_non_finite_state() -> None:
     state = WorldState(
         run_id="run-001",
         entity_locations={"block": "in:tray"},
@@ -468,9 +479,22 @@ def test_verifier_default_context_is_finite_even_when_internal_state_contains_na
     )
     from workbench_world_model.verifier import verify_object_in_tray
 
-    verification = verify_object_in_tray(state, "task-object", "block", "tray")
+    # Non-finite internal values must not be able to corrupt the identity, and
+    # the boundary metadata must be supplied rather than invented.
+    verification = verify_object_in_tray(
+        state,
+        "task-object",
+        "block",
+        "tray",
+        context=TEST_VERIFICATION_CONTEXT,
+    )
     assert verification.verification_id.startswith("ver-")
     assert len(verification.verification_id) == 68
+    assert verification.verified_at == TEST_VERIFICATION_CONTEXT.verified_at
+    assert verification.verified_at != "1970-01-01T00:00:00Z"
+
+    with pytest.raises(TypeError, match="context must be a VerificationContext"):
+        verify_object_in_tray(state, "task-object", "block", "tray", context=None)
 
 
 def test_public_world_state_model_accepts_reducer_snapshot() -> None:

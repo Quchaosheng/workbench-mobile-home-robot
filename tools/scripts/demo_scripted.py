@@ -3,6 +3,7 @@ import io
 import json
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -14,7 +15,23 @@ from workbench_agent_runtime import build_template_plan
 from workbench_backend.logging import StructuredLogger
 from workbench_contracts import ActionOutcome, ActionResult, DeviceState, DispatchState, WorldEvent, WorldEventType
 from workbench_virtual_mcu import VirtualMcu
-from workbench_world_model import SQLiteEventStore, reduce_events, verify_object_in_tray
+from workbench_world_model import (
+    SQLiteEventStore,
+    VerificationContext,
+    create_world_state_snapshot,
+    reduce_events,
+    verify_object_in_tray,
+)
+
+
+def _utc_wall_clock_now() -> str:
+    """Read the real wall clock at the verification boundary.
+
+    Verification metadata must describe when the claim was checked; a fixed
+    placeholder would make freshness and ordering policies unusable.
+    """
+
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def event(
@@ -115,6 +132,7 @@ def run_once(run_id: str, logger: StructuredLogger) -> dict:
         )
         started = time.perf_counter()
         state = reduce_events(run_id, stored_events)
+        snapshot = create_world_state_snapshot(run_id, stored_events)
         logger.emit(
             "stage_completed",
             "world state reduced",
@@ -122,7 +140,17 @@ def run_once(run_id: str, logger: StructuredLogger) -> dict:
             details={"stage": "state_reduction", "duration_ms": (time.perf_counter() - started) * 1000},
         )
         started = time.perf_counter()
-        verification = verify_object_in_tray(state, plan.task_id, "red_block", "tray")
+        verification = verify_object_in_tray(
+            state,
+            plan.task_id,
+            "red_block",
+            "tray",
+            context=VerificationContext(
+                state_hash=snapshot.state_hash,
+                verified_at=_utc_wall_clock_now(),
+                clock_id="wall",
+            ),
+        )
         store.close()
     logger.emit(
         "stage_completed",

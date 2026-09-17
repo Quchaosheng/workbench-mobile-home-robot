@@ -352,61 +352,6 @@ def _verification_id(
     return f"ver-{hashlib.sha256(canonical_bytes).hexdigest()}"
 
 
-def _default_verification_context(state: WorldState) -> VerificationContext:
-    def canonicalize(value: object) -> object:
-        if isinstance(value, Mapping):
-            if any(not isinstance(key, str) for key in value):
-                raise TypeError("WorldState mappings require string keys")
-            return {key: canonicalize(value[key]) for key in sorted(value)}
-        if isinstance(value, (list, tuple)):
-            return [canonicalize(item) for item in value]
-        if isinstance(value, (set, frozenset)):
-            normalized = [canonicalize(item) for item in value]
-            return sorted(
-                normalized,
-                key=lambda item: json.dumps(
-                    item,
-                    allow_nan=False,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
-            )
-        if isinstance(value, float):
-            if math.isfinite(value):
-                return value
-            return {"__nonfinite_float__": value.hex()}
-        if value is None or isinstance(value, (str, bool, int)):
-            return value
-        if hasattr(value, "value") and isinstance(value.value, (str, int, float, bool)):
-            return canonicalize(value.value)
-        raise TypeError(f"unsupported WorldState value: {type(value).__name__}")
-
-    try:
-        material = json.dumps(
-            canonicalize(state.model_dump(mode="python", exclude={"freshness_evaluated"})),
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    except (TypeError, ValueError, UnicodeError) as error:
-        raise ValueError("WorldState cannot produce verification metadata") from error
-    return VerificationContext(
-        state_hash=hashlib.sha256(material).hexdigest(),
-        verified_at="1970-01-01T00:00:00Z",
-        clock_id=ClockId.WALL,
-    )
-
-
-def _resolved_context(state: WorldState, context: VerificationContext | None) -> VerificationContext:
-    if context is None:
-        return _default_verification_context(state)
-    if not isinstance(context, VerificationContext):
-        raise TypeError("context must be a VerificationContext")
-    return context
-
-
 def _expired_support(state: WorldState, entity_ids: set[str]) -> list[str]:
     expired: list[str] = []
     for entity_id in sorted(entity_ids):
@@ -432,10 +377,12 @@ def _result(
     *,
     verifier_kind: str = "world_model",
     request_semantics: Mapping[str, object] | None = None,
-    context: VerificationContext | None = None,
+    context: VerificationContext,
     supporting_attribute_keys: Mapping[str, set[str] | frozenset[str] | list[str] | tuple[str, ...]] | None = None,
 ) -> VerificationResult:
-    resolved_context = _resolved_context(state, context)
+    if not isinstance(context, VerificationContext):
+        raise TypeError("context must be a VerificationContext")
+    resolved_context = context
     if not state.freshness_evaluated and status in {
         VerificationStatus.CONFIRMED,
         VerificationStatus.REFUTED,
@@ -491,7 +438,7 @@ def verify_object_in_tray(
     object_id: str,
     tray_id: str,
     *,
-    context: VerificationContext | None = None,
+    context: VerificationContext,
 ) -> VerificationResult:
     if not isinstance(object_id, str) or not object_id.strip() or not isinstance(tray_id, str) or not tray_id.strip():
         raise ValueError("object_id and tray_id must be non-empty")
@@ -539,7 +486,7 @@ def verify_kit_contents(
     tray_id: str = "kit_tray",
     confidence_threshold: float = 0.8,
     *,
-    context: VerificationContext | None = None,
+    context: VerificationContext,
 ) -> VerificationResult:
     required = _required_entity_set(required_object_ids, "kitting")
     if not isinstance(tray_id, str) or not tray_id.strip():
@@ -607,7 +554,7 @@ def verify_inspection_evidence(
     required_entity_ids: list[str],
     confidence_threshold: float = 0.8,
     *,
-    context: VerificationContext | None = None,
+    context: VerificationContext,
 ) -> VerificationResult:
     required = _required_entity_set(required_entity_ids, "inspection")
     _validate_confidence_threshold(confidence_threshold)
@@ -653,7 +600,7 @@ def verify_workspace_clearance(
     state: WorldState,
     task_id: str,
     *,
-    context: VerificationContext | None = None,
+    context: VerificationContext,
 ) -> VerificationResult:
     expected = {"blue_cylinder": "in:staging_bin", "red_block": "in:tray"}
     unobserved = sorted(entity_id for entity_id in expected if entity_id not in state.entity_locations)
@@ -697,7 +644,7 @@ def verify_parcel_sorting(
     expected_attributes: dict[str, dict[str, str]] | None = None,
     confidence_threshold: float = 0.8,
     *,
-    context: VerificationContext | None = None,
+    context: VerificationContext,
 ) -> VerificationResult:
     route_input = DEFAULT_PARCEL_ROUTES if parcel_routes is None else parcel_routes
     if not isinstance(route_input, Mapping):
@@ -855,7 +802,7 @@ def verify_parcel_policy(
     parcel_manifest: Mapping[str, Mapping[str, str]] | None = None,
     manifest_id: str | None = None,
     *,
-    context: VerificationContext | None = None,
+    context: VerificationContext,
 ) -> VerificationResult:
     """Verify routes derived from observed parcel attributes, never caller claims."""
     required = _required_entity_set(parcel_ids, "parcel policy")
