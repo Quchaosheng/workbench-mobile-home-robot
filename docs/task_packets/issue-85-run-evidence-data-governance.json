@@ -1,0 +1,117 @@
+{
+  "issue": 85,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the lifecycle of run evidence explicit and testable: one versioned table that gives every artifact family a retention period, an owner, an access level and a deletion/hold rule, a hold register whose active holds outrank expiry, an export authorization check and a public projection that keeps hashes and references without copying restricted payloads, plus an append-only lifecycle log and a written policy page.",
+  "decision_supported": "Given a run's evidence, may this artifact be deleted now, who may read it, what may be exported, and what must never be deleted while an incident or release hold is open?",
+  "allowed_paths": [
+    "libs/application/workbench/application/data_governance.py",
+    "tests/unit/test_data_governance.py",
+    "docs/deployment/data-governance.md",
+    "mkdocs.yml",
+    "docs/task_packets/issue-85-run-evidence-data-governance.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/task_packets/README.md",
+    "docs/task_packets/issue-90-event-evidence-recovery.json",
+    "docs/task_packets/issue-92-secret-leak-regression-coverage.json",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "libs/application/workbench/application/redaction.py",
+    "docs/security/hardening.md",
+    "docs/deployment/event-evidence-recovery.md",
+    "docs/context/EVIDENCE_INDEX.md",
+    "tests/unit/test_redaction.py",
+    "pyproject.toml",
+    "Makefile"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "sim/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/agent_runtime/**",
+    "services/perception/**",
+    "services/backend/**",
+    "apps/dashboard/**",
+    ".github/**",
+    "docs/security/**"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "libs/application/workbench/application/redaction.py",
+    "docs/security/hardening.md",
+    "docs/deployment/event-evidence-recovery.md",
+    "docs/context/EVIDENCE_INDEX.md",
+    "docs/task_packets/issue-90-event-evidence-recovery.json",
+    "mkdocs.yml"
+  ],
+  "outputs": [
+    "libs/application/workbench/application/data_governance.py",
+    "tests/unit/test_data_governance.py",
+    "docs/deployment/data-governance.md",
+    "mkdocs.yml"
+  ],
+  "acceptance": [
+    "the governance rules are versioned as data-governance-v1 and every data class declares a retention period, an owner, an access level and a deletion/hold rule",
+    "an unknown data class is refused rather than defaulting to a permissive policy",
+    "deletion is refused while the retention period is still active and allowed once it has expired",
+    "a class that is not deletable stays undeletable even after any retention period would have passed",
+    "an active release or incident hold outranks an expired retention period and names the holds that cover the scope",
+    "a hold respects its scope, supports a wildcard scope, stops protecting on explicit release, and never expires implicitly",
+    "duplicate, malformed and negatively-lived holds are refused and leave the register unchanged",
+    "a public export of a restricted class is refused with a message naming both access levels",
+    "a public projection withholds the payload, reports every withheld field by name, and keeps the retained references, correlation fields and content hash",
+    "a restricted projection is complete but still scrubs credentials through the versioned redaction rules",
+    "a projection never mutates its source record and is deterministic for the same input",
+    "deletion and restore are recorded in an append-only lifecycle log that includes refused actions, and an unnamed actor or scope is refused",
+    "the policy page documents every data class, both hold kinds, the AccessLevel ranking, retention, export and the hold-outranks-expiry rule, and links the redaction and recovery boundaries",
+    "the policy page is reachable from the MkDocs navigation and the strict documentation build still passes"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-85-run-evidence-data-governance.json",
+    "python3 -m pytest tests/unit/test_data_governance.py -v",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make golden-check",
+    "make context-check",
+    "make docs",
+    "git diff --check",
+    "git diff --name-only"
+  ],
+  "evidence": [
+    "Task Packet schema validation output with exit code",
+    "targeted pytest output listing the collected Issue #85 test names, pass counts and exit codes",
+    "mutation probe 1 output: with the hold check disabled, the hold-protection tests fail",
+    "mutation probe 2 output: with the retention check disabled, the active-retention deletion test fails",
+    "mutation probe 3 output: with export authorization disabled, the refused-export tests fail",
+    "mutation probe 4 output: with the public retention filter disabled, the projection tests fail",
+    "a projection run showing the payload replaced by an evidence-redaction marker while evidence_refs and content_sha256 survive",
+    "make test, make contract, make scenario-check, make golden-check, make context-check and make docs output with exit codes",
+    "final git diff --check and git diff --name-only output proving every changed path is allowed"
+  ],
+  "stop_conditions": [
+    "Meeting the acceptance requires changing interfaces/, libs/contracts/ or a service owned by another module.",
+    "A hold can be closed, expired or ignored by the code path that wants to delete the data.",
+    "A public projection copies a restricted payload, or omits a field without naming it in withheld_fields.",
+    "An export returns a filtered subset instead of refusing a request the requester is not authorized to make.",
+    "The policy page claims a retention period or access rule that the code does not implement.",
+    "Satisfying the acceptance requires a new runtime dependency."
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; tests use synthetic records assembled from fragments and a fixed clock, and commit no real evidence",
+  "model_policy": "no model call; governance rules are deterministic table lookups and set operations",
+  "risks_and_fallbacks": [
+    "A governance table can rot into documentation that no code reads. The rules are a single mapping consulted by deletion_decision, authorize_export, export_projection and retention_summary, so a change to a policy changes behavior.",
+    "A hold could be quietly bypassed by a deletion tool that ignores the decision. The decision is the only verdict the module returns, and a refused action is recorded in the lifecycle log so a bypass is visible.",
+    "Retention figures could be read as legal commitments. The page states them as repository defaults with one owner per class, and the incident and release evidence classes carry no automatic expiry at all.",
+    "Redaction depends on the versioned rules of Issue #92. The projection records REDACTION_RULES_VERSION alongside the governance version so an artifact says which rules produced it.",
+    "Public projections could leak through a reference string. A reference is producer-supplied text like any other, so the retained fields are still passed through redact_mapping."
+  ]
+}

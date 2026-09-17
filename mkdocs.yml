@@ -35,6 +35,7 @@ nav:
       - Wiring: hardware/wiring.md
       - Bring-up and debugging: hardware/bringup.md
   - Event evidence recovery: deployment/event-evidence-recovery.md
+  - Data governance: deployment/data-governance.md
   - Release eligibility: evaluation/release-eligibility.md
   - API reference: api.md
 plugins:
