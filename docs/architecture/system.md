@@ -57,7 +57,10 @@ yet.
 - Event JSONL files are cached by path, modification time and size; changed files invalidate automatically.
 - Static responses use ETags, while versioned vendored assets use immutable caching.
 - `POST`, `PUT`, `PATCH` and `DELETE` return `405 read_only`.
-- Service logs are JSON Lines with `service`, `source`, `run_id` and per-run `sequence_no` fields. The same record shape accepts `simulation` and `hardware` sources without changing analysis code.
+- Service logs are JSON Lines with `service`, `source`, `run_id` and per-run `sequence_no` fields. The same record shape accepts `simulation` and `hardware` sources without changing analysis code. Every record passes through the versioned rule set in
+  `workbench.application.redaction` before it is written, and a scrubbed record records the rule
+  version it was scrubbed by. Raw evidence stays in the referenced store; see
+  [Security hardening](../security/hardening.md).
 - Stage telemetry uses `event=stage_completed`, `details.stage` and `details.duration_ms`; `analyze_telemetry.py` computes P50/P95 for both sources.
 - A controller may use `WORKBENCH_EVENT_SOURCE_URL` to read the simulation event source over HTTP. Its readiness is false when the peer is unavailable or returns malformed events.
 - `apps/dashboard/data/` is fixture data for offline UI and API tests. It is never eligible as physical release evidence.

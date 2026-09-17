@@ -18,6 +18,10 @@ Include, when safe:
 
 Do not include live credentials. Redact tokens and private event data from screenshots and logs.
 
+Structured logs, evaluation reports and model-call records are scrubbed by
+`workbench.application.redaction` (`REDACTION_RULES_VERSION`). A record that was scrubbed
+carries the rule version in its `redaction` field; a record without that field matched no rule.
+
 ## Response targets
 
 These are response targets, not a bounty or guarantee:

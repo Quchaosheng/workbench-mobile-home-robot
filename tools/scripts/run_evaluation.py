@@ -20,6 +20,12 @@ from _paths import enable_local_packages
 enable_local_packages()
 
 from scenario_tools import TASK_PROFILES, materialize_scenario, validate_simulation_manifest
+from workbench.application.redaction import (
+    REDACTION_MARKER_KEY,
+    REDACTION_RULES_VERSION,
+    redact_mapping,
+    redact_text,
+)
 from workbench_agent_runtime import build_policy_routed_parcel_plan
 
 SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -687,7 +693,7 @@ def run_external(
         _terminate_process_group(process)
         elapsed = time.monotonic() - started
         raise ExternalRunnerTimeout(
-            (
+            redact_text(
                 f"external runner for {scenario_id} timed out after {elapsed:.1f}s "
                 f"(budget {timeout_s}s including {EXTERNAL_STARTUP_GRACE_SECONDS}s startup grace); "
                 f"command: {command}"
@@ -697,7 +703,24 @@ def run_external(
             budget_s=timeout_s,
         ) from None
     if process.returncode != 0:
-        raise RuntimeError(f"external runner failed ({process.returncode}): {(stderr or '').strip()}")
+        # A runner that fails inside a credentialed command echoes the credential
+        # into stderr; this message ends up in a traceback or a report, so it is
+        # scrubbed at the point where it is built.
+        raise RuntimeError(redact_text(f"external runner failed ({process.returncode}): {(stderr or '').strip()}"))
+
+
+def redacted_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Return the publishable form of the run summary.
+
+    The summary is the artifact a release reviewer reads, and it embeds
+    ``blocked_detail`` text from a failing runner.  It is scrubbed as a whole
+    rather than field by field so a new diagnostic field cannot be added later
+    without also being covered.
+    """
+    sanitized, findings = redact_mapping(summary)
+    if findings:
+        sanitized[REDACTION_MARKER_KEY] = {"rules": REDACTION_RULES_VERSION, "redacted_values": findings}
+    return sanitized
 
 
 def parse_args() -> argparse.Namespace:
@@ -818,7 +841,7 @@ def main() -> int:
         "blocked_count": len(blocked),
         "runs": summaries,
     }
-    (args.output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (args.output_dir / "summary.json").write_text(json.dumps(redacted_summary(summary), indent=2), encoding="utf-8")
     if blocked:
         print(f"{len(blocked)} run(s) blocked; no release evidence was produced for them.")
     if args.runner == "scripted":

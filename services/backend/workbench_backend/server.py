@@ -393,7 +393,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
             )
         except ReadModelError as exc:
-            self.logger.emit("read_model_error", str(exc), level="ERROR")
+            # The exception text is the one place a bad event source can echo a
+            # credential back at us, so the message is produced by the logger
+            # instead of being formatted here and then sanitized.
+            self.logger.emit_failure("read_model_error", exc)
             self._send_json(
                 {"error": "invalid_event_source", "message": "The event source is unavailable or malformed."},
                 HTTPStatus.SERVICE_UNAVAILABLE,
