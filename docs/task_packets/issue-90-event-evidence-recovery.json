@@ -1,0 +1,118 @@
+{
+  "issue": 90,
+  "human_owner": "Quchaosheng",
+  "objective": "Make event-evidence backup, restore and recovery testable and fail-closed: one versioned snapshot format with schema and hash metadata, a restore that verifies before replacing live data, a narrow interrupted-append recovery that never invents events, and a written runbook with service targets.",
+  "decision_supported": "After an interrupted append or a damaged store, can an operator recover exactly the evidence that was still complete, prove what was discarded, and refuse a restore that cannot verify itself?",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/event_store.py",
+    "tests/unit/test_event_evidence_recovery.py",
+    "docs/deployment/event-evidence-recovery.md",
+    "mkdocs.yml",
+    "docs/task_packets/issue-90-event-evidence-recovery.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/task_packets/README.md",
+    "docs/task_packets/example-001-world-reducer.json",
+    "docs/task_packets/issue-92-secret-leak-regression-coverage.json",
+    "docs/task_packets/issue-46-world-event-store-integrity.json",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "docs/security/hardening.md",
+    "docs/context/EVIDENCE_INDEX.md",
+    "tests/unit/test_kernel_event_store.py",
+    "libs/kernel/tests/test_k1_k10.py",
+    "libs/kernel/tests/test_k1_k10_extended.py",
+    "libs/kernel/tests/benchmark_event_store.py",
+    "services/world_model/workbench_world_model/event_store.py",
+    "services/world_model/workbench_world_model/event_payloads.py",
+    "pyproject.toml",
+    "Makefile"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "sim/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/agent_runtime/**",
+    "services/perception/**",
+    "services/backend/**",
+    "apps/dashboard/**",
+    ".github/**",
+    "docs/security/**"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "libs/kernel/workbench/kernel/event_store.py",
+    "tests/unit/test_kernel_event_store.py",
+    "docs/security/hardening.md",
+    "docs/architecture/system.md",
+    "docs/context/EVIDENCE_INDEX.md",
+    "docs/task_packets/issue-46-world-event-store-integrity.json",
+    "mkdocs.yml"
+  ],
+  "outputs": [
+    "libs/kernel/workbench/kernel/event_store.py",
+    "tests/unit/test_event_evidence_recovery.py",
+    "docs/deployment/event-evidence-recovery.md",
+    "mkdocs.yml"
+  ],
+  "acceptance": [
+    "the snapshot format and its version are named, and the manifest records format, format_version, database, schema_version, event_count, created_at and sha256",
+    "a restore verifies the checksum, the integrity of the snapshot and the manifest event count before the destination is replaced",
+    "a tampered snapshot, a manifest mismatch, a malformed manifest and an unknown format are each refused while the live store stays readable",
+    "restore output is replay-equivalent to its source snapshot for both the SQLite and the JSONL backend",
+    "an interrupted append with a torn final line is recovered into a new file without inventing or reordering events",
+    "damage before the final line, a non-UTF-8 log, a clean log, a missing log and recovery onto its own source are all refused",
+    "a recovery candidate that would not satisfy the event contract is refused and leaves no partial destination or temporary file",
+    "an unwritable recovery destination is reported as an operational error, not as corruption",
+    "an append against a damaged log fails closed and leaves the file byte-identical",
+    "a missing evidence reference is reported as missing and is never replaced by a placeholder or a completion claim",
+    "the discarded fragment is preserved next to the destination and identified by byte count and SHA-256",
+    "the runbook documents RPO, RTO, verification, the retention owner, the snapshot format, both procedures and the failure handling table",
+    "the runbook is reachable from the MkDocs navigation and strict documentation build still passes"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-90-event-evidence-recovery.json",
+    "python3 -m pytest tests/unit/test_event_evidence_recovery.py tests/unit/test_kernel_event_store.py -v",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make golden-check",
+    "make context-check",
+    "make docs",
+    "git diff --check",
+    "git diff --name-only"
+  ],
+  "evidence": [
+    "Task Packet schema validation output with exit code",
+    "targeted pytest output listing the collected Issue #90 test names, pass counts and exit codes",
+    "mutation probe 1 output: with checksum verification disabled, the tampered-snapshot test fails",
+    "mutation probe 2 output: with candidate verification disabled, the contract-violation and sequence-gap tests fail",
+    "a recovery run showing two surviving events recovered from a torn log, the damaged original left byte-identical, and the discarded fragment written with its hash",
+    "a restore run showing a tampered snapshot refused while the live store still replays its original events",
+    "make test, make contract, make scenario-check, make golden-check, make context-check and make docs output with exit codes",
+    "final git diff --check and git diff --name-only output proving every changed path is allowed"
+  ],
+  "stop_conditions": [
+    "Recovery produces an event that was not in the surviving bytes.",
+    "A refused restore or refused recovery leaves the destination replaced, partially written, or truncated.",
+    "A damaged store is repaired in place instead of leaving the original intact for investigation.",
+    "Meeting the acceptance requires changing interfaces/, libs/contracts/ or the World Model store in services/world_model/.",
+    "The runbook claims a retention or access policy that the deployment has not adopted, instead of naming it as operator-owned."
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; tests use temporary stores under the system temp directory and commit no real event data",
+  "model_policy": "no model call; recovery rules are deterministic byte and JSON checks",
+  "risks_and_fallbacks": [
+    "Recovery could become a silent data-loss tool. It refuses everything except a single incomplete final line, keeps the damaged original, and records the discarded fragment by hash.",
+    "A snapshot format change could break older snapshots. The manifest carries both format_version and schema_version, and a restore refuses a mismatch instead of guessing.",
+    "The RPO/RTO figures could be read as measured production guarantees. They are stated as targets with the reason each holds, and the test asserts the mechanism rather than a fabricated measurement.",
+    "JSONL is a compatibility backend, so its durability is weaker than SQLite by design. The runbook states the difference instead of implying parity, and migration to SQLite is exercised end to end."
+  ]
+}

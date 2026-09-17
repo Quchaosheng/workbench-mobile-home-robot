@@ -34,6 +34,7 @@ nav:
       - Overview: hardware/README.md
       - Wiring: hardware/wiring.md
       - Bring-up and debugging: hardware/bringup.md
+  - Event evidence recovery: deployment/event-evidence-recovery.md
   - API reference: api.md
 plugins:
   - search

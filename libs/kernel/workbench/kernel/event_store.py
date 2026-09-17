@@ -1,4 +1,14 @@
-"""Append-only event storage with a strict JSONL compatibility path and SQLite backend."""
+"""Append-only event storage with a strict JSONL compatibility path and SQLite backend.
+
+Two durability rules decide the shape of this module:
+
+* Damage fails closed.  A store that cannot prove its own contents readable
+  refuses to append, to checkpoint or to restore, rather than continuing from a
+  guess.
+* Recovery never invents evidence.  A recovered store is a new file built from
+  the bytes that were still complete; the damaged original is left untouched and
+  the discarded fragment is recorded by hash so the loss stays auditable.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +18,7 @@ import os
 import shutil
 import sqlite3
 import threading
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -30,6 +41,8 @@ EVENT_TYPES = {
 REQUIRED_EVENT_FIELDS = {"event_id", "run_id", "sequence_no", "event_type", "occurred_at", "payload"}
 SQLITE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
 SCHEMA_VERSION = 1
+SNAPSHOT_FORMAT = "workbench-event-store-snapshot"
+SNAPSHOT_FORMAT_VERSION = 2
 
 
 class EventStoreError(ValueError):
@@ -292,29 +305,45 @@ class EventStore:
             return True
 
     def backup(self, destination: Path) -> Path:
-        """Create a checksummed SQLite snapshot and return its manifest path."""
-        if self.backend != "sqlite":
-            raise EventStoreError("backup requires the SQLite backend")
+        """Create a checksummed snapshot and return its manifest path.
+
+        Both backends are snapshot the same way, so an operator has one recovery
+        procedure: a byte-identical copy plus a manifest naming the format
+        version, the schema version, the event count and the content hash. The
+        manifest is written to a temporary name and moved into place last, so a
+        crash cannot leave a manifest describing a snapshot that never landed.
+        """
         destination = Path(destination)
         if destination.resolve() == self.log_file.resolve():
-            raise EventStoreError("snapshot destination must differ from the live database")
+            raise EventStoreError("snapshot destination must differ from the live store")
         destination.parent.mkdir(parents=True, exist_ok=True)
         temp = destination.with_name(f".{destination.name}.backup-tmp")
         if temp.exists():
             temp.unlink()
         with self._lock:
-            assert self._connection is not None
-            self._connection.commit()
-            target = sqlite3.connect(temp)
-            try:
-                self._connection.backup(target)
-            finally:
-                target.close()
-            self._read_events()
+            if self.backend == "sqlite":
+                assert self._connection is not None
+                self._connection.commit()
+                target = sqlite3.connect(temp)
+                try:
+                    self._connection.backup(target)
+                finally:
+                    target.close()
+                self._read_events()
+            else:
+                # A JSONL snapshot is a byte copy of validated content, never a
+                # re-serialization: re-encoding could silently drop a field that
+                # the current schema does not know about yet.
+                self._read_events()
+                if self.log_file.exists():
+                    shutil.copy2(self.log_file, temp)
+                else:
+                    temp.write_bytes(b"")
         manifest = {
-            "format": "workbench-event-store-snapshot",
-            "database": "sqlite",
-            "sqlite_version": sqlite3.sqlite_version,
+            "format": SNAPSHOT_FORMAT,
+            "format_version": SNAPSHOT_FORMAT_VERSION,
+            "database": "sqlite" if self.backend == "sqlite" else "jsonl",
+            "sqlite_version": sqlite3.sqlite_version if self.backend == "sqlite" else None,
             "schema_version": SCHEMA_VERSION,
             "event_count": len(self.events),
             "created_at": datetime.now(UTC).isoformat(),
@@ -339,16 +368,19 @@ class EventStore:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise EventStoreError("snapshot manifest is unavailable or malformed") from exc
-        if (
-            manifest.get("format") != "workbench-event-store-snapshot"
-            or manifest.get("schema_version") != SCHEMA_VERSION
-            or manifest.get("sha256") != _sha256(snapshot)
-        ):
-            raise EventStoreError("snapshot checksum or schema version mismatch")
-        probe = cls(snapshot, backend="sqlite")
+        if manifest.get("format") != SNAPSHOT_FORMAT or manifest.get("schema_version") != SCHEMA_VERSION:
+            raise EventStoreError("snapshot format or schema version mismatch")
+        if manifest.get("sha256") != _sha256(snapshot):
+            # The checksum is verified before the live store is touched, so a
+            # tampered or truncated snapshot cannot replace good evidence.
+            raise EventStoreError("snapshot checksum mismatch")
+        backend = "sqlite" if manifest.get("database") == "sqlite" else "jsonl"
+        probe = cls(snapshot, backend=backend)
         try:
-            if not probe.verify_integrity() or len(probe.replay()) != manifest.get("event_count"):
-                raise EventStoreError("snapshot failed integrity or event-count verification")
+            if not probe.verify_integrity():
+                raise EventStoreError("snapshot failed integrity verification")
+            if len(probe.replay()) != manifest.get("event_count"):
+                raise EventStoreError("snapshot event count does not match its manifest")
         finally:
             probe.close()
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -356,7 +388,7 @@ class EventStore:
         shutil.copy2(snapshot, temp)
         os.replace(temp, destination)
         shutil.copy2(manifest_path, Path(f"{destination}.manifest.json"))
-        return cls(destination, backend="sqlite")
+        return cls(destination, backend=backend)
 
     def close(self) -> None:
         if self._connection is not None:
@@ -389,6 +421,133 @@ def migrate_jsonl(source: Path, destination: Path) -> EventStore:
         target.close()
         raise
     return EventStore(destination, backend="sqlite")
+
+
+def recover_torn_jsonl(source: Path, destination: Path) -> dict[str, Any]:
+    """Rebuild a JSONL log that an interrupted append left with a torn last line.
+
+    Recovery is deliberately narrow. It refuses whenever the damage cannot be
+    proven to be a single incomplete final line, because anything else might be a
+    lost event rather than a lost byte:
+
+    * every complete line must still parse and satisfy the event contract;
+    * the damaged tail must be the last line and must not end with a newline;
+    * more than one damaged line is refused.
+
+    The recovered log is a new file. The damaged original is left exactly as it
+    was found, and the discarded fragment is written next to the destination as
+    ``<destination>.discarded`` and identified by hash, so the loss is explicit
+    and auditable instead of silently absorbed. Events are never synthesized, and
+    a recovered log is never extended to reach an expected event count.
+
+    A candidate that is still not a valid event log - because the surviving lines
+    do not satisfy the contract - is refused rather than published. Recovery that
+    produced an unreadable store would only move the corruption.
+    """
+    source = Path(source)
+    destination = Path(destination)
+    if source.resolve() == destination.resolve():
+        raise EventStoreError("recovery destination must differ from the damaged log")
+    if not source.exists():
+        raise EventStoreError(f"damaged event log is unavailable: {source}")
+    try:
+        raw = source.read_bytes()
+    except OSError as exc:
+        raise EventStoreError(f"damaged event log could not be read: {source}") from exc
+    text = raw.decode("utf-8", errors="strict") if _is_utf8(raw) else None
+    if text is None:
+        raise EventStoreError("damaged event log is not valid UTF-8; recovery is not attempted")
+    if not text or text.endswith("\n"):
+        raise EventStoreError("event log has no incomplete trailing line; recovery is not required")
+
+    last_newline = text.rfind("\n")
+    complete_text = text[: last_newline + 1] if last_newline >= 0 else ""
+    discarded = text[last_newline + 1 :]
+    complete_lines = [line for line in complete_text.splitlines() if line.strip()]
+    events = []
+    for line_number, line in enumerate(complete_lines, start=1):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise EventStoreError(f"line {line_number} is damaged before the final line; recovery is refused") from exc
+        if not isinstance(event, dict):
+            raise EventStoreError(f"line {line_number} is not an event object; recovery is refused")
+        events.append(event)
+    if any(not isinstance(event, dict) for event in events):  # pragma: no cover - guarded above
+        raise EventStoreError("damaged event log contains a non-object event")
+
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temp = destination.with_name(f".{destination.name}.recovery-tmp")
+        temp.write_text("".join(f"{json.dumps(event, separators=(',', ':'))}\n" for event in events), encoding="utf-8")
+    except OSError as exc:
+        # An unwritable or full destination is an operational failure, not a
+        # corruption finding, and it must not be reported as one.
+        raise EventStoreError(f"recovered event log could not be written: {destination}") from exc
+    # A candidate that fails the contract must not be promoted, so it is read
+    # back and verified before the destination is replaced.
+    if not _is_readable(temp):
+        temp.unlink(missing_ok=True)
+        raise EventStoreError("recovered event log would not satisfy the event contract")
+    try:
+        os.replace(temp, destination)
+        Path(f"{destination}.discarded").write_text(discarded, encoding="utf-8")
+    except OSError as exc:
+        raise EventStoreError(f"recovery output could not be published: {destination}") from exc
+    discarded_path = Path(f"{destination}.discarded")
+    return {
+        "format": "workbench-event-store-recovery",
+        "format_version": SNAPSHOT_FORMAT_VERSION,
+        "source": str(source),
+        "destination": str(destination),
+        "recovered_events": len(events),
+        "discarded_bytes": len(discarded.encode("utf-8")),
+        "discarded_sha256": hashlib.sha256(discarded.encode("utf-8")).hexdigest(),
+        "discarded_path": str(discarded_path),
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def audit_evidence_refs(store: EventStore, available: Iterable[str]) -> dict[str, Any]:
+    """Report evidence references that resolve to nothing.
+
+    This is an audit, not a repair: a missing reference is reported as missing and
+    is never replaced by a placeholder, a synthetic reference, or a completion
+    claim. Callers decide whether an incomplete run may be published; the store
+    only states the fact.
+    """
+    known = set(available)
+    referenced: list[str] = []
+    missing: list[str] = []
+    for event in store.replay():
+        for reference in event.get("evidence_refs", []):
+            referenced.append(reference)
+            if reference not in known:
+                missing.append(reference)
+    return {
+        "referenced_count": len(referenced),
+        "unique_referenced_count": len(set(referenced)),
+        "missing_count": len(set(missing)),
+        "missing_refs": sorted(set(missing)),
+        "complete": not missing,
+    }
+
+
+def _is_readable(path: Path) -> bool:
+    """Report whether a candidate file is a readable, contract-valid event log."""
+    probe = EventStore(path, backend="jsonl")
+    try:
+        return probe.verify_integrity()
+    finally:
+        probe.close()
+
+
+def _is_utf8(raw: bytes) -> bool:
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def _sha256(path: Path) -> str:
