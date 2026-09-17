@@ -3,8 +3,10 @@ import json
 import mimetypes
 import os
 import re
+import signal
 import socket
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
@@ -31,56 +33,142 @@ API_VERSION = "1"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_REJECTED_REQUEST_BODY_BYTES = 1024 * 1024
 MAX_CONCURRENT_REQUESTS = 16
+DEFAULT_DRAIN_TIMEOUT_SECONDS = 5.0
+MAX_DRAIN_TIMEOUT_SECONDS = 30.0
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
-    """Threading HTTP server with a hard bound before worker creation."""
+    """Threading HTTP server with a hard bound and an explicit drain contract.
+
+    Shutdown is fail-closed in three ordered steps: readiness starts reporting
+    NOT_READY, new requests are refused with a retryable 503, and only then is
+    the accept loop stopped. In-flight handlers are given `drain_timeout` to
+    finish, after which the server is closed instead of blocking forever.
+    """
 
     daemon_threads = True
 
-    def __init__(self, server_address, request_handler_class, *, max_concurrent_requests: int) -> None:
+    def __init__(
+        self,
+        server_address,
+        request_handler_class,
+        *,
+        max_concurrent_requests: int,
+        drain_timeout: float = DEFAULT_DRAIN_TIMEOUT_SECONDS,
+    ) -> None:
         if not 1 <= max_concurrent_requests <= MAX_CONCURRENT_REQUESTS:
             raise ValueError(f"max_concurrent_requests must be between 1 and {MAX_CONCURRENT_REQUESTS}")
+        if not 0 <= drain_timeout <= MAX_DRAIN_TIMEOUT_SECONDS:
+            raise ValueError(f"drain_timeout must be between 0 and {MAX_DRAIN_TIMEOUT_SECONDS} seconds")
         self.max_concurrent_requests = max_concurrent_requests
+        self.drain_timeout = float(drain_timeout)
         self._request_slots = threading.BoundedSemaphore(max_concurrent_requests)
+        self._condition = threading.Condition()
+        self._active_requests = 0
+        self._draining = False
         self.request_queue_size = max_concurrent_requests
         super().__init__(server_address, request_handler_class)
 
+    @property
+    def draining(self) -> bool:
+        """True once shutdown began: readiness is NOT_READY and new work is refused."""
+        with self._condition:
+            return self._draining
+
+    @property
+    def active_request_count(self) -> int:
+        with self._condition:
+            return self._active_requests
+
+    def begin_drain(self) -> None:
+        """Publish NOT_READY and start refusing new requests."""
+        with self._condition:
+            self._draining = True
+            self._condition.notify_all()
+
+    def wait_for_idle(self, timeout: float) -> bool:
+        """Wait until no request handler is running. Returns True when idle."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self._condition:
+            while self._active_requests:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._condition.wait(remaining)
+            return True
+
+    def _refuse(self, request, payload: dict[str, str]) -> None:
+        body = json.dumps(payload).encode()
+        response = (
+            b"HTTP/1.1 503 Service Unavailable\r\n"
+            b"Content-Type: application/json; charset=utf-8\r\n"
+            + f"Content-Length: {len(body)}\r\n".encode()
+            + b"Cache-Control: no-store\r\n"
+            + b"Retry-After: 1\r\n"
+            + b"X-Content-Type-Options: nosniff\r\n"
+            + b"Connection: close\r\n\r\n"
+            + body
+        )
+        try:
+            request.sendall(response)
+            # Half-close after the complete response to avoid a TCP reset on
+            # Windows when the client has no unread request body.
+            request.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+        self.shutdown_request(request)
+
     def process_request(self, request, client_address) -> None:
-        if not self._request_slots.acquire(blocking=False):
-            body = json.dumps(
-                {"error": "server_busy", "message": "The server has reached its request concurrency limit."}
-            ).encode()
-            response = (
-                b"HTTP/1.1 503 Service Unavailable\r\n"
-                b"Content-Type: application/json; charset=utf-8\r\n"
-                + f"Content-Length: {len(body)}\r\n".encode()
-                + b"Cache-Control: no-store\r\n"
-                + b"X-Content-Type-Options: nosniff\r\n"
-                + b"Connection: close\r\n\r\n"
-                + body
+        # The concurrency bound is enforced here, before a worker thread exists,
+        # so an overloaded server cannot be made to allocate unbounded threads.
+        # Draining is deliberately NOT decided here: this layer cannot see the
+        # request path, and the life-cycle probes must still answer so that an
+        # orchestrator can observe NOT_READY. The handler refuses drained work
+        # for every other route.
+        if not self._reserve_slot():
+            self._refuse(
+                request,
+                {"error": "server_busy", "message": "The server has reached its request concurrency limit."},
             )
-            try:
-                request.sendall(response)
-                # Half-close after the complete response to avoid a TCP reset
-                # on Windows when the client has no unread request body.
-                request.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
-            self.shutdown_request(request)
             return
+        with self._condition:
+            self._active_requests += 1
         try:
             super().process_request(request, client_address)
         except BaseException:
-            self._request_slots.release()
+            self._finish_request()
             raise
+
+    def _reserve_slot(self) -> bool:
+        return self._request_slots.acquire(blocking=False)
+
+    def _finish_request(self) -> None:
+        self._request_slots.release()
+        with self._condition:
+            self._active_requests -= 1
+            self._condition.notify_all()
 
     def process_request_thread(self, request, client_address) -> None:
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self._request_slots.release()
+            self._finish_request()
+
+    def shutdown_with_drain(self, drain_timeout: float | None = None) -> bool:
+        """Drain in flight work, then stop the accept loop.
+
+        The order matters: readiness must flip and new work must be refused while
+        the listening socket is still open, otherwise an orchestrator has no
+        chance to observe NOT_READY before the port disappears. Returns True when
+        every in-flight request finished before the deadline. The accept loop is
+        stopped either way, so a wedged handler cannot keep the process alive.
+        """
+        timeout = self.drain_timeout if drain_timeout is None else float(drain_timeout)
+        self.begin_drain()
+        drained = self.wait_for_idle(timeout)
+        self.shutdown()
+        return drained
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -95,7 +183,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.logger.emit("http_access", format % args, details={"client": self.client_address[0]})
 
     def _send_json(
-        self, payload: object, status: HTTPStatus = HTTPStatus.OK, *, api_version: str | None = None
+        self,
+        payload: object,
+        status: HTTPStatus = HTTPStatus.OK,
+        *,
+        api_version: str | None = None,
+        retry_after: int | None = None,
     ) -> None:
         try:
             # allow_nan=False is what keeps the response parseable by a strict
@@ -119,6 +212,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         if api_version:
             self.send_header("X-API-Version", api_version)
+        if retry_after is not None:
+            # Tell a client that the refusal is transient, so it backs off and
+            # retries instead of treating the instance as permanently gone.
+            self.send_header("Retry-After", str(retry_after))
         self._send_security_headers()
         self.end_headers()
         self.wfile.write(body)
@@ -261,8 +358,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except OSError:
                 pass
 
+    def _server_is_draining(self) -> bool:
+        return bool(getattr(self.server, "draining", False))
+
+    def _reject_if_draining(self) -> bool:
+        """Refuse new work once shutdown began, before any read model access."""
+        if not self._server_is_draining():
+            return False
+        self.close_connection = True
+        self._send_json(
+            {
+                "error": "server_draining",
+                "message": "The server is shutting down and is no longer accepting requests.",
+            },
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            retry_after=1,
+        )
+        return True
+
     def do_GET(self) -> None:
         if not self._authorize_request() or self._validated_content_length(body_allowed=False) is None:
+            return
+        # Liveness stays up during a drain - the process is still running and
+        # finishing in-flight work. Only readiness and new work change, so an
+        # orchestrator removes the instance from rotation without killing it
+        # mid-request.
+        if self.path.split("?", 1)[0] not in {"/healthz", "/readyz"} and self._reject_if_draining():
             return
         try:
             self._do_get()
@@ -285,7 +406,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "ok", "service": "workbench-backend", "version": "0.2.0"})
             return
         if route == "/readyz":
-            ready = self.read_model.ready()
+            # Readiness flips to NOT_READY as soon as shutdown begins, so a load
+            # balancer stops sending work before the process stops accepting it.
+            ready = self.read_model.ready() and not self._server_is_draining()
             self._send_json(
                 {"status": "ready" if ready else "not_ready", "data_source": self.data_source},
                 HTTPStatus.OK if ready else HTTPStatus.SERVICE_UNAVAILABLE,
@@ -333,6 +456,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _reject_write(self) -> None:
         if not self._authorize_request():
             return
+        if self._reject_if_draining():
+            return
         content_length = self._validated_content_length(body_allowed=True)
         if content_length is None:
             return
@@ -364,6 +489,7 @@ def create_server(
     trust_mode: str = "local",
     trusted_proxy_allowlist: str | None = None,
     max_concurrent_requests: int = MAX_CONCURRENT_REQUESTS,
+    drain_timeout: float = DEFAULT_DRAIN_TIMEOUT_SECONDS,
 ) -> BoundedThreadingHTTPServer:
     inbound_policy = InboundHttpPolicy(
         published_host=published_host,
@@ -393,6 +519,7 @@ def create_server(
         (host, port),
         ConfiguredHandler,
         max_concurrent_requests=max_concurrent_requests,
+        drain_timeout=drain_timeout,
     )
 
 
@@ -412,6 +539,12 @@ def main() -> int:
         "--trusted-proxy-allowlist",
         default=os.environ.get("WORKBENCH_CONTROLLER_TRUSTED_PROXY_ALLOWLIST"),
     )
+    parser.add_argument(
+        "--drain-timeout",
+        type=float,
+        default=float(os.environ.get("WORKBENCH_DRAIN_TIMEOUT_SECONDS", DEFAULT_DRAIN_TIMEOUT_SECONDS)),
+        help="Seconds to let in-flight requests finish after SIGTERM or Ctrl-C before exiting.",
+    )
     args = parser.parse_args()
     try:
         server = create_server(
@@ -423,8 +556,9 @@ def main() -> int:
             published_host=args.published_host,
             trust_mode=args.trust_mode,
             trusted_proxy_allowlist=args.trusted_proxy_allowlist,
+            drain_timeout=args.drain_timeout,
         )
-    except InboundHttpConfigurationError as exc:
+    except (InboundHttpConfigurationError, ValueError) as exc:
         parser.error(str(exc))
     DashboardHandler.logger.emit(
         "service_started",
@@ -437,12 +571,42 @@ def main() -> int:
             "trust_mode": args.trust_mode,
         },
     )
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    stop = threading.Event()
+    stop_lock = threading.Lock()
+
+    def request_stop(_signum=None, _frame=None) -> None:
+        """Fail closed on SIGTERM without doing blocking work in the handler.
+
+        `serve_forever` runs on this same thread, so `shutdown()` cannot be called
+        directly here - it waits for the very loop it would be blocking. The flag
+        is published immediately so readiness already reports NOT_READY, and the
+        loop is unblocked from a helper thread after the drain deadline.
+        """
+        with stop_lock:
+            if stop.is_set():
+                return
+            stop.set()
+        server.begin_drain()
+        threading.Thread(target=server.shutdown_with_drain, name="workbench-backend-drain", daemon=True).start()
+
+    signal.signal(signal.SIGTERM, request_stop)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        pass
+        request_stop()
     finally:
+        # The configured timeout is reported, not whatever the server object
+        # happens to expose, so the record always matches the operator's intent.
+        drained = bool(server.shutdown_with_drain(args.drain_timeout))
+        DashboardHandler.logger.emit(
+            "service_draining",
+            "dashboard stopped accepting requests",
+            level="INFO" if drained else "WARNING",
+            details={"drained": drained, "drain_timeout_s": args.drain_timeout},
+        )
         server.server_close()
+        signal.signal(signal.SIGTERM, previous_sigterm)
     return 0
 
 

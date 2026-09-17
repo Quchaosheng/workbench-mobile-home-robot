@@ -1,0 +1,121 @@
+{
+  "issue": 93,
+  "human_owner": "Quchaosheng",
+  "objective": "Give the read-only dashboard backend an explicit shutdown and overload contract: readiness flips to NOT_READY before termination, new work is refused with a retryable 503, concurrent requests stay bounded, and a wedged handler can never keep the process alive past the drain deadline.",
+  "decision_supported": "Can the backend drain and refuse work in a defined order - NOT_READY, then refused requests, then a stopped accept loop - while liveness stays up and every refusal is a stable, non-leaking, retryable response?",
+  "allowed_paths": [
+    "services/backend/workbench_backend/server.py",
+    "docs/api-openapi-v1.json",
+    "services/backend/workbench_backend/api-openapi-v1.json",
+    "apps/dashboard/README.md",
+    "tests/unit/test_backend_shutdown.py",
+    "docs/task_packets/issue-93-backend-drain-and-backpressure.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/architecture/system.md",
+    "docs/task_packets/README.md",
+    "docs/task_packets/example-001-world-reducer.json",
+    "docs/task_packets/issue-66-controller-http-boundary.json",
+    "docs/task_packets/dashboard-accessibility-ux.json",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/remote_http.py",
+    "services/backend/workbench_backend/inbound_http.py",
+    "services/backend/workbench_backend/logging.py",
+    "tests/unit/test_dashboard_backend.py",
+    "tests/unit/test_multi_host.py",
+    "tests/integration/test_offline_system.py",
+    "compose.yaml",
+    "Makefile",
+    "pyproject.toml"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "kernel/**",
+    "sim/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**",
+    "services/agent_runtime/**",
+    "services/perception/**",
+    ".github/**",
+    "apps/dashboard/app.js",
+    "apps/dashboard/data/**"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "services/backend/workbench_backend/server.py",
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/remote_http.py",
+    "docs/api-openapi-v1.json",
+    "docs/task_packets/issue-66-controller-http-boundary.json",
+    "tests/unit/test_dashboard_backend.py",
+    "tests/unit/test_multi_host.py",
+    "compose.yaml",
+    "Makefile"
+  ],
+  "outputs": [
+    "services/backend/workbench_backend/server.py",
+    "docs/api-openapi-v1.json",
+    "services/backend/workbench_backend/api-openapi-v1.json",
+    "apps/dashboard/README.md",
+    "tests/unit/test_backend_shutdown.py",
+    "docs/task_packets/issue-93-backend-drain-and-backpressure.json"
+  ],
+  "acceptance": [
+    "SIGTERM and Ctrl-C stop new requests, drain in-flight work up to a deadline, then exit with status 0",
+    "readiness reports NOT_READY before termination while liveness stays up for the duration of the drain",
+    "concurrent requests remain bounded and overload returns a stable 503 with Retry-After and no internal detail",
+    "writes are refused while draining instead of reaching a read model",
+    "a handler that outlives the drain deadline cannot block process exit",
+    "the drain deadline is validated and configurable through the CLI and environment",
+    "the OpenAPI contract documents the draining and concurrency refusal on every affected route",
+    "shutdown does not corrupt logs or the read-model cache",
+    "tests cover slow requests, concurrent requests, SIGTERM-equivalent shutdown, and bounded overload"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-93-backend-drain-and-backpressure.json",
+    "python3 -m pytest tests/unit/test_backend_shutdown.py tests/unit/test_dashboard_backend.py tests/unit/test_multi_host.py -v",
+    "python3 -m pytest tests/integration/test_offline_system.py -v",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make golden-check",
+    "make context-check",
+    "git diff --check",
+    "git diff --name-only"
+  ],
+  "evidence": [
+    "Task Packet schema validation output",
+    "end-to-end SIGTERM process run showing readiness flipping to not_ready, refused routes and exit status 0",
+    "in-flight request output showing the drain waited for work that had already started",
+    "wedged-handler output showing the drain deadline was enforced instead of blocking shutdown",
+    "overload output showing the bounded 503 with Retry-After at the concurrency limit",
+    "targeted pytest output with the collected Issue #93 test names, pass counts and exit codes",
+    "make test, make contract, make scenario-check, make golden-check and make context-check output with exit codes",
+    "final git diff --check and git diff --name-only output proving every changed path is allowed"
+  ],
+  "stop_conditions": [
+    "the change would require a control, ROS, MCU, motion or emergency-stop endpoint",
+    "the change would require deploying, restarting or reconfiguring a live container or host",
+    "readiness would keep reporting ready after termination began",
+    "a refusal response would echo read-model contents, filesystem paths or other internals",
+    "the change requires modifying the dashboard rendering layer or its fixtures",
+    "a required modification falls outside allowed_paths"
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "The concurrency bound was already enforced before worker creation; this change keeps that behaviour and extends it with an explicit drain contract.",
+    "Refusal is decided in the handler rather than in process_request because only the handler can see the request path, and the life-cycle probes must stay answerable while draining.",
+    "In-flight requests are waited for rather than cancelled or truncated, so a client never receives a partial response because shutdown started.",
+    "A handler that ignores the deadline is abandoned; daemon worker threads and server_close keep exit bounded, and the drain logs drained=false so the condition is visible rather than silent.",
+    "The drain deadline defaults to 5 seconds and is capped at 30 so a misconfigured value cannot stall deployment."
+  ]
+}

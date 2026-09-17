@@ -25,6 +25,19 @@ so a later placement supersedes an earlier hold instead of contradicting it.
 
 The HTTP boundary deliberately implements `GET` only. `POST`, `PUT`, `PATCH`, and `DELETE` return `405 read_only`; there is no ROS, MCU, motion, or emergency-stop publisher in this application.
 
+## Concurrency and shutdown
+
+The server bounds concurrent requests (`MAX_CONCURRENT_REQUESTS`) and refuses
+work beyond that bound with `503 server_busy` plus `Retry-After`. On `SIGTERM` or
+`Ctrl-C` it drains fail-closed in three ordered steps: `/readyz` reports
+`not_ready`, every other route returns `503 server_draining` with `Retry-After`,
+and in-flight requests are given `--drain-timeout` (default 5s,
+`WORKBENCH_DRAIN_TIMEOUT_SECONDS`) to finish before the accept loop stops.
+`/healthz` stays up for the duration of the drain, so an orchestrator can observe
+NOT_READY and stop routing to the instance without killing it mid-request. A
+handler that outlives the deadline is abandoned rather than allowed to block
+process exit.
+
 Vendored UI dependency: Lucide `0.468.0`, ISC license in `vendor/LUCIDE-LICENSE.txt`.
 
 The dashboard follows a two-tab keyboard model: `Left`/`Right` (or `Up`/`Down`) changes views, while `Home` and `End` jump to the first or last view. Filters and run selection expose pressed state, replay exposes playback and position state, and the active mobile run scrolls into view. Nonessential motion is suppressed when the operating system requests reduced motion.

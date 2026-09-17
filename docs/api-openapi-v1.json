@@ -18,7 +18,7 @@
         "operationId": "readiness",
         "responses": {
           "200": {"description": "Event source is readable.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Readiness"}}}},
-          "503": {"description": "Event source is unavailable or malformed.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "503": {"description": "Not ready: the event source is unavailable or malformed, or the instance is draining.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
@@ -30,7 +30,7 @@
         "operationId": "listRuns",
         "responses": {
           "200": {"description": "Ordered run summaries.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunList"}}}},
-          "503": {"description": "Invalid source.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "503": {"description": "The instance is draining, at its concurrency bound, or the event source is invalid.", "headers": {"Retry-After": {"description": "Seconds to wait before retrying; present when the refusal is transient.", "schema": {"type": "integer", "minimum": 1}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
@@ -42,7 +42,8 @@
           "200": {"description": "Run summary.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunDetail"}}}},
           "400": {"description": "Identifier is empty or outside the allowed character set.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "404": {"description": "Run does not exist.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
-          "413": {"description": "Response exceeds 4 MiB.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "413": {"description": "Response exceeds 4 MiB.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "The instance is draining, at its concurrency bound, or the event source is invalid.", "headers": {"Retry-After": {"description": "Seconds to wait before retrying; present when the refusal is transient.", "schema": {"type": "integer", "minimum": 1}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
@@ -55,12 +56,12 @@
           "400": {"description": "Invalid run identifier.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "404": {"description": "Run does not exist.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "413": {"description": "Response exceeds 4 MiB.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
-          "503": {"description": "Event source is unavailable or malformed.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "503": {"description": "The instance is draining, at its concurrency bound, or the event source is invalid.", "headers": {"Retry-After": {"description": "Seconds to wait before retrying; present when the refusal is transient.", "schema": {"type": "integer", "minimum": 1}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
     "/api/v1/expression-states": {
-      "get": {"operationId": "expressionContract", "responses": {"200": {"description": "Expression states and transitions.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExpressionContract"}}}}}}
+      "get": {"operationId": "expressionContract", "responses": {"200": {"description": "Expression states and transitions.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExpressionContract"}}}}, "503": {"description": "The instance is draining, at its concurrency bound, or the event source is invalid.", "headers": {"Retry-After": {"description": "Seconds to wait before retrying; present when the refusal is transient.", "schema": {"type": "integer", "minimum": 1}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}}}
     }
   },
   "components": {
