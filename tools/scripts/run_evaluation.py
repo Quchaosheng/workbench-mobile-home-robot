@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import platform
 import re
 import shlex
 import signal
@@ -19,6 +20,7 @@ from _paths import enable_local_packages
 
 enable_local_packages()
 
+from release_eligibility import build_provenance, evaluate_eligibility
 from scenario_tools import TASK_PROFILES, materialize_scenario, validate_simulation_manifest
 from workbench.application.redaction import (
     REDACTION_MARKER_KEY,
@@ -753,6 +755,12 @@ def main() -> int:
     commit = git_commit()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summaries: list[dict[str, Any]] = []
+    # Provenance is built from the validated logs themselves, so it can be
+    # recomputed and checked later instead of being read back from a summary.
+    accepted_logs: dict[str, list[dict[str, Any]]] = {}
+    manifest_paths: dict[str, Path] = {
+        str(manifest["scenario_id"]): scenario_path for scenario_path, manifest in manifests
+    }
     print(f"Running {len(versions)} version(s) x {len(scenarios)} scenario(s) with {args.runner} runner")
 
     for version in versions:
@@ -771,6 +779,7 @@ def main() -> int:
                     seed=effective_seed,
                     commit=commit,
                 )
+                accepted_logs[run_id] = events
             else:
                 partial_path = output_path.with_name(f".{output_path.name}.partial")
                 partial_path.unlink(missing_ok=True)
@@ -791,6 +800,7 @@ def main() -> int:
                         seed=effective_seed,
                         commit=commit,
                     )
+                    accepted_logs[run_id] = events
                     partial_path.replace(output_path)
                 except ExternalRunnerTimeout as exc:
                     summaries.append(
@@ -804,6 +814,7 @@ def main() -> int:
                             "event_log": None,
                             "verification_status": "blocked",
                             "release_eligible": False,
+                            "eligibility_reasons": ["the runner was blocked; no evidence was produced"],
                             "blocked_reason": "runner_timeout",
                             "blocked_detail": str(exc),
                             "elapsed_s": round(exc.elapsed_s, 3),
@@ -826,22 +837,43 @@ def main() -> int:
                     "runner": args.runner,
                     "event_log": str(output_path),
                     "verification_status": final_verification["payload"]["status"],
-                    "release_eligible": args.runner == "external" and commit != "unknown",
                 }
             )
             print(f"  {run_id}: {summaries[-1]['verification_status']}")
 
     blocked = [entry for entry in summaries if entry["verification_status"] == "blocked"]
+    provenance = build_provenance(
+        runner=args.runner,
+        commit=commit,
+        environment={
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "machine": platform.machine(),
+        },
+        manifests=manifest_paths,
+        logs=accepted_logs,
+    )
+    # The summary repeats the verdict; it never establishes it. A reader can
+    # recompute the same answer with check_evaluation_eligibility.py.
+    verdict = evaluate_eligibility(runs=accepted_logs, provenance=provenance, manifests=manifest_paths)
+    for entry in summaries:
+        run_verdict = verdict["per_run"].get(entry["run_id"], {})
+        entry["release_eligible"] = bool(run_verdict.get("eligible", False))
+        entry["eligibility_reasons"] = list(run_verdict.get("reasons", []))
     summary = {
         "generated_at": datetime.now(UTC).isoformat(),
         "commit": commit,
         "runner": args.runner,
-        "release_eligible": args.runner == "external" and commit != "unknown" and not blocked,
-        "run_count": len(summaries),
         "blocked_count": len(blocked),
+        "release_eligible": verdict["eligible"] and not blocked,
+        "eligibility_reasons": verdict["reasons"],
+        "run_count": len(summaries),
         "runs": summaries,
     }
     (args.output_dir / "summary.json").write_text(json.dumps(redacted_summary(summary), indent=2), encoding="utf-8")
+    (args.output_dir / "provenance.json").write_text(
+        json.dumps(redacted_summary(provenance), indent=2, sort_keys=True), encoding="utf-8"
+    )
     if blocked:
         print(f"{len(blocked)} run(s) blocked; no release evidence was produced for them.")
     if args.runner == "scripted":

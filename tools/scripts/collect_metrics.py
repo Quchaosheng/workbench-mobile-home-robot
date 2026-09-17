@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from _jsonio import JsonInputError, load_json, load_jsonl
+from release_eligibility import (
+    discover_manifests,
+    evaluate_eligibility,
+    load_provenance,
+    manifest_search_dirs,
+)
 
 ALLOWED_ACTIONS = {"ask_confirm", "express", "grasp", "observe", "place", "stop"}
 EVENT_TYPES = {
@@ -113,6 +119,23 @@ def load_runs(run_dir: Path) -> dict[str, list[dict[str, Any]]]:
         metadata[run_id] = current_metadata
         runs[run_id] = sorted(events, key=lambda event: event["sequence_no"])
     return runs
+
+
+def _declared_runner(runs: dict[str, list[dict[str, Any]]], summary: dict[str, Any]) -> str:
+    """Report the runner the event logs declare, not the one a summary claims."""
+    declared = sorted(
+        {
+            str(event["evaluation"]["runner"])
+            for run in runs.values()
+            for event in run
+            if isinstance(event.get("evaluation"), dict) and event["evaluation"].get("runner")
+        }
+    )
+    if not declared:
+        return "unknown"
+    if len(declared) == 1:
+        return declared[0]
+    return "mixed:" + ",".join(declared)
 
 
 def run_metadata(runs: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
@@ -248,27 +271,53 @@ def replay_digest(events: list[dict[str, Any]]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def audit_false_completions(
-    runs: dict[str, list[dict[str, Any]]], audit_path: Path | None
-) -> tuple[int | None, bool, str | None]:
+def load_human_audit(audit_path: Path | None) -> dict[str, Any] | None:
+    """Read the human audit without interpreting it.
+
+    Interpretation belongs to ``release_eligibility.evaluate_eligibility``, so
+    metrics and the release report cannot drift into two different readings of
+    the same file.
+    """
     if audit_path is None:
-        return None, False, None
+        return None
     try:
         audit = load_json(audit_path)
     except JsonInputError as exc:
         raise RuntimeError(f"unreadable human audit: {exc}") from exc
-    decisions = audit.get("runs", {})
-    missing = sorted(set(runs) - set(decisions))
-    if missing:
-        raise RuntimeError(f"human audit is missing {len(missing)} run(s)")
+    if not isinstance(audit, dict):
+        raise RuntimeError(f"human audit is not an object: {audit_path}")
+    return audit
+
+
+def audit_false_completions(
+    runs: dict[str, list[dict[str, Any]]], audit_path: Path | None
+) -> tuple[int | None, bool, str | None]:
+    """Count false completions using the shared eligibility predicate."""
+    audit = load_human_audit(audit_path)
+    if audit is None:
+        return None, False, None
+    verdict = evaluate_eligibility(runs=runs, provenance=None, manifests=None, audit=audit)
+    decisions = audit.get("runs")
+    if not isinstance(decisions, dict) or set(runs) - set(decisions):
+        raise RuntimeError(f"human audit is missing {len(set(runs) - set(decisions or {}))} run(s)")
     false_completions = 0
     for run_id, events in runs.items():
         statuses = verification_statuses(events)
         claimed_complete = bool(statuses and statuses[-1] == "confirmed")
-        oracle_status = decisions[run_id].get("oracle_status")
-        if claimed_complete and oracle_status != "confirmed":
+        if claimed_complete and decisions[run_id].get("oracle_status") != "confirmed":
             false_completions += 1
-    return false_completions, True, audit.get("reviewed_by")
+    reviewed_by = audit.get("reviewed_by")
+    # Reviewer and timestamp are part of eligibility, not of this count, so an
+    # audit that cannot be attributed is reported as not reviewed.
+    complete = not any(
+        reason in verdict["reasons"]
+        for reason in (
+            "human audit is missing reviewer, timestamp or per-run oracle status",
+            "human audit does not cover every run",
+        )
+    )
+    attributed = reviewed_by.strip() if isinstance(reviewed_by, str) else ""
+    return false_completions, complete, attributed or None
 
 
 def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
@@ -293,6 +342,15 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
     )
     stable_hashes = sum(replay_digest(run) == replay_digest(list(reversed(run))) for run in runs.values())
     false_completions, audit_complete, reviewed_by = audit_false_completions(runs, audit_path)
+    # Eligibility is recomputed from the logs and the provenance record. The
+    # summary is consulted only to detect a disagreement, never to grant a pass.
+    provenance_path = run_dir.parent / "provenance.json"
+    provenance = None
+    if provenance_path.is_file():
+        try:
+            provenance = load_provenance(provenance_path)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            provenance = None
     run_task_ids = {run_id: task_id(run) for run_id, run in runs.items()}
     task_family_distribution = Counter(run_task_ids.values())
     task_family_vtcr = {}
@@ -328,6 +386,26 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
 
     summary_path = run_dir.parent / "summary.json"
     summary = _load_summary(summary_path)
+    # Eligibility is recomputed from the logs and the provenance record. The
+    # summary is consulted only to detect a disagreement, never to grant a pass.
+    verdict = evaluate_eligibility(
+        runs=runs,
+        provenance=provenance,
+        manifests=discover_manifests(manifest_search_dirs(run_dir)),
+        audit=load_human_audit(audit_path),
+    )
+    summary_claims = bool(summary.get("release_eligible", False))
+    if summary_claims and not verdict["eligible"]:
+        verdict = {
+            **verdict,
+            "reasons": sorted([*verdict["reasons"], "summary claims eligibility that the evidence does not support"]),
+        }
+    if verdict["eligible"] and summary and not summary_claims:
+        verdict = {
+            **verdict,
+            "reasons": sorted([*verdict["reasons"], "summary does not claim the eligibility the evidence supports"]),
+            "eligible": False,
+        }
     return {
         "false_completion_count": false_completions,
         "false_completion_reviewed": audit_complete,
@@ -383,8 +461,10 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
         "run_count": len(runs),
         "total_events": len(events),
         "run_dir": str(run_dir),
-        "runner": summary.get("runner", "unknown"),
-        "release_eligible": bool(summary.get("release_eligible", False)) and audit_complete,
+        "runner": _declared_runner(runs, summary),
+        "provenance_present": provenance is not None,
+        "release_eligible": bool(verdict["eligible"]),
+        "eligibility_reasons": verdict["reasons"],
     }
 
 

@@ -23,4 +23,4 @@ Evidence: `apps/dashboard/data/run-recovery.jsonl`
 
 The second attempt produces a new action result and fresh observation. Only then does the verifier emit `confirmed`. Replay retains the earlier refuted conclusion, so an operator can inspect both attempts rather than seeing a rewritten success-only history.
 
-Formal D7 review still needs 36 Gazebo runs with real logs and an independent false-completion audit. `tools/scripts/run_evaluation.py --runner external` is the integration boundary; `--runner scripted` always writes `release_eligible: false`.
+Formal D7 review still needs 36 Gazebo runs with real logs and an independent false-completion audit. `tools/scripts/run_evaluation.py --runner external` is the integration boundary; `--runner scripted` always writes `release_eligible: false`. Eligibility itself is recomputed from the logs and a provenance record rather than read from a summary; see [release eligibility](release-eligibility.md).

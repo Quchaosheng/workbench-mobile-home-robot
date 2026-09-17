@@ -73,6 +73,12 @@ def release_reasons(metrics: dict[str, Any]) -> list[str]:
     reasons = []
     if not metrics.get("release_eligible"):
         reasons.append("运行数据未标记为可发布的真实 runner 数据,或误判完成人工审核未完成")
+        # The gate recomputes eligibility from the event logs and the provenance
+        # record; naming the specific reasons here is what makes a refusal
+        # actionable instead of a single opaque sentence.
+        reasons.extend(f"发布资格被拒: {reason}" for reason in metrics.get("eligibility_reasons", []))
+    if metrics.get("provenance_present") is False:
+        reasons.append("缺少 provenance 记录,无法把事件日志绑定到源提交与场景清单")
     if metrics.get("false_completion_count") is None:
         reasons.append("误判完成尚未人工审核")
     elif metrics["false_completion_count"] != 0:
