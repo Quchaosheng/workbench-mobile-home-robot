@@ -1,0 +1,58 @@
+{
+  "issue": 101,
+  "human_owner": "Quchaosheng",
+  "objective": "Make application startup transactional so a failed component startup stops every component that already reached RUNNING, records an explicit failed state and operator diagnostics, and remains idempotent across repeated startup and shutdown calls.",
+  "allowed_paths": [
+    "libs/application/workbench/application/system_manager_v2.py",
+    "tests/unit/test_system_manager_lifecycle.py",
+    "docs/task_packets/application-101-transactional-startup.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/**"
+  ],
+  "acceptance": [
+    "startup records the ordered components that reached RUNNING in started_components",
+    "a component whose startup returns False or raises marks the manager state failed and prevents the manager from claiming running",
+    "every component that reached RUNNING is stopped in reverse order before the failure is returned",
+    "the component whose startup failed is also released, because it may have acquired resources before reporting failure",
+    "a component whose shutdown hook raises is marked ERROR and its name and error are preserved in rollback_failures for operator diagnosis",
+    "a shutdown that cannot release a component does not set the manager state to stopped",
+    "a component still in CREATED is never sent a shutdown it never paired with a startup",
+    "repeated startup of a running system and repeated shutdown of a stopped system are idempotent",
+    "a failed startup can be retried once the cause is corrected"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_system_manager_lifecycle.py -v",
+    "python3 -m ruff check libs/application/workbench/application/system_manager_v2.py tests/unit/test_system_manager_lifecycle.py",
+    "python3 -m ruff format --check libs/application/workbench/application/system_manager_v2.py tests/unit/test_system_manager_lifecycle.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/application-101-transactional-startup.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused lifecycle test output for first-component failure, mid-sequence rollback, a raising component, rollback failure, retry, repeated startup, repeated shutdown and shutdown failure",
+    "demonstration that the focused tests fail against the previous implementation and pass against the fix",
+    "full repository test and Task Packet gate output"
+  ],
+  "stop_conditions": [
+    "the fix requires changing the registration or lookup API used by existing callers",
+    "a supervision, restart-backoff or health-check policy is required, which is a separate design decision",
+    "an interfaces schema or libs/contracts change is required",
+    "a modification outside allowed_paths is required"
+  ]
+}
