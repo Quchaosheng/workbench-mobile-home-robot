@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import socket
 import sys
 import tempfile
@@ -268,6 +269,129 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(summary["status"], "future_status")
         self.assertEqual(summary["status_label"], "未知状态")
         self.assertEqual(summary["missing_evidence"], [])
+
+
+class NonFiniteJsonBoundaryTests(unittest.TestCase):
+    """Issue #183: a non-finite value must not survive the read-model boundary.
+
+    Python's decoder accepts bare NaN/Infinity and its encoder emits them again,
+    so the value survives a full round trip and only fails in a strict client -
+    after `/readyz` already claimed the source was usable.
+    """
+
+    @staticmethod
+    def _strict_loads(text: str) -> object:
+        return json.loads(
+            text,
+            parse_constant=lambda name: (_ for _ in ()).throw(ValueError(f"invalid JSON constant {name}")),
+        )
+
+    def _model(self, payload_value: object, *, nested: bool = False) -> tuple[DashboardReadModel, str]:
+        directory = tempfile.mkdtemp()
+        event = stored_event("run-nonfinite", 0, "observation")
+        event["payload"] = {"entity_id": "alpha", "entity_type": "block", "confidence": 0.5}
+        if nested:
+            event["payload"]["nested"] = {"deep": payload_value}
+        else:
+            event["payload"]["metric"] = payload_value
+        # json.dumps writes the bare token, which is what a broken producer emits.
+        path = Path(directory) / "run.jsonl"
+        path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        return DashboardReadModel(directory), directory
+
+    def test_all_three_non_finite_constants_are_rejected(self) -> None:
+        for name, value in (("NaN", float("nan")), ("Infinity", float("inf")), ("-Infinity", float("-inf"))):
+            with self.subTest(constant=name):
+                model, _ = self._model(value)
+                with self.assertRaisesRegex(ReadModelError, rf"non-standard JSON constant {re.escape(name)}"):
+                    model.list_runs()
+                self.assertFalse(model.ready())
+
+    def test_nested_non_finite_value_is_rejected(self) -> None:
+        model, _ = self._model(float("nan"), nested=True)
+        with self.assertRaisesRegex(ReadModelError, "non-standard JSON constant"):
+            model.list_runs()
+        self.assertFalse(model.ready())
+
+    def test_non_finite_source_is_not_cached_as_valid(self) -> None:
+        model, directory = self._model(float("nan"))
+        with self.assertRaises(ReadModelError):
+            model.list_runs()
+
+        # A corrected file must be readable, and the failed parse must not have
+        # left a poisoned cache entry behind.
+        event = stored_event("run-nonfinite", 0, "observation")
+        event["payload"] = {"entity_id": "alpha", "entity_type": "block", "confidence": 0.5}
+        Path(directory, "run.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+        runs = model.list_runs()
+        self.assertEqual([run["run_id"] for run in runs], ["run-nonfinite"])
+        self.assertTrue(model.ready())
+
+    def test_finite_control_still_loads_and_serves_strict_json(self) -> None:
+        model, _ = self._model(1.5)
+
+        events = model.list_events("run-nonfinite")
+        body = json.dumps(events, ensure_ascii=False, allow_nan=False)
+
+        self.assertEqual(self._strict_loads(body)[0]["payload"]["metric"], 1.5)
+        self.assertTrue(model.ready())
+
+    def test_non_finite_source_returns_503_while_health_stays_live(self) -> None:
+        directory = tempfile.mkdtemp()
+        event = stored_event("run-nonfinite", 0, "observation")
+        event["payload"] = {"entity_id": "alpha", "entity_type": "block", "confidence": float("nan")}
+        Path(directory, "run.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+        server = create_server("127.0.0.1", 0, data_dir=directory)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            with urllib.request.urlopen(f"{base_url}/healthz", timeout=2) as response:
+                self.assertEqual(response.status, 200)
+            for endpoint in ("/readyz", "/api/runs"):
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(f"{base_url}{endpoint}", timeout=2)
+                with caught.exception as response:
+                    self.assertEqual(response.code, 503)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_unencodable_payload_is_reported_without_echoing_it(self) -> None:
+        """A read model that cannot be encoded must not produce a truncated 200."""
+        secret = "do-not-leak-this-value"
+
+        class NonFiniteReadModel:
+            data_source = "injected"
+
+            def ready(self) -> bool:
+                return True
+
+            def list_runs(self) -> list[dict]:
+                return [{"run_id": "r1", "metric": float("nan"), "note": secret}]
+
+        server = create_server("127.0.0.1", 0)
+        server.RequestHandlerClass.read_model = NonFiniteReadModel()
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(f"{base_url}/api/runs", timeout=2)
+            with caught.exception as response:
+                self.assertEqual(response.code, 503)
+                body = response.read().decode("utf-8")
+
+            self.assertNotIn(secret, body)
+            payload = self._strict_loads(body)
+            self.assertEqual(payload["error"], "response_not_encodable")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
 
 class LoggingTests(unittest.TestCase):

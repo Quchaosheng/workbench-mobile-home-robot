@@ -97,7 +97,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _send_json(
         self, payload: object, status: HTTPStatus = HTTPStatus.OK, *, api_version: str | None = None
     ) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode()
+        try:
+            # allow_nan=False is what keeps the response parseable by a strict
+            # client. The default encoder emits bare NaN/Infinity, which is not
+            # JSON, so a browser's response.json() rejects the whole body while
+            # this server reports success.
+            body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
+        except (TypeError, ValueError):
+            # Handled before any header is written, so the client receives a
+            # complete error response instead of a truncated 200.
+            self._send_unencodable_response()
+            return
         if len(body) > MAX_RESPONSE_BYTES:
             status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE
             body = json.dumps(
@@ -109,6 +119,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         if api_version:
             self.send_header("X-API-Version", api_version)
+        self._send_security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_unencodable_response(self) -> None:
+        """Report a read model that cannot be encoded as strict JSON.
+
+        The payload is never echoed: it is the value that failed to encode, and
+        its contents are exactly what must not reach the client.
+        """
+        body = json.dumps(
+            {
+                "error": "response_not_encodable",
+                "message": "The read model contains a value that is not valid JSON.",
+            }
+        ).encode()
+        self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self._send_security_headers()
         self.end_headers()
         self.wfile.write(body)

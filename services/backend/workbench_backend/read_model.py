@@ -55,6 +55,10 @@ class _DuplicateJsonKey(ValueError):
     """Raised before JSON decoding can silently discard an object member."""
 
 
+class _NonFiniteJson(ValueError):
+    """Raised when a document uses a JSON constant that RFC 8259 forbids."""
+
+
 def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     for key, value in pairs:
@@ -62,6 +66,26 @@ def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise _DuplicateJsonKey(f"duplicate JSON key: {key!r}")
         payload[key] = value
     return payload
+
+
+def _reject_json_constant(name: str) -> None:
+    """Reject the bare NaN/Infinity tokens that RFC 8259 does not allow.
+
+    Python's decoder accepts them by default and the encoder emits them again,
+    so a non-finite value otherwise survives a full round trip and only fails in
+    the browser's strict `response.json()` - after `/readyz` already claimed the
+    source was usable.
+    """
+    raise _NonFiniteJson(f"the non-standard JSON constant {name} is not allowed")
+
+
+def load_strict_json(text: str) -> Any:
+    """Decode JSON with duplicate-key and non-standard-constant rejection."""
+    return json.loads(
+        text,
+        object_pairs_hook=_object_without_duplicates,
+        parse_constant=_reject_json_constant,
+    )
 
 
 def _validate_event_stream(events: list[Any], source: str) -> list[dict[str, Any]]:
@@ -162,12 +186,8 @@ class DashboardReadModel:
             if contents is None or stable_stat is None:
                 raise ReadModelError(f"event source changed while being read: {path.name}")
             try:
-                events = [
-                    json.loads(line, object_pairs_hook=_object_without_duplicates)
-                    for line in contents.splitlines()
-                    if line.strip()
-                ]
-            except _DuplicateJsonKey as exc:
+                events = [load_strict_json(line) for line in contents.splitlines() if line.strip()]
+            except (_DuplicateJsonKey, _NonFiniteJson) as exc:
                 raise ReadModelError(f"event log contains {exc}: {path.name}") from exc
             except json.JSONDecodeError as exc:
                 raise ReadModelError(f"event log is not valid JSONL: {path.name}") from exc
@@ -275,7 +295,7 @@ class RemoteDashboardReadModel(DashboardReadModel):
         if not 200 <= response.status < 300:
             raise ReadModelError(f"remote event source unavailable: {self.base_url}")
         try:
-            payload = json.loads(response.body, object_pairs_hook=_object_without_duplicates)
+            payload = load_strict_json(response.body)
         except _DuplicateJsonKey as exc:
             raise ReadModelError(f"remote event source returned {exc}: {self.base_url}") from exc
         except (UnicodeError, json.JSONDecodeError) as exc:

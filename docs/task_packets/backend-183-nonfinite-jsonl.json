@@ -1,0 +1,59 @@
+{
+  "issue": 183,
+  "human_owner": "Quchaosheng",
+  "objective": "Reject non-standard JSON constants at the backend read-model boundary and encode every response with strict JSON, so a non-finite value can neither make readiness claim a broken source is usable nor produce a response body a strict client cannot parse.",
+  "allowed_paths": [
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/server.py",
+    "tests/unit/test_dashboard_backend.py",
+    "docs/task_packets/backend-183-nonfinite-jsonl.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**"
+  ],
+  "acceptance": [
+    "local JSONL rejects NaN, positive infinity and negative infinity at every nesting depth before caching or summarizing a run",
+    "the remote event-source path uses the same strict decoding rule, so it cannot be weaker than the local one",
+    "a run whose source uses a non-standard constant is not cached as valid, and a corrected file is readable afterwards",
+    "every backend JSON response is encoded with allow_nan=False",
+    "a payload that cannot be encoded produces a stable 503 with no success headers already sent and without echoing the offending value",
+    "readiness and data APIs fail closed for a non-finite source while the liveness endpoint stays live",
+    "finite controls still load and every successful response parses with a strict JSON parser",
+    "duplicate-key and event-contract validation from the existing implementation are unchanged"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_dashboard_backend.py -v",
+    "python3 -m ruff check services/backend/workbench_backend tests/unit/test_dashboard_backend.py",
+    "python3 -m ruff format --check services/backend/workbench_backend tests/unit/test_dashboard_backend.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/backend-183-nonfinite-jsonl.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused boundary test output for all three non-finite constants, nested occurrences, cache behaviour after a correction, and the unencodable-response 503 path",
+    "demonstration that the focused tests fail against the previous implementation and pass against the fix",
+    "confirmation that the pre-existing dashboard backend tests still pass unchanged",
+    "full repository test and Task Packet gate output"
+  ],
+  "stop_conditions": [
+    "a non-standard JSON package or a response-format redesign is required",
+    "the fix requires changing the public API shape or error codes other than the new unencodable-response 503",
+    "an interfaces schema or libs/contracts change is required",
+    "a modification outside allowed_paths is required"
+  ]
+}
