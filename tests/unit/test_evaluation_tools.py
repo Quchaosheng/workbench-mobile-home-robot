@@ -1,6 +1,9 @@
 import json
+import os
 import sys
 import tempfile
+import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -20,8 +23,12 @@ from compare_evaluations import compare, wilson_interval
 from generate_report import load as load_metrics
 from generate_report import release_reasons
 from run_evaluation import (
+    EXTERNAL_STARTUP_GRACE_SECONDS,
     EvaluationInputError,
+    ExternalRunnerTimeout,
+    external_timeout_budget,
     load_scenario_manifests,
+    run_external,
     scripted_events,
     validate_event_log,
     validate_label,
@@ -629,6 +636,124 @@ class EvaluationPipelineTests(unittest.TestCase):
             durations({"run": [{"occurred_at": "2026-01-01T00:00:00Z"}, {"occurred_at": "2026-01-01T00:00:10Z"}]}),
             [10.0],
         )
+
+
+class ExternalRunnerBoundTests(unittest.TestCase):
+    """A declared scenario budget must bound the runner, not a global constant."""
+
+    def _manifest(self, timeout_s: int) -> Path:
+        directory = Path(tempfile.mkdtemp())
+        path = directory / "scenario.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "scenario_id": "probe-67",
+                    "seed": 5,
+                    "task_id": "task-place-red-block",
+                    "world_version": "WorkbenchSim-v0",
+                    "fault_type": "none",
+                    "timeout_s": timeout_s,
+                    "oracle_allowed": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_budget_derives_from_manifest_plus_documented_startup_grace(self) -> None:
+        self.assertEqual(external_timeout_budget({"timeout_s": 120}), 120 + EXTERNAL_STARTUP_GRACE_SECONDS)
+        self.assertNotEqual(external_timeout_budget({"timeout_s": 120}), 900)
+
+    def test_budget_rejects_missing_or_non_positive_timeouts(self) -> None:
+        for value in (None, 0, -5, True, "120", 1.5):
+            with self.subTest(timeout_s=value):
+                with self.assertRaises(EvaluationInputError):
+                    external_timeout_budget({"timeout_s": value})
+
+    def test_timed_out_runner_is_killed_as_a_process_tree(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        marker = directory / "child.pid"
+        runner = directory / "runner.py"
+        runner.write_text(
+            textwrap.dedent(
+                """
+                import os, subprocess, sys, time
+                child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+                open(sys.argv[1], "w").write(str(child.pid))
+                time.sleep(600)
+                """
+            ),
+            encoding="utf-8",
+        )
+        manifest = self._manifest(1)
+
+        started = time.monotonic()
+        with self.assertRaises(ExternalRunnerTimeout) as caught:
+            run_external(
+                f"{sys.executable} {runner} {marker}",
+                manifest,
+                directory / "out.jsonl",
+                1005,
+                "v-test",
+                timeout_s=1,
+                scenario_id="probe-67",
+            )
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 20, "the runner must stop at its budget, not the old 900s constant")
+        self.assertEqual(caught.exception.scenario_id, "probe-67")
+        self.assertEqual(caught.exception.budget_s, 1)
+        self.assertLess(caught.exception.elapsed_s, 20)
+
+        child_pid = int(marker.read_text(encoding="utf-8"))
+        deadline = time.monotonic() + 10
+        alive = True
+        while time.monotonic() < deadline:
+            try:
+                os.kill(child_pid, 0)
+            except (ProcessLookupError, PermissionError):
+                alive = False
+                break
+            time.sleep(0.1)
+        self.assertFalse(alive, f"child pid {child_pid} survived the timeout; the process tree was not terminated")
+
+    def test_timeout_message_names_scenario_budget_and_command(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        runner = directory / "sleeper.py"
+        runner.write_text("import time; time.sleep(600)", encoding="utf-8")
+
+        with self.assertRaises(ExternalRunnerTimeout) as caught:
+            run_external(
+                f"{sys.executable} {runner}",
+                self._manifest(1),
+                directory / "out.jsonl",
+                1005,
+                "v-test",
+                timeout_s=1,
+                scenario_id="probe-67",
+            )
+        message = str(caught.exception)
+        self.assertIn("probe-67", message)
+        self.assertIn("budget 1s", message)
+        self.assertIn(str(runner), message)
+
+    def test_failed_runner_raises_without_leaving_output(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        output = directory / "out.jsonl"
+        runner = directory / "failing.py"
+        runner.write_text("import sys; sys.exit(3)", encoding="utf-8")
+
+        with self.assertRaisesRegex(RuntimeError, r"failed \(3\)"):
+            run_external(
+                f"{sys.executable} {runner}",
+                self._manifest(5),
+                output,
+                1005,
+                "v-test",
+                timeout_s=5,
+                scenario_id="probe-67",
+            )
+        self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

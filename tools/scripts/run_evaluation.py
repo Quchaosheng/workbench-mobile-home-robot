@@ -6,7 +6,10 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
+import time
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -36,10 +39,24 @@ VERIFICATION_STATUSES = {"confirmed", "insufficient_evidence", "refuted"}
 MAX_EVENT_LOG_BYTES = 10 * 1024 * 1024
 MAX_EVENTS_PER_RUN = 10_000
 TIMESTAMP_WINDOW_SECONDS = 365 * 24 * 60 * 60
+# Startup grace covers interpreter and adapter import time before the scenario
+# itself begins; it is added to the manifest budget rather than replacing it.
+EXTERNAL_STARTUP_GRACE_SECONDS = 30
+EXTERNAL_TERMINATION_GRACE_SECONDS = 5.0
 
 
 class EvaluationInputError(ValueError):
     """Raised before execution when an evaluation input is unsafe or ambiguous."""
+
+
+class ExternalRunnerTimeout(RuntimeError):
+    """Raised when an external runner exceeds its manifest-derived budget."""
+
+    def __init__(self, message: str, *, scenario_id: str, elapsed_s: float, budget_s: int) -> None:
+        super().__init__(message)
+        self.scenario_id = scenario_id
+        self.elapsed_s = elapsed_s
+        self.budget_s = budget_s
 
 
 def parse_rfc3339(value: Any, *, field: str, path: Path, line_number: int, event_id: Any) -> datetime:
@@ -580,7 +597,66 @@ def validate_event_log(
     return events
 
 
-def run_external(command_template: str, manifest_path: Path, output_path: Path, seed: int, version: str) -> None:
+def external_timeout_budget(manifest: dict[str, Any]) -> int:
+    """Derive the runner wall-clock budget from the manifest plus startup grace."""
+    timeout_s = manifest.get("timeout_s")
+    if not isinstance(timeout_s, int) or isinstance(timeout_s, bool) or timeout_s <= 0:
+        raise EvaluationInputError(f"scenario manifest timeout_s must be a positive integer: {timeout_s!r}")
+    return timeout_s + EXTERNAL_STARTUP_GRACE_SECONDS
+
+
+def _terminate_process_group(process: subprocess.Popen[Any]) -> None:
+    """Stop a runner and its descendants deterministically on Linux and Windows."""
+    if process.poll() is None:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+        else:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+    try:
+        process.wait(timeout=EXTERNAL_TERMINATION_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+        else:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+        try:
+            process.wait(timeout=EXTERNAL_TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def run_external(
+    command_template: str,
+    manifest_path: Path,
+    output_path: Path,
+    seed: int,
+    version: str,
+    *,
+    timeout_s: int,
+    scenario_id: str,
+) -> None:
     substitutions = {
         "manifest": str(manifest_path.resolve()),
         "output": str(output_path.resolve()),
@@ -591,20 +667,37 @@ def run_external(command_template: str, manifest_path: Path, output_path: Path, 
         command = command_template.format(**substitutions)
     except (KeyError, ValueError) as exc:
         raise EvaluationInputError(f"invalid runner command template: {exc}") from exc
+    argv: Sequence[str] = shlex.split(command, posix=os.name != "nt")
+    started = time.monotonic()
     try:
-        result = subprocess.run(
-            shlex.split(command, posix=os.name != "nt"),
-            capture_output=True,
-            check=False,
+        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        process = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=900,
+            start_new_session=os.name != "nt",
+            creationflags=creation_flags,
         )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("external runner timed out after 900 seconds") from exc
     except OSError as exc:
         raise RuntimeError(f"external runner could not start: {exc}") from exc
-    if result.returncode != 0:
-        raise RuntimeError(f"external runner failed ({result.returncode}): {result.stderr.strip()}")
+    try:
+        _stdout, stderr = process.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _terminate_process_group(process)
+        elapsed = time.monotonic() - started
+        raise ExternalRunnerTimeout(
+            (
+                f"external runner for {scenario_id} timed out after {elapsed:.1f}s "
+                f"(budget {timeout_s}s including {EXTERNAL_STARTUP_GRACE_SECONDS}s startup grace); "
+                f"command: {command}"
+            ),
+            scenario_id=scenario_id,
+            elapsed_s=elapsed,
+            budget_s=timeout_s,
+        ) from None
+    if process.returncode != 0:
+        raise RuntimeError(f"external runner failed ({process.returncode}): {(stderr or '').strip()}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -659,7 +752,15 @@ def main() -> int:
                 partial_path = output_path.with_name(f".{output_path.name}.partial")
                 partial_path.unlink(missing_ok=True)
                 try:
-                    run_external(args.runner_command, scenario_path, partial_path, effective_seed, version)
+                    run_external(
+                        args.runner_command,
+                        scenario_path,
+                        partial_path,
+                        effective_seed,
+                        version,
+                        timeout_s=external_timeout_budget(manifest),
+                        scenario_id=manifest["scenario_id"],
+                    )
                     events = validate_event_log(
                         partial_path,
                         run_id,
@@ -668,7 +769,28 @@ def main() -> int:
                         commit=commit,
                     )
                     partial_path.replace(output_path)
+                except ExternalRunnerTimeout as exc:
+                    summaries.append(
+                        {
+                            "run_id": run_id,
+                            "version": version,
+                            "scenario_id": manifest["scenario_id"],
+                            "seed": effective_seed,
+                            "commit": commit,
+                            "runner": args.runner,
+                            "event_log": None,
+                            "verification_status": "blocked",
+                            "release_eligible": False,
+                            "blocked_reason": "runner_timeout",
+                            "blocked_detail": str(exc),
+                            "elapsed_s": round(exc.elapsed_s, 3),
+                            "timeout_s": exc.budget_s,
+                        }
+                    )
+                    print(f"  {run_id}: blocked (runner_timeout after {exc.elapsed_s:.1f}s)")
+                    continue
                 finally:
+                    # A timed out or failed runner must never leave promotable output.
                     partial_path.unlink(missing_ok=True)
             final_verification = [event for event in events if event["event_type"] == "verification"][-1]
             summaries.append(
@@ -686,19 +808,24 @@ def main() -> int:
             )
             print(f"  {run_id}: {summaries[-1]['verification_status']}")
 
+    blocked = [entry for entry in summaries if entry["verification_status"] == "blocked"]
     summary = {
         "generated_at": datetime.now(UTC).isoformat(),
         "commit": commit,
         "runner": args.runner,
-        "release_eligible": args.runner == "external" and commit != "unknown",
+        "release_eligible": args.runner == "external" and commit != "unknown" and not blocked,
         "run_count": len(summaries),
+        "blocked_count": len(blocked),
         "runs": summaries,
     }
     (args.output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if blocked:
+        print(f"{len(blocked)} run(s) blocked; no release evidence was produced for them.")
     if args.runner == "scripted":
         print("Scripted fixtures completed. These runs test the pipeline and are not release evidence.")
-    print(f"Wrote {len(summaries)} validated event logs to {args.output_dir}")
-    return 0
+    validated_count = len(summaries) - len(blocked)
+    print(f"Wrote {validated_count} validated event log(s) to {args.output_dir}")
+    return 1 if blocked else 0
 
 
 if __name__ == "__main__":

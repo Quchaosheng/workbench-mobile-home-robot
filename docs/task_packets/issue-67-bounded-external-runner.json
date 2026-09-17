@@ -1,0 +1,38 @@
+{
+  "issue": 67,
+  "human_owner": "Quchaosheng",
+  "objective": "Bound external evaluation runners by the manifest timeout and terminate the whole process group.",
+  "allowed_paths": [
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_evaluation_tools.py",
+    "docs/task_packets/issue-67-bounded-external-runner.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "sim/scenarios/**"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**"
+  ],
+  "acceptance": [
+    "external timeout derives from the manifest timeout plus a documented startup grace",
+    "a timed out runner leaves no orphaned child process",
+    "partial output is deleted and never promoted to a validated event log",
+    "timeout reports the runner command, scenario id and elapsed seconds"
+  ],
+  "commands": [
+    "make test",
+    "make scenario-check"
+  ],
+  "evidence": [
+    "pytest output for tests/unit/test_evaluation_tools.py",
+    "orphan check output after a forced timeout"
+  ],
+  "stop_conditions": [
+    "interface conflict",
+    "missing fixture",
+    "platform specific process semantics"
+  ]
+}
