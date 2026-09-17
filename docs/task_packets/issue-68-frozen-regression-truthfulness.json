@@ -1,0 +1,71 @@
+{
+  "issue": 68,
+  "human_owner": "Quchaosheng",
+  "objective": "Prove that the frozen regression runner never reports a placeholder pass when no simulator executed, and that skipped execution cannot satisfy a release gate.",
+  "decision_supported": "Can an operator rely on the frozen scenario matrix result as truthful evidence of executed simulation, rather than manufactured success?",
+  "allowed_paths": [
+    "docs/task_packets/issue-68-frozen-regression-truthfulness.json",
+    "docs/evaluation/issue-68-frozen-regression-evidence.md"
+  ],
+  "read_only_paths": [
+    "tests/regression/run_frozen_scenarios.py",
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_sim_cli.py",
+    ".github/workflows/ci.yml",
+    "sim/scenarios/frozen/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "robot/control/**",
+    "firmware/**",
+    "sim/**",
+    "services/**",
+    "apps/**",
+    "deploy/**",
+    ".github/**"
+  ],
+  "input_refs": [
+    "tests/regression/run_frozen_scenarios.py",
+    "tools/scripts/sim_cli.py",
+    ".github/workflows/ci.yml",
+    "tests/unit/test_sim_cli.py"
+  ],
+  "outputs": [
+    "Recorded reproduction evidence that absent Gazebo yields NOT_EXECUTED, exit code 2, and no placeholder marker or hard-coded success rate.",
+    "Recorded CI evidence that a skipped frozen matrix cannot satisfy the release gate."
+  ],
+  "acceptance": [
+    "Normal: with no Gazebo adapter configured the frozen matrix reports NOT_EXECUTED for every scenario and exits 2; evidenced by the recorded command output and tests/unit/test_sim_cli.py.",
+    "Boundary: the summary contains no placeholder marker and no hard-coded VTCR or success rate; evidenced by the recorded grep assertions and the CI step.",
+    "Failure: a missing simulator is never reported as pass; evidenced by the assertion that the process exit code is 2 and by the CI gate.",
+    "Regression: the compatibility entry point delegates to the shared runner implementation instead of a stub."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-68-frozen-regression-truthfulness.json",
+    "python3 tests/regression/run_frozen_scenarios.py --version evidence --runner gazebo --output-dir runs/evidence-frozen",
+    "python3 -m pytest tests/unit/test_sim_cli.py -q",
+    "make scenario-check",
+    "make test",
+    "make context-check"
+  ],
+  "evidence": [
+    "The recorded run exits 2 and prints NOT_EXECUTED with the reason that no Gazebo adapter is configured; reproduced by tests/unit/test_sim_cli.py::test_frozen_regression_without_gazebo_exits_nonzero_without_placeholder_metrics.",
+    "The recorded summary contains neither a placeholder marker nor a hard-coded success rate.",
+    "tests/unit/test_sim_cli.py asserts exit code 2 and the absence of placeholder metrics.",
+    ".github/workflows/ci.yml asserts the same properties in the release gate."
+  ],
+  "stop_conditions": [
+    "A placeholder or hard-coded success metric is still emitted.",
+    "Skipped execution can satisfy a release gate.",
+    "Making the runner truthful requires changing shared contracts or robot-control, firmware, simulation or CI paths outside allowed_paths."
+  ],
+  "max_iterations": 4,
+  "data_classification": "Repository-internal test and CI configuration plus non-sensitive command output.",
+  "model_policy": "Use only repository evidence; do not add a simulator or relax any existing gate.",
+  "risks_and_fallbacks": [
+    "The runner remains unable to execute Gazebo in this container; that is the expected truthful outcome, not a defect.",
+    "Rollback consists of reverting the evidence commit."
+  ]
+}
