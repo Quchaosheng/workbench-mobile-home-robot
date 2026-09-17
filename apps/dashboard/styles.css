@@ -1062,6 +1062,56 @@ svg {
   border-top: 1px solid var(--line);
 }
 
+.execution-claims {
+  margin: 0 16px;
+  border-top: 1px solid var(--line);
+}
+
+.execution-claim-table {
+  display: grid;
+  gap: 5px;
+}
+
+.execution-claim-row {
+  display: grid;
+  align-items: center;
+  padding: 7px 8px;
+  border-left: 3px solid #7d9299;
+  background: var(--surface-subtle);
+  grid-template-columns: minmax(70px, 0.9fr) minmax(96px, 1.2fr) minmax(96px, 1.2fr) minmax(0, 0.8fr);
+  gap: 7px;
+  font-size: 9px;
+}
+
+.execution-claim-row strong,
+.execution-claim-row span,
+.execution-claim-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-claim-row small {
+  color: var(--muted);
+}
+
+.execution-claim-awaiting_observation {
+  border-left-color: var(--amber);
+}
+
+.execution-claim-unverified {
+  border-left-color: #7d9299;
+}
+
+.execution-claim-supported {
+  border-left-color: var(--green);
+}
+
+.execution-claim-contradicted {
+  border-left-color: var(--red);
+}
+
 .route-decision-head {
   display: flex;
   align-items: baseline;

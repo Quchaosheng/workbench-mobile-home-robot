@@ -120,7 +120,14 @@ function describeEvent(event) {
     case "action_request":
       return `${payload.action_type || "action"} · ${payload.target_id || "--"}`;
     case "action_result":
-      return [payload.status || "unknown", payload.entity_id, payload.resulting_location, payload.detail]
+      return [
+        payload.outcome || payload.status || "unknown",
+        payload.dispatch_state ? `下发 ${payload.dispatch_state}` : "",
+        payload.device_state ? `设备 ${payload.device_state}` : "",
+        payload.entity_id,
+        payload.resulting_location ? `声称 ${payload.resulting_location}` : "",
+        payload.error_reason || payload.detail,
+      ]
         .filter(Boolean)
         .join(" · ");
     case "verification":
@@ -266,45 +273,141 @@ function buildWorkbenchState(events, cursor) {
   const taskGraph = [...visible].reverse().find((event) => event.event_type === "task_graph");
   const actionTargets = new Map();
   const entities = new Map();
+  const observations = [];
+  const claims = [];
   visible.forEach((event) => {
     const payload = event.payload || {};
     if (event.event_type === "observation" && payload.entity_id) {
       const previous = entities.get(payload.entity_id) || {};
       const rawConfidence = payload.confidence;
+      // An observation without a spatial claim is not evidence of absence: the
+      // last observed location survives until a newer observation replaces it.
+      const location = payload.location || previous.location || null;
       entities.set(payload.entity_id, {
         ...previous,
         entity_id: payload.entity_id,
         entity_type: entityType(payload),
         pose: payload.pose,
+        location,
         attributes: payload.attributes && typeof payload.attributes === "object" ? { ...payload.attributes } : {},
         confidence: Number.isFinite(rawConfidence) ? clamp(rawConfidence, 0, 1) : null,
       });
+      observations.push({ entity_id: payload.entity_id, sequence_no: event.sequence_no, location });
     }
     if (event.event_type === "action_request" && payload.action_id && payload.target_id) {
       actionTargets.set(payload.action_id, payload.target_id);
     }
-    if (event.event_type === "action_result" && payload.status === "succeeded" && payload.resulting_location) {
+    if (event.event_type === "action_result") {
+      // An action result is execution evidence, never observed world truth. It
+      // records what the robot attempted and whether the device confirmed it;
+      // only an accepted observation may move an entity on the map.
       const entityId = payload.entity_id || actionTargets.get(payload.action_id);
       if (entityId) {
-        const previous = entities.get(entityId) || { entity_id: entityId, entity_type: "object", confidence: null };
-        entities.set(entityId, { ...previous, location: payload.resulting_location });
+        claims.push({
+          entity_id: entityId,
+          action_id: payload.action_id || null,
+          sequence_no: event.sequence_no,
+          outcome: payload.outcome || payload.status || "unknown",
+          dispatch_state: payload.dispatch_state || null,
+          device_state: payload.device_state || null,
+          claimed_location: payload.resulting_location || null,
+          error_reason: payload.error_reason || payload.detail || null,
+          occurred_at: event.occurred_at,
+          evidence_refs: event.evidence_refs || [],
+        });
       }
     }
+  });
+  const nextClaimSequence = (claim) =>
+    claims.reduce(
+      (earliest, candidate) =>
+        candidate.entity_id === claim.entity_id &&
+        candidate.sequence_no > claim.sequence_no &&
+        (earliest === null || candidate.sequence_no < earliest)
+          ? candidate.sequence_no
+          : earliest,
+      null,
+    );
+  const executionClaims = claims.map((claim) => {
+    // A claim is judged only inside its own outcome window: observations after
+    // this action and before the entity's next action result. A later placement
+    // supersedes an earlier hold instead of contradicting it.
+    const nextAction = nextClaimSequence(claim);
+    const window = observations.filter(
+      (entry) =>
+        entry.entity_id === claim.entity_id &&
+        entry.sequence_no > claim.sequence_no &&
+        (nextAction === null || entry.sequence_no < nextAction),
+    );
+    const locating = window.find((entry) => entry.location);
+    let verification = "awaiting_observation";
+    if (!claim.claimed_location) verification = "no_spatial_claim";
+    else if (locating) verification = locating.location === claim.claimed_location ? "supported" : "contradicted";
+    // A window that already closed without a locating observation is "position
+    // not observed"; only the newest claim of an entity may still await one.
+    else if (nextAction !== null || window.length) verification = "unverified";
+    return { ...claim, observed_location: locating ? locating.location : null, verification };
   });
   return {
     taskId: accepted?.payload?.task_id || "task-place-red-block",
     taskGraph: taskGraph?.payload || {},
     entities: [...entities.values()],
+    executionClaims,
   };
+}
+
+const executionClaimLabels = {
+  awaiting_observation: "等待观测",
+  unverified: "位置未观测",
+  no_spatial_claim: "无空间结论",
+  supported: "观测支持",
+  contradicted: "观测矛盾",
+};
+
+function executionClaimSummary(claim) {
+  const outcome = claim.outcome || "unknown";
+  const dispatch = claim.dispatch_state ? ` · 下发 ${claim.dispatch_state}` : "";
+  const device = claim.device_state ? ` · 设备 ${claim.device_state}` : "";
+  return `${outcome}${dispatch}${device}`;
+}
+
+function renderExecutionClaims(workbench) {
+  const panel = get("execution-claims");
+  const claims = workbench.executionClaims || [];
+  if (!claims.length) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="route-decision-head"><span>动作执行证据</span><small>执行结论不等于观测事实</small></div>
+    <div class="execution-claim-table" role="table" aria-label="动作执行证据与观测核验">
+      ${claims
+        .map((claim) => {
+          const label = entityLabels[claim.entity_id] || claim.entity_id;
+          const verification = executionClaimLabels[claim.verification] || claim.verification;
+          const claimText = claim.claimed_location ? `声称 ${escapeHtml(claim.claimed_location)}` : "无空间结论";
+          const observedText = claim.observed_location ? `观测 ${escapeHtml(claim.observed_location)}` : "位置未观测";
+          return `<div class="execution-claim-row execution-claim-${claim.verification}" role="row">
+            <strong>${escapeHtml(label)}</strong>
+            <span class="execution-claim-outcome">${escapeHtml(executionClaimSummary(claim))}</span>
+            <span class="execution-claim-location">${claimText} · ${observedText}</span>
+            <small>${escapeHtml(verification)}</small>
+          </div>`;
+        })
+        .join("")}
+    </div>`;
 }
 
 function entityVisual(entity, index, extraClass = "") {
   const position = destinationPosition(entity.location, index) || posePosition(entity, index);
   const opacity = entity.confidence == null ? 0.42 : Math.max(0.35, entity.confidence);
   const label = entityLabels[entity.entity_id] || entity.entity_id.replaceAll("_", " ");
+  const locationText = entity.location ? ` · ${escapeHtml(entity.location)}` : " · 位置未观测";
   return `<span class="map-entity map-entity-${escapeHtml(entity.entity_type)} ${extraClass}"
     data-left="${position.left}" data-top="${position.top}" data-opacity="${opacity}"
-    title="${escapeHtml(label)}${entity.location ? ` · ${escapeHtml(entity.location)}` : ""}">${escapeHtml(label)}</span>`;
+    title="${escapeHtml(label)}${locationText}">${escapeHtml(label)}</span>`;
 }
 
 function parcelIdentityLabel(attributes) {
@@ -448,6 +551,7 @@ function renderWorkbench(events, cursor) {
     ? workbench.entities.map((entity, index) => entityVisual(entity, index)).join("")
     : '<span class="map-empty">等待实体观测</span>';
   applyEntityPositions(get("map-entities"));
+  renderExecutionClaims(workbench);
   renderParcelDecisions(workbench);
 
   const confidences = workbench.entities

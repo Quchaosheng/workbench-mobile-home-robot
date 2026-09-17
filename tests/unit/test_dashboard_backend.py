@@ -148,7 +148,11 @@ class ReadModelTests(unittest.TestCase):
         self.assertIn("function applyEntityPositions", script)
         self.assertIn('data-left="${position.left}"', script)
         self.assertNotIn('style="left:${position.left}', script)
-        self.assertIn('payload.status === "succeeded" && payload.resulting_location', script)
+        # Issue #179: an action result is execution evidence. It must never be
+        # the branch that assigns an entity location on the map.
+        self.assertIn("function renderExecutionClaims", script)
+        self.assertNotIn('payload.status === "succeeded"', script)
+        self.assertNotIn("entities.set(entityId, { ...previous, location: payload.resulting_location })", script)
         self.assertIn('"task-sort-parcels"', script)
         self.assertIn("pickup_shelf", script)
         self.assertIn("quarantine_bin", script)

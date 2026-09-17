@@ -12,6 +12,17 @@ Parcel runs include a read-only decision table that shows the observed label and
 condition, the policy-derived destination, and whether the actual placement
 matches that decision.
 
+Every run also shows an execution-claims table that keeps action results separate
+from observed world state. A row reports the canonical `outcome`,
+`dispatch_state`, and `device_state`, the location the action *claimed*, and the
+location that was actually *observed*. Only an accepted `observation` event may
+move an entity on the map; an action result never does. A claim reads
+`awaiting observation` until the first observation of that entity after the
+action, `unverified` when its window closed without one, `supported` when the
+observation agrees, and `contradicted` when it disagrees. A claim is judged only
+inside the window between its action result and that entity's next action result,
+so a later placement supersedes an earlier hold instead of contradicting it.
+
 The HTTP boundary deliberately implements `GET` only. `POST`, `PUT`, `PATCH`, and `DELETE` return `405 read_only`; there is no ROS, MCU, motion, or emergency-stop publisher in this application.
 
 Vendored UI dependency: Lucide `0.468.0`, ISC license in `vendor/LUCIDE-LICENSE.txt`.
