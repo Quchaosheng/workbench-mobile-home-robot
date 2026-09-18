@@ -36,5 +36,12 @@ Templates, scripted fixtures, estimates, and verbal updates never move a gate to
 | PMO10 project closeout | [Closeout template](closeout-template.md) |
 | PMO11 quality metrics | [Quality metrics](quality-metrics.md) |
 | PMO12 later projects | [Future work](future-work.md) |
+| PMO13 readiness and exit gates | [Definition of Ready](definition-of-ready.md) and [Exit gate](exit-gate.md) |
+
+The [Definition of Ready](definition-of-ready.md) states what an issue body must
+carry before it is assigned, and the [Exit gate](exit-gate.md) states what a pull
+request body must carry before it is reviewed. Both are checked by
+`python3 tools/scripts/check_ready_gate.py`, and neither grants merge, release or
+physical-validation authority.
 
 Update links and evidence before changing a status. The human Project Owner owns Go/No-Go, scope, release, and claims based on physical evidence.

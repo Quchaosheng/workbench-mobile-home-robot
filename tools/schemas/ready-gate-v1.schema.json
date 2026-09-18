@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://workbench-1.local/schemas/ready-gate-v1.schema.json",
+  "title": "Workbench-1 readiness and exit gate v1",
+  "description": "The single source of truth for the sections and checklist items that a pull request body must carry. The detector reads this file, the committed templates must contain exactly these headings, and a unit test pins the three together so a template edit and a detector edit cannot drift apart.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "gate_version",
+    "applies_to",
+    "authority",
+    "required_sections",
+    "required_checklist",
+    "forbidden_claims",
+    "issue_template",
+    "required_issue_sections"
+  ],
+  "properties": {
+    "gate_version": {
+      "type": "string",
+      "const": "workbench-ready-gate-v1"
+    },
+    "applies_to": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*",
+      "description": "Which issues and pull requests this gate covers."
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grants",
+        "does_not_grant"
+      ],
+      "properties": {
+        "grants": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
+          "description": "What a passing verdict authorises. Review only; never merge, release or physical validation."
+        },
+        "does_not_grant": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
+          "description": "What a passing verdict explicitly does not authorise."
+        }
+      }
+    },
+    "required_sections": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "heading",
+          "requires",
+          "reason"
+        ],
+        "properties": {
+          "heading": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
+          "requires": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "body_text",
+                "evidence_reference",
+                "command",
+                "commit_reference",
+                "path_reference",
+                "failure_path"
+              ]
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          }
+        }
+      }
+    },
+    "required_checklist": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item",
+          "requires",
+          "reason"
+        ],
+        "properties": {
+          "item": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
+          "requires": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "body_text",
+                "evidence_reference",
+                "command",
+                "commit_reference",
+                "path_reference",
+                "failure_path"
+              ]
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          }
+        }
+      }
+    },
+    "forbidden_claims": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pattern",
+          "reason",
+          "sample_violation"
+        ],
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
+          "sample_violation": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "description": "A literal sentence the pattern must match; the unit tests read it so a rule cannot exist without an executable rejected case."
+          }
+        }
+      }
+    },
+    "required_issue_sections": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Definition-of-Ready fields an Issue body must carry before the issue is assigned.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "heading",
+          "requires",
+          "reason"
+        ],
+        "properties": {
+          "heading": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
+          "requires": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "body_text",
+                "evidence_reference",
+                "command",
+                "commit_reference",
+                "path_reference",
+                "failure_path"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "issue_template": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*",
+      "description": "Repository-relative path to the committed Issue form. A unit test reads it and fails when the form drifts from required_issue_sections."
+    }
+  }
+}

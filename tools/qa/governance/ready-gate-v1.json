@@ -1,0 +1,208 @@
+{
+  "gate_version": "workbench-ready-gate-v1",
+  "applies_to": "Every implementation pull request for the #309 multi-scenario epic and its child issues, and any other change that opts in by referencing this file. It does not replace AGENTS.md, the Task Packet validator, or protected-branch review.",
+  "authority": {
+    "grants": [
+      "a reviewer-facing statement that the committed readiness fields are present",
+      "a deterministic reproduction of that statement by a command"
+    ],
+    "does_not_grant": [
+      "merge authority",
+      "release authority",
+      "physical validation authority",
+      "authority to waive a required check or human approval"
+    ]
+  },
+  "required_sections": [
+    {
+      "heading": "Related Issue",
+      "requires": [
+        "body_text",
+        "commit_reference"
+      ],
+      "reason": "A change without an issue has no agreed acceptance criteria to check."
+    },
+    {
+      "heading": "What changed",
+      "requires": [
+        "body_text"
+      ],
+      "reason": "A reviewer must be able to read the intent without opening the diff first."
+    },
+    {
+      "heading": "Interfaces affected",
+      "requires": [
+        "body_text",
+        "path_reference"
+      ],
+      "reason": "AGENTS.md routes interface changes to three human approvals, so an empty answer must be explicit rather than implied."
+    },
+    {
+      "heading": "Tests and commands",
+      "requires": [
+        "command",
+        "evidence_reference"
+      ],
+      "reason": "Every deterministic behaviour change needs a command and its recorded result."
+    },
+    {
+      "heading": "Failure path exercised",
+      "requires": [
+        "failure_path",
+        "evidence_reference"
+      ],
+      "reason": "A change that only shows the happy path has not shown that the new rejection fires."
+    },
+    {
+      "heading": "Evidence",
+      "requires": [
+        "evidence_reference"
+      ],
+      "reason": "AGENTS.md forbids claiming completion without a command, a result and an evidence reference."
+    },
+    {
+      "heading": "Risks and rollback",
+      "requires": [
+        "body_text"
+      ],
+      "reason": "A reviewer needs the disable path before the change lands, not after it breaks."
+    }
+  ],
+  "required_checklist": [
+    {
+      "item": "I changed only the paths the Task Packet allows.",
+      "requires": [
+        "body_text"
+      ],
+      "reason": "The Task Packet is the write boundary for the change."
+    },
+    {
+      "item": "The Task Packet matches the final diff.",
+      "requires": [
+        "commit_reference"
+      ],
+      "reason": "A packet that describes a different change than the diff is not a contract."
+    },
+    {
+      "item": "Tests and contract checks pass on this commit.",
+      "requires": [
+        "command",
+        "evidence_reference"
+      ],
+      "reason": "Passing checks on an earlier commit do not describe this one."
+    },
+    {
+      "item": "I covered normal and failure behaviour.",
+      "requires": [
+        "failure_path"
+      ],
+      "reason": "Fail-closed boundaries are the point of this repository."
+    },
+    {
+      "item": "I updated examples and docs when an interface changed.",
+      "requires": [
+        "body_text"
+      ],
+      "reason": "CONTRIBUTING.md requires the schema, the model, the example and the docs to move together."
+    },
+    {
+      "item": "I did not add secrets, private data or unreviewed assets.",
+      "requires": [
+        "body_text"
+      ],
+      "reason": "SECURITY.md forbids committing credentials and licence-encumbered assets."
+    }
+  ],
+  "forbidden_claims": [
+    {
+      "pattern": "\\bmerges?\\b[^.\\n]*\\b(automatically|without review)\\b",
+      "reason": "A readiness verdict never authorises an automatic merge.",
+      "sample_violation": "This pull request merges automatically once the checks pass."
+    },
+    {
+      "pattern": "\\bapproved for release\\b",
+      "reason": "This checklist does not grant release authority; release eligibility is owned by tools/scripts/release_eligibility.py.",
+      "sample_violation": "The change is approved for release once review completes."
+    },
+    {
+      "pattern": "\\bphysically validated\\b|\\bphysical(ly)? (validated|verified)\\b",
+      "reason": "Only attested hardware evidence may claim physical validation, and this checklist produces none.",
+      "sample_violation": "The controller behaviour is physically validated by this simulation run."
+    },
+    {
+      "pattern": "\\bwaives? (the )?(required )?(checks?|review|approval)",
+      "reason": "A checklist item cannot waive a required check or a required human approval.",
+      "sample_violation": "Ticking this checklist waives the required review."
+    }
+  ],
+  "issue_template": ".github/ISSUE_TEMPLATE/feature.md",
+  "required_issue_sections": [
+    {
+      "heading": "Owner",
+      "reason": "A task without a named human owner and reviewer has no one accountable for the acceptance decision.",
+      "requires": [
+        "body_text"
+      ]
+    },
+    {
+      "heading": "Problem and objective",
+      "reason": "An issue that cannot state the problem it removes cannot be checked for usefulness.",
+      "requires": [
+        "body_text"
+      ]
+    },
+    {
+      "heading": "Allowed paths",
+      "reason": "AGENTS.md bounds every AI write by a path list; an issue that omits it defers the boundary to the implementer.",
+      "requires": [
+        "body_text",
+        "path_reference"
+      ]
+    },
+    {
+      "heading": "Interfaces affected",
+      "reason": "Interface changes route to three human approvals, so an empty answer must be explicit rather than implied.",
+      "requires": [
+        "body_text"
+      ]
+    },
+    {
+      "heading": "Acceptance criteria",
+      "reason": "Criteria must be stated before coding so 'done' is not redefined afterwards.",
+      "requires": [
+        "body_text"
+      ]
+    },
+    {
+      "heading": "Commands and evidence",
+      "reason": "AGENTS.md forbids claiming completion without a command, a result and an evidence artifact.",
+      "requires": [
+        "command",
+        "evidence_reference"
+      ]
+    },
+    {
+      "heading": "Definition of Ready",
+      "reason": "The readiness question list names the rollback or disable path, which a reviewer needs before work starts.",
+      "requires": [
+        "body_text",
+        "failure_path"
+      ]
+    },
+    {
+      "heading": "Exit Gate",
+      "reason": "The closing conditions must name at least one failure path, and they must be listed before work starts.",
+      "requires": [
+        "body_text",
+        "failure_path"
+      ]
+    },
+    {
+      "heading": "Dependencies and stop conditions",
+      "reason": "A blocked issue must name what unblocks it so it is not started on a guess.",
+      "requires": [
+        "body_text"
+      ]
+    }
+  ]
+}

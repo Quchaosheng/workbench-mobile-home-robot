@@ -14,6 +14,8 @@ nav:
   - 90-minute demo: user-guide/demo-runbook.md
   - Project status: project-management/status.md
   - Project plan: project-management/plan.md
+  - Definition of Ready: project-management/definition-of-ready.md
+  - Exit gate: project-management/exit-gate.md
   - Product evidence layer:
       - Overview: product/README.md
       - Product brief: product/product-brief.md

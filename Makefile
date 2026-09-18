@@ -7,7 +7,7 @@ PYTHON ?= python3
 	container-build container-check container-colcon-build container-colcon-test container-image-verify \
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
-	container-project-check property-gate mutation-gate quality-gates
+	container-project-check property-gate mutation-gate quality-gates ready-gate
 
 bootstrap:
 	$(PYTHON) -m pip install --upgrade pip
@@ -135,6 +135,15 @@ mutation-gate:
 	$(PYTHON) tools/scripts/quality_gates.py mutation --registry tools/qa/mutations-v1.json --quarantine tools/qa/quarantine-v1.json --archive runs/qa/mutation-gate/summary.json
 
 quality-gates: property-gate mutation-gate
+
+# Reports a pull request or issue body as READY, BLOCKED or INCOMPLETE, and
+# checks that the committed templates still carry every required field. Exit
+# codes are the contract: 0 READY, 1 BLOCKED, 2 INCOMPLETE. The gate only reads
+# text; it never runs a command it finds in the body.
+ready-gate:
+	$(PYTHON) tools/scripts/check_ready_gate.py --check-template
+	$(PYTHON) tools/scripts/check_ready_gate.py --body-file tests/fixtures/ready-gate/complete.md
+	$(PYTHON) tools/scripts/check_ready_gate.py --kind issue --body-file tests/fixtures/ready-gate/complete-issue.md
 
 container-smoke:
 	$(MAKE) container-check
