@@ -31,6 +31,7 @@ nav:
   - Incident response: security/incident-response.md
   - Release provenance: security/release-provenance.md
   - System architecture: architecture/system.md
+  - Observability contract: architecture/observability-contract-v1.md
   - Linux driver architecture: architecture/linux-drivers.md
   - Hardware:
       - Overview: hardware/README.md
