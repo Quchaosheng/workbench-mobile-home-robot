@@ -1,6 +1,6 @@
 # Dashboard (Owner: Interaction)
 
-Read-only task status, evidence, and replay UI for Workbench-1.
+Read-only task status, evidence, replay, and robot-monitoring UI for Workbench-1.
 
 ```bash
 python -m workbench_backend.server --host 127.0.0.1 --port 8080
@@ -23,6 +23,22 @@ observation agrees, and `contradicted` when it disagrees. A claim is judged only
 inside the window between its action result and that entity's next action result,
 so a later placement supersedes an earlier hold instead of contradicting it.
 
+The **机器人监控** tab renders `GET /api/v1/health` and
+`GET /api/v1/health/history`: an overall status, active alerts sorted by severity
+then age, per-domain freshness cards, and a bounded recent-trend table. It is
+read-only and offers no acknowledge, reset, or stop control. A metric that was
+never reported shows as `未上报` rather than `0` or "healthy", a stale metric
+shows its age, and a failed refresh clears the cards instead of leaving a stale
+green status. A card also defers to the backend alert rules, so a fresh reading
+that still violates a threshold (a disk at zero free bytes) shows `降级` next to
+its active alert instead of `正常`. Polling uses one bounded interval, backs off
+after a failure, and stops when the tab or the page is hidden.
+
+`data/health/health.jsonl` is a **simulation fixture**, labelled as such in the
+view; the health document lives in a subdirectory because run logs are
+discovered with a top-level `*.jsonl` glob and a sibling file would be parsed as
+a run.
+
 The HTTP boundary deliberately implements `GET` only. `POST`, `PUT`, `PATCH`, and `DELETE` return `405 read_only`; there is no ROS, MCU, motion, or emergency-stop publisher in this application.
 
 ## Concurrency and shutdown
@@ -40,4 +56,4 @@ process exit.
 
 Vendored UI dependency: Lucide `0.468.0`, ISC license in `vendor/LUCIDE-LICENSE.txt`.
 
-The dashboard follows a two-tab keyboard model: `Left`/`Right` (or `Up`/`Down`) changes views, while `Home` and `End` jump to the first or last view. Filters and run selection expose pressed state, replay exposes playback and position state, and the active mobile run scrolls into view. Nonessential motion is suppressed when the operating system requests reduced motion.
+The dashboard follows a three-tab keyboard model: `Left`/`Right` (or `Up`/`Down`) changes views, while `Home` and `End` jump to the first or last view. Filters and run selection expose pressed state, replay exposes playback and position state, and the active mobile run scrolls into view. Nonessential motion is suppressed when the operating system requests reduced motion.

@@ -54,6 +54,9 @@
             <button class="view-tab is-active" id="overview-tab" type="button" role="tab" aria-selected="true" aria-controls="overview-view" tabindex="0" data-view="overview">
               <i data-lucide="layout-dashboard"></i><span>实时状态</span>
             </button>
+            <button class="view-tab" id="monitoring-tab" type="button" role="tab" aria-selected="false" aria-controls="monitoring-view" tabindex="-1" data-view="monitoring">
+              <i data-lucide="activity"></i><span>机器人监控</span>
+            </button>
             <button class="view-tab" id="replay-tab" type="button" role="tab" aria-selected="false" aria-controls="replay-view" tabindex="-1" data-view="replay">
               <i data-lucide="history"></i><span>事件回放</span>
             </button>
@@ -168,6 +171,47 @@
               </section>
             </div>
           </div>
+        </div>
+
+        <div id="monitoring-view" class="view-panel" role="tabpanel" aria-labelledby="monitoring-tab" aria-hidden="true" tabindex="0" hidden>
+          <section class="monitoring-band" aria-label="机器人健康总览">
+            <div>
+              <p class="eyebrow">机器人监控 · 只读</p>
+              <h2>系统健康</h2>
+              <p class="monitoring-note">数值来自后端已验证的健康快照。缺失或陈旧的数据显示为“未知”，不会显示为正常或 0。</p>
+            </div>
+            <div class="monitoring-overall-box">
+              <span>总体状态</span>
+              <strong id="monitoring-overall" class="monitoring-overall monitoring-unknown">未知</strong>
+              <small id="monitoring-source">监控数据不可用</small>
+            </div>
+          </section>
+
+          <p id="monitoring-live" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
+
+          <section class="panel monitoring-alerts-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">按严重度排序</p>
+                <h2>活动告警</h2>
+              </div>
+              <i data-lucide="siren"></i>
+            </div>
+            <div id="monitoring-alerts" aria-live="off"></div>
+          </section>
+
+          <div id="monitoring-cards" class="monitoring-grid" aria-live="off"></div>
+
+          <section class="panel monitoring-trend-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">有界历史</p>
+                <h2>近期趋势</h2>
+              </div>
+              <i data-lucide="trending-up"></i>
+            </div>
+            <div id="monitoring-trend"></div>
+          </section>
         </div>
 
         <div id="replay-view" class="view-panel" role="tabpanel" aria-labelledby="replay-tab" aria-hidden="true" tabindex="0" hidden>

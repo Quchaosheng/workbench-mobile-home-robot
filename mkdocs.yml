@@ -9,6 +9,7 @@ nav:
   - Installation: user-guide/installation.md
   - Daily operation: user-guide/operation.md
   - Maintenance: user-guide/maintenance.md
+  - Robot monitoring: user-guide/monitoring.md
   - Troubleshooting: user-guide/troubleshooting.md
   - 90-minute demo: user-guide/demo-runbook.md
   - Project status: project-management/status.md

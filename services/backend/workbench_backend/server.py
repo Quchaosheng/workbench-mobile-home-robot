@@ -177,7 +177,11 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
 
 class DashboardHandler(BaseHTTPRequestHandler):
     read_model = DashboardReadModel(DEFAULT_DATA_DIR)
-    health_model = HealthReadModel(Path(DEFAULT_DATA_DIR) / "health.jsonl")
+    # The health document lives in its own subdirectory. Run logs are discovered
+    # with a top-level glob("*.jsonl"), so a sibling health.jsonl would be parsed
+    # as a run and fail the whole read model; a subdirectory keeps the two
+    # artifact families from colliding.
+    health_model = HealthReadModel(Path(DEFAULT_DATA_DIR) / "health" / "health.jsonl")
     static_dir = DEFAULT_STATIC_DIR
     logger = StructuredLogger("workbench-backend")
     data_source = "dashboard-fixtures"
@@ -565,7 +569,7 @@ def create_server(
         configured_read_model = DashboardReadModel(data_dir)
     configured_static_dir = Path(static_dir)
     configured_health_model = HealthReadModel(
-        health_path if health_path is not None else Path(data_dir) / "health.jsonl"
+        health_path if health_path is not None else Path(data_dir) / "health" / "health.jsonl"
     )
 
     class ConfiguredHandler(DashboardHandler):

@@ -335,7 +335,12 @@ class HealthApiTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         data_dir = Path(directory.name)
         if health_document is not None:
-            data_dir.joinpath("health.jsonl").write_text(health_document, encoding="utf-8")
+            # The default health path is a subdirectory so that run logs, which
+            # are discovered with a top-level *.jsonl glob, cannot pick up the
+            # health document as a run.
+            health_dir = data_dir / "health"
+            health_dir.mkdir(parents=True, exist_ok=True)
+            health_dir.joinpath("health.jsonl").write_text(health_document, encoding="utf-8")
         server = create_server("127.0.0.1", 0, data_dir=data_dir, **options)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -400,8 +405,10 @@ class HealthApiTests(unittest.TestCase):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         data_dir = Path(directory.name)
+        health_path = data_dir / "health" / "health.jsonl"
+        health_path.parent.mkdir(parents=True, exist_ok=True)
         healthy = json.dumps(snapshot(at=BASE).as_dict()) + "\n"
-        data_dir.joinpath("health.jsonl").write_text(healthy, encoding="utf-8")
+        health_path.write_text(healthy, encoding="utf-8")
         server = create_server("127.0.0.1", 0, data_dir=data_dir)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -412,10 +419,10 @@ class HealthApiTests(unittest.TestCase):
         self.assertEqual(self.read_json(f"{base_url}/api/v1/health")[1]["status"], "healthy")
         faulted = json.dumps(snapshot(at=BASE + 1, faults={"can.link_ok": False}).as_dict()) + "\n"
         # Advance the mtime so the size/mtime cache key changes even on a fast disk.
-        data_dir.joinpath("health.jsonl").write_text(faulted, encoding="utf-8")
+        health_path.write_text(faulted, encoding="utf-8")
         import os
 
-        os.utime(data_dir / "health.jsonl", (BASE + 10, BASE + 10))
+        os.utime(health_path, (BASE + 10, BASE + 10))
         self.assertEqual(self.read_json(f"{base_url}/api/v1/health")[1]["status"], "fault")
 
 

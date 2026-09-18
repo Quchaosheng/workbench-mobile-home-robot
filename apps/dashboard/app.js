@@ -9,6 +9,12 @@ const state = {
   runRequest: null,
   requestGeneration: 0,
   toastTimer: null,
+  monitoring: null,
+  monitoringRequest: null,
+  monitoringTimer: null,
+  monitoringGeneration: 0,
+  monitoringBackoff: null,
+  monitoringAlertKey: null,
 };
 
 const statusLabels = {
@@ -79,7 +85,7 @@ const taskZones = {
   ],
 };
 
-const viewOrder = ["overview", "replay"];
+const viewOrder = ["overview", "monitoring", "replay"];
 
 const get = (id) => document.getElementById(id);
 
@@ -724,11 +730,441 @@ function openEvidence(reference) {
   else dialog.setAttribute("open", "");
 }
 
+const monitoringCards = [
+  { id: "safety", label: "安全", matches: (domain) => domain === "safety" },
+  { id: "power", label: "电源", matches: (domain) => domain === "power" },
+  { id: "can", label: "CAN 通信", matches: (domain) => domain === "communication" },
+  { id: "compute", label: "计算", matches: (domain, name) => domain === "compute" && !name.startsWith("compute.disk_") },
+  { id: "storage", label: "存储", matches: (domain, name) => name.startsWith("compute.disk_") },
+  { id: "nav", label: "定位", matches: (domain, name) => name.startsWith("nav.") },
+  { id: "motion", label: "运动", matches: (domain, name) => name.startsWith("motion.") },
+  { id: "perception", label: "感知", matches: (domain, name) => name.startsWith("perception.") },
+  { id: "task", label: "任务", matches: (domain, name) => domain === "task" || name.startsWith("task.") },
+];
+
+const monitoringStatusLabels = {
+  healthy: "正常",
+  degraded: "降级",
+  fault: "故障",
+  unknown: "未知",
+  unavailable: "不可用",
+};
+
+const monitoringSeverityLabels = { info: "提示", warning: "警告", critical: "严重" };
+
+const monitoringAlertStateLabels = { active: "进行中", cleared: "已清除" };
+
+const monitoringConditionLabels = {
+  estop_unavailable: "急停通道不可用",
+  estop_disagreement: "急停通道不一致",
+  watchdog_loss: "看门狗失联",
+  bms_fault: "电池管理故障",
+  contactor_denied: "接触器未许可",
+  can_bus_off: "CAN 总线关闭",
+  can_link_loss: "CAN 链路中断",
+  controller_fault: "控制器故障",
+  stop_fault: "STOP 路径故障",
+  localization_stale: "定位不可用",
+  perception_stale: "感知数据陈旧",
+  event_store_integrity: "事件库完整性失败",
+  backend_unavailable: "后端不可用",
+  disk_pressure: "磁盘空间不足",
+  source_missing: "数据源未上报",
+  source_stale: "数据源陈旧",
+  source_fault: "数据源冲突",
+};
+
+// One bounded refresh interval. A failed refresh backs off instead of hammering
+// an unavailable backend, and the interval never grows without a ceiling.
+const MONITORING_REFRESH_MS = 5000;
+const MONITORING_MAX_BACKOFF_MS = 60000;
+const MONITORING_MAX_TREND_ROWS = 20;
+
+// The most severe status wins. The order is a contract, not a preference: a
+// fault outranks "we do not know", which outranks a degraded value.
+const monitoringSeverityOrder = { fault: 0, unknown: 1, degraded: 2, healthy: 3 };
+const monitoringAlertSeverityOrder = { critical: 0, warning: 1, info: 2 };
+
+function monitoringWorst(statuses) {
+  let worst = null;
+  for (const status of statuses) {
+    if (worst === null || (monitoringSeverityOrder[status] ?? 9) < (monitoringSeverityOrder[worst] ?? 9)) worst = status;
+  }
+  return worst ?? "unknown";
+}
+
+function monitoringMetricStatus(metric) {
+  // A value the robot never reported is not a healthy `false` and not a zero.
+  // Missing and stale inputs are "unknown" until a fresh source replaces them.
+  if (!metric || typeof metric !== "object") return "unknown";
+  if (metric.missing || metric.stale) return "unknown";
+  if (metric.state === "conflict" || metric.state === "fault") return "fault";
+  if (metric.state === "degraded") return "degraded";
+  if (metric.value === null || metric.value === undefined) return "unknown";
+  return "healthy";
+}
+
+function monitoringMetricText(metric) {
+  if (!metric || typeof metric !== "object") return "未知";
+  if (metric.missing) return "未上报";
+  if (metric.state === "conflict") return "来源冲突";
+  if (metric.stale) return "数据陈旧";
+  const value = metric.value;
+  if (value === null || value === undefined) return "未知";
+  if (typeof value === "boolean") return value ? "正常" : "异常";
+  if (typeof value !== "number") return String(value);
+  const rendered = Number.isInteger(value) ? String(value) : value.toFixed(2);
+  const unit = metric.unit && metric.unit !== "bool" ? ` ${metric.unit}` : "";
+  return `${rendered}${unit}`;
+}
+
+function monitoringMetricFreshness(metric) {
+  if (!metric || typeof metric !== "object") return "无时间戳";
+  if (metric.missing) return "无观测时间";
+  const age = metric.age_s;
+  if (typeof age !== "number" || !Number.isFinite(age)) return "无时间戳";
+  if (metric.stale) return `${age.toFixed(1)}s 前 · 已过期`;
+  return `${age.toFixed(1)}s 前`;
+}
+
+function monitoringDomainMap(payload) {
+  const domains = payload?.current?.domains;
+  return domains && typeof domains === "object" ? domains : {};
+}
+
+// The backend alert rules are authoritative: a metric can have a fresh value
+// that still violates a configured threshold (a disk at 0 free bytes is fresh
+// and alerting). A card therefore defers to an active alert naming one of its
+// metrics, so the view can never show 正常 next to an active warning.
+const monitoringAlertStatus = { critical: "fault", warning: "degraded", info: "degraded" };
+
+function monitoringAlertStatusByMetric(payload) {
+  const active = monitoringAlertsFor(payload);
+  const statuses = new Map();
+  for (const alert of active) {
+    if (!alert || typeof alert.metric !== "string") continue;
+    const status = monitoringAlertStatus[alert.severity] || "degraded";
+    const current = statuses.get(alert.metric);
+    if (current === undefined || (monitoringSeverityOrder[status] ?? 9) < (monitoringSeverityOrder[current] ?? 9)) {
+      statuses.set(alert.metric, status);
+    }
+  }
+  return statuses;
+}
+
+function monitoringCardsFor(payload) {
+  const domains = monitoringDomainMap(payload);
+  const alertStatus = monitoringAlertStatusByMetric(payload);
+  const flat = [];
+  for (const [domain, health] of Object.entries(domains)) {
+    const metrics = Array.isArray(health?.metrics) ? health.metrics : [];
+    for (const metric of metrics) {
+      if (metric && typeof metric.name === "string") flat.push({ domain, metric });
+    }
+  }
+  return monitoringCards.map((card) => {
+    const matched = flat.filter((entry) => card.matches(entry.domain, entry.metric.name));
+    const entryStatus = (metric) => {
+      const declared = monitoringMetricStatus(metric);
+      const alerted = alertStatus.get(metric.name);
+      if (alerted === undefined) return declared;
+      return monitoringWorst([declared, alerted]);
+    };
+    const statuses = matched.map((entry) => entryStatus(entry.metric));
+    return {
+      id: card.id,
+      label: card.label,
+      status: matched.length ? monitoringWorst(statuses) : "unknown",
+      metrics: matched.map((entry) => ({
+        name: entry.metric.name,
+        domain: entry.domain,
+        status: entryStatus(entry.metric),
+        text: monitoringMetricText(entry.metric),
+        source: entry.metric.source || entry.metric.expected_source || null,
+        source_status: entry.metric.source_status || null,
+        freshness: monitoringMetricFreshness(entry.metric),
+      })),
+    };
+  });
+}
+
+function monitoringAlertsFor(payload) {
+  const active = payload?.alerts?.active;
+  const list = Array.isArray(active) ? active.filter((alert) => alert && typeof alert === "object") : [];
+  return [...list].sort((left, right) => {
+    const bySeverity =
+      (monitoringAlertSeverityOrder[left.severity] ?? 9) - (monitoringAlertSeverityOrder[right.severity] ?? 9);
+    if (bySeverity !== 0) return bySeverity;
+    return (left.first_seen_at ?? 0) - (right.first_seen_at ?? 0);
+  });
+}
+
+function monitoringAlertLabel(alert) {
+  return monitoringConditionLabels[alert?.condition] || alert?.condition || "未知告警";
+}
+
+// A stable identity for the alert set, so an accessible live region is updated
+// only when the alerts actually change rather than on every poll.
+function monitoringAlertSignature(alerts) {
+  return alerts
+    .map((alert) => `${alert.alert_id || alert.condition}:${alert.severity}:${alert.count}`)
+    .join("|");
+}
+
+function monitoringTrendRows(history) {
+  const snapshots = history?.snapshots;
+  const list = Array.isArray(snapshots) ? snapshots : [];
+  return list.slice(-MONITORING_MAX_TREND_ROWS).map((snapshot) => ({
+    collected_at: snapshot.collected_at,
+    overall: monitoringStatusLabels[snapshot.overall] ? snapshot.overall : "unknown",
+    domains: snapshot.domains && typeof snapshot.domains === "object" ? snapshot.domains : {},
+  }));
+}
+
+// The view state is derived from the last payload *or* the last failure. A
+// failure clears availability, so a stale green card can never remain on screen.
+function monitoringViewState(payload, failure) {
+  if (failure) {
+    return { available: false, status: "unavailable", source: null, reason: failure, alerts: [], cards: [] };
+  }
+  if (!payload || typeof payload !== "object") {
+    return { available: false, status: "unavailable", source: null, reason: "no_payload", alerts: [], cards: [] };
+  }
+  const status = monitoringStatusLabels[payload.status] ? payload.status : "unknown";
+  return {
+    available: true,
+    status,
+    source: typeof payload.source === "string" ? payload.source : null,
+    readOnly: payload.read_only === true,
+    reason: typeof payload.reason === "string" ? payload.reason : null,
+    cards: monitoringCardsFor(payload),
+    alerts: monitoringAlertsFor(payload),
+  };
+}
+
+// This repository ships a read-only fixture health document. The badge states
+// that plainly so a viewer cannot mistake a scripted value for a physical sensor.
+function monitoringSourceLabel(view) {
+  if (!view.available) return "监控数据不可用";
+  const source = view.source ? `数据源：${view.source}` : "数据源未知";
+  return `只读 · ${source} · 仿真夹具，未连接物理传感器`;
+}
+
+function monitoringStatusText(status) {
+  return monitoringStatusLabels[status] || "未知";
+}
+
+function renderMonitoringCards(view) {
+  const grid = get("monitoring-cards");
+  if (!view.available) {
+    grid.innerHTML = `
+      <div class="monitoring-unavailable" role="status">
+        <i data-lucide="plug-zap"></i>
+        <div>
+          <strong>监控数据不可用</strong>
+          <p>无法读取 /api/v1/health。此处不显示缓存的健康状态，避免把过期结果当成当前状态。</p>
+        </div>
+      </div>`;
+    return;
+  }
+  grid.innerHTML = view.cards
+    .map(
+      (card) => `
+      <section class="monitoring-card monitoring-${card.status}" aria-label="${escapeHtml(card.label)}">
+        <div class="monitoring-card-head">
+          <h3>${escapeHtml(card.label)}</h3>
+          <span class="monitoring-status">${escapeHtml(monitoringStatusText(card.status))}</span>
+        </div>
+        ${
+          card.metrics.length
+            ? `<dl class="monitoring-metrics">${card.metrics
+                .map(
+                  (metric) => `
+            <div class="monitoring-metric monitoring-${metric.status}">
+              <dt>${escapeHtml(metric.name)}</dt>
+              <dd>
+                <strong>${escapeHtml(metric.text)}</strong>
+                <small>${escapeHtml(metric.source || "来源未知")} · ${escapeHtml(metric.freshness)}</small>
+              </dd>
+            </div>`,
+                )
+                .join("")}</dl>`
+            : `<p class="monitoring-empty">未上报该域的任何指标。</p>`
+        }
+      </section>`,
+    )
+    .join("");
+}
+
+function renderMonitoringAlerts(view) {
+  const panel = get("monitoring-alerts");
+  const alerts = view.alerts || [];
+  const live = get("monitoring-live");
+  // The live region speaks only when the alert set actually changes, so a
+  // five-second poll does not repeat the same announcement to a screen reader.
+  const signature = monitoringAlertSignature(alerts);
+  if (signature !== state.monitoringAlertKey) {
+    live.textContent = alerts.length
+      ? `当前有 ${alerts.length} 条活动告警，最高等级 ${monitoringSeverityLabels[alerts[0].severity] || alerts[0].severity}：${monitoringAlertLabel(alerts[0])}`
+      : "当前没有活动告警";
+    state.monitoringAlertKey = signature;
+  }
+  if (!view.available) {
+    panel.innerHTML = "";
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  if (!alerts.length) {
+    panel.innerHTML = `<p class="monitoring-empty">当前没有活动告警。</p>`;
+    return;
+  }
+  panel.innerHTML = `
+    <ul class="monitoring-alert-table" aria-label="活动告警">
+      ${alerts
+        .map(
+          (alert) => `
+        <li class="monitoring-alert monitoring-alert-${escapeHtml(alert.severity)}">
+          <span class="monitoring-alert-severity">${escapeHtml(monitoringSeverityLabels[alert.severity] || alert.severity)}</span>
+          <strong>${escapeHtml(monitoringAlertLabel(alert))}</strong>
+          <span class="monitoring-alert-metric">${escapeHtml(alert.metric || "--")}</span>
+          <span class="monitoring-alert-count">×${escapeHtml(String(alert.count ?? 0))}</span>
+          <small>${escapeHtml(alert.summary || "")} · ${escapeHtml(alert.evidence_ref || "")}</small>
+        </li>`,
+        )
+        .join("")}
+    </div>`;
+}
+
+function renderMonitoringTrend(view) {
+  const panel = get("monitoring-trend");
+  const rows = view.trend || [];
+  if (!view.available || !rows.length) {
+    panel.innerHTML = "";
+    panel.hidden = true;
+    return;
+  }
+  const domains = [...new Set(rows.flatMap((row) => Object.keys(row.domains)))].sort();
+  panel.hidden = false;
+  panel.innerHTML = `
+    <table class="monitoring-trend-table">
+      <caption>最近 ${rows.length} 个快照（<code>collected_at</code>，秒）</caption>
+      <thead><tr><th scope="col">时间</th><th scope="col">总体</th>${domains
+        .map((domain) => `<th scope="col">${escapeHtml(domain)}</th>`)
+        .join("")}</tr></thead>
+      <tbody>
+        ${rows
+          .map(
+            (row) => `<tr>
+          <td>${escapeHtml(String(row.collected_at))}</td>
+          <td class="monitoring-${escapeHtml(row.overall)}">${escapeHtml(monitoringStatusText(row.overall))}</td>
+          ${domains
+            .map((domain) => {
+              const value = row.domains[domain] || "unknown";
+              return `<td class="monitoring-${escapeHtml(value)}">${escapeHtml(monitoringStatusText(value))}</td>`;
+            })
+            .join("")}
+        </tr>`,
+          )
+          .join("")}
+      </tbody>
+    </table>`;
+}
+
+function renderMonitoring() {
+  // `view` is the derived projection; `state.monitoring*` keeps the raw payload
+  // so a later render can reuse it without re-fetching.
+  const view = monitoringViewState(state.monitoring, state.monitoringFailure);
+  view.trend = state.monitoring?.trend || [];
+  const overall = get("monitoring-overall");
+  overall.className = `monitoring-overall monitoring-${view.status}`;
+  overall.textContent = monitoringStatusText(view.status);
+  get("monitoring-source").textContent = monitoringSourceLabel(view);
+  renderMonitoringCards(view);
+  renderMonitoringAlerts(view);
+  renderMonitoringTrend(view);
+  refreshIcons();
+}
+
+function scheduleMonitoring(delay) {
+  clearTimeout(state.monitoringTimer);
+  state.monitoringTimer = setTimeout(refreshMonitoring, delay);
+}
+
+async function refreshMonitoring() {
+  state.monitoringRequest?.abort();
+  const controller = new AbortController();
+  const generation = ++state.monitoringGeneration;
+  state.monitoringRequest = controller;
+  try {
+    const [health, history] = await Promise.all([
+      fetch("/api/v1/health", { signal: controller.signal }),
+      fetch("/api/v1/health/history", { signal: controller.signal }),
+    ]);
+    if (!health.ok) throw new Error(`HTTP ${health.status}`);
+    const payload = await health.json();
+    if (generation !== state.monitoringGeneration) return;
+    if (history.ok) {
+      const historyPayload = await history.json();
+      payload.trend = monitoringTrendRows(historyPayload);
+    }
+    state.monitoring = payload;
+    state.monitoringFailure = null;
+    state.monitoringBackoff = null;
+    renderMonitoring();
+    if (!get("monitoring-view").hidden) scheduleMonitoring(MONITORING_REFRESH_MS);
+  } catch (error) {
+    if (error.name === "AbortError" || generation !== state.monitoringGeneration) return;
+    // A failed refresh clears the cards rather than leaving a stale green
+    // status on screen, and the next attempt backs off.
+    state.monitoring = null;
+    state.monitoringFailure = error.message || "unavailable";
+    renderMonitoring();
+    state.monitoringBackoff = Math.min(
+      (state.monitoringBackoff || MONITORING_REFRESH_MS) * 2,
+      MONITORING_MAX_BACKOFF_MS,
+    );
+    if (!get("monitoring-view").hidden) scheduleMonitoring(state.monitoringBackoff);
+  } finally {
+    if (generation === state.monitoringGeneration) state.monitoringRequest = null;
+  }
+}
+
+// The retry decision is explicit and testable: after a failure the next attempt
+// is scheduled from the backoff, regardless of whether a payload was retained.
+function monitoringRetryDelay(view, monitoring, backoff) {
+  if (view.available) return null;
+  if (!monitoring && !backoff) return MONITORING_REFRESH_MS;
+  return backoff || MONITORING_REFRESH_MS;
+}
+
+function startMonitoring() {
+  const view = monitoringViewState(state.monitoring, state.monitoringFailure);
+  if (state.monitoring || state.monitoringFailure) {
+    renderMonitoring();
+    const delay = monitoringRetryDelay(view, state.monitoring, state.monitoringBackoff);
+    if (delay !== null) scheduleMonitoring(delay);
+    return;
+  }
+  refreshMonitoring();
+}
+
+function stopMonitoring() {
+  clearTimeout(state.monitoringTimer);
+  state.monitoringTimer = null;
+  state.monitoringRequest?.abort();
+  state.monitoringRequest = null;
+}
+
 function setView(view, focusTab = false) {
+  const overview = view === "overview";
+  const monitoring = view === "monitoring";
   const replay = view === "replay";
-  get("overview-view").hidden = replay;
+  get("overview-view").hidden = !overview;
+  get("monitoring-view").hidden = !monitoring;
   get("replay-view").hidden = !replay;
-  get("overview-view").setAttribute("aria-hidden", String(replay));
+  get("overview-view").setAttribute("aria-hidden", String(!overview));
+  get("monitoring-view").setAttribute("aria-hidden", String(!monitoring));
   get("replay-view").setAttribute("aria-hidden", String(!replay));
   document.querySelectorAll(".view-tab").forEach((tab) => {
     const selected = tab.dataset.view === view;
@@ -738,7 +1174,11 @@ function setView(view, focusTab = false) {
     if (selected && focusTab) tab.focus();
   });
   if (replay && state.cursor < 0) state.cursor = state.events.length - 1;
-  renderCurrent();
+  // Monitoring polls only while it is the visible view and the tab is visible,
+  // so a hidden page or another tab costs no requests.
+  if (monitoring) startMonitoring();
+  else stopMonitoring();
+  if (!monitoring) renderCurrent();
 }
 
 function stopPlayback() {
@@ -865,6 +1305,11 @@ function bindControls() {
     renderCurrent();
   });
   get("evidence-close").addEventListener("click", () => get("evidence-dialog").close());
+  document.addEventListener("visibilitychange", () => {
+    const monitoringVisible = !get("monitoring-view").hidden;
+    if (document.hidden) stopMonitoring();
+    else if (monitoringVisible) startMonitoring();
+  });
 }
 
 async function initialize() {

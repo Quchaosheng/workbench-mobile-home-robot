@@ -1961,3 +1961,328 @@ svg {
     outline-color: Highlight;
   }
 }
+
+/* ---- Read-only robot monitoring view (#171) ------------------------------ */
+
+.visually-hidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.monitoring-band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  gap: 18px;
+}
+
+.monitoring-band h2 {
+  margin: 2px 0 6px;
+  font-size: 18px;
+}
+
+.monitoring-note {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.monitoring-overall-box {
+  display: grid;
+  flex-shrink: 0;
+  justify-items: end;
+  gap: 3px;
+  text-align: right;
+}
+
+.monitoring-overall-box > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.monitoring-overall {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.monitoring-overall-box small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* Status is carried by text and border style, never by colour alone. */
+.monitoring-healthy {
+  color: var(--green);
+}
+
+.monitoring-degraded {
+  color: var(--amber);
+}
+
+.monitoring-fault {
+  color: var(--red);
+}
+
+.monitoring-unknown,
+.monitoring-unavailable {
+  color: var(--muted);
+}
+
+.monitoring-grid {
+  display: grid;
+  margin-bottom: 14px;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.monitoring-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  border-left-width: 4px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.monitoring-card.monitoring-healthy {
+  border-left-color: var(--green);
+}
+
+.monitoring-card.monitoring-degraded {
+  border-left-color: var(--amber);
+}
+
+.monitoring-card.monitoring-fault {
+  border-left-color: var(--red);
+}
+
+.monitoring-card.monitoring-unknown,
+.monitoring-card.monitoring-unavailable {
+  border-left-color: var(--line-strong);
+  border-left-style: dashed;
+}
+
+.monitoring-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 10px;
+}
+
+.monitoring-card-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.monitoring-status {
+  padding: 2px 7px;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.monitoring-metrics {
+  display: grid;
+  margin: 0;
+  gap: 7px;
+}
+
+.monitoring-metric {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.monitoring-metric dt {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoring-metric dd {
+  margin: 0;
+  text-align: right;
+}
+
+.monitoring-metric dd strong {
+  display: block;
+  font-size: 12px;
+}
+
+.monitoring-metric dd small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.monitoring-metric.monitoring-unknown dd strong {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.monitoring-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.monitoring-unavailable {
+  display: flex;
+  padding: 16px;
+  border: 1px dashed var(--red);
+  border-radius: 7px;
+  background: var(--red-soft);
+  gap: 12px;
+  grid-column: 1 / -1;
+}
+
+.monitoring-unavailable strong {
+  color: var(--red);
+}
+
+.monitoring-unavailable p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.monitoring-alerts-panel,
+.monitoring-trend-panel {
+  margin-bottom: 14px;
+}
+
+.monitoring-alert-table {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  gap: 8px;
+}
+
+.monitoring-alert {
+  display: grid;
+  align-items: center;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  gap: 4px 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.monitoring-alert-critical {
+  border-left-color: var(--red);
+}
+
+.monitoring-alert-warning {
+  border-left-color: var(--amber);
+}
+
+.monitoring-alert-info {
+  border-left-color: var(--blue);
+}
+
+.monitoring-alert-severity {
+  padding: 1px 6px;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.monitoring-alert-critical .monitoring-alert-severity {
+  color: var(--red);
+}
+
+.monitoring-alert-warning .monitoring-alert-severity {
+  color: var(--amber);
+}
+
+.monitoring-alert-info .monitoring-alert-severity {
+  color: var(--blue);
+}
+
+.monitoring-alert-metric {
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 10px;
+}
+
+.monitoring-alert-count {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.monitoring-alert small {
+  color: var(--muted);
+  font-size: 10px;
+  grid-column: 2 / -1;
+}
+
+.monitoring-trend-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.monitoring-trend-table caption {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+}
+
+.monitoring-trend-table th,
+.monitoring-trend-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.monitoring-trend-table thead th {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+@media (max-width: 780px) {
+  .monitoring-band {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .monitoring-overall-box {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .monitoring-alert {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .monitoring-trend-panel {
+    overflow-x: auto;
+  }
+}
