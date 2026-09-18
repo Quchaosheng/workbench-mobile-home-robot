@@ -7,7 +7,7 @@ PYTHON ?= python3
 	container-build container-check container-colcon-build container-colcon-test container-image-verify \
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
-	container-project-check
+	container-project-check property-gate mutation-gate quality-gates
 
 bootstrap:
 	$(PYTHON) -m pip install --upgrade pip
@@ -123,6 +123,18 @@ dashboard:
 
 docs:
 	$(PYTHON) -m mkdocs build --strict
+
+# Seeded, dependency-free property suites over the fail-closed boundaries, plus
+# a mutation gate that neuters one rejection at a time inside a throwaway copy
+# and requires the named tests to notice. Exit codes are the contract:
+# 0 PASS, 1 FAIL, 2 INCOMPLETE. Nothing is retried.
+property-gate:
+	$(PYTHON) tools/scripts/quality_gates.py property --archive runs/qa/property-gate/summary.json
+
+mutation-gate:
+	$(PYTHON) tools/scripts/quality_gates.py mutation --registry tools/qa/mutations-v1.json --quarantine tools/qa/quarantine-v1.json --archive runs/qa/mutation-gate/summary.json
+
+quality-gates: property-gate mutation-gate
 
 container-smoke:
 	$(MAKE) container-check

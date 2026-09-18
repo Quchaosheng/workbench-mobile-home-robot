@@ -1,0 +1,6 @@
+{
+  "registry_version": "workbench-quarantine-registry-v1",
+  "purpose": "A quarantined test is reported, never retried. Every entry needs an owner, a reason and an expiry date; an expired entry fails the gate, and an entry that no longer describes a failing test fails the gate as stale. This file is empty because the property, mutation and existing example suites all pass without one.",
+  "expired_grace_days": 0,
+  "entries": []
+}

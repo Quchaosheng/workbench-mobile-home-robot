@@ -1,0 +1,101 @@
+{
+  "registry_version": "workbench-mutation-registry-v1",
+  "case_schema_version": "workbench-property-case-v1",
+  "purpose": "Each entry neuters exactly one fail-closed rejection or threshold and names the tests that must fail because of it. The literal must occur exactly once in the file; an entry that does not apply cleanly is reported as indeterminate rather than as a caught mutation.",
+  "mutations": [
+    {
+      "id": "world-model-sequence-ownership",
+      "boundary": "event ordering",
+      "summary": "Two different events claiming one sequence_no must be rejected, not silently folded.",
+      "file": "services/world_model/workbench_world_model/reducer.py",
+      "literal": "        if sequence_owner is not None:",
+      "replacement": "        if False:",
+      "tests": [
+        "tests/property/test_property_event_ordering.py"
+      ]
+    },
+    {
+      "id": "kernel-event-store-sequence-contiguity",
+      "boundary": "event ordering",
+      "summary": "A persisted event log whose sequence_no is not contiguous from zero must be refused on read.",
+      "file": "libs/kernel/workbench/kernel/event_store.py",
+      "literal": "            if type(sequence_no) is not int or sequence_no != index:",
+      "replacement": "            if False:",
+      "tests": [
+        "libs/kernel/tests/test_k1_k10.py",
+        "libs/kernel/tests/test_k1_k10_extended.py",
+        "tests/unit/test_kernel_event_store.py"
+      ]
+    },
+    {
+      "id": "world-model-entity-type-conflict",
+      "boundary": "state transitions",
+      "summary": "One entity_id may not change its entity_type mid-run; the fold must refuse it.",
+      "file": "services/world_model/workbench_world_model/reducer.py",
+      "literal": "            and existing_entity_type != incoming_entity_type",
+      "replacement": "            and False",
+      "tests": [
+        "tests/property/test_property_event_ordering.py"
+      ]
+    },
+    {
+      "id": "observation-confidence-range",
+      "boundary": "schema validation",
+      "summary": "A confidence outside [0, 1] or a non-finite confidence must be rejected.",
+      "file": "services/world_model/workbench_world_model/event_payloads.py",
+      "literal": "    if not math.isfinite(confidence_value) or not 0.0 <= confidence_value <= 1.0:",
+      "replacement": "    if False:",
+      "tests": [
+        "tests/property/test_property_schema_validation.py"
+      ]
+    },
+    {
+      "id": "policy-raw-control-token",
+      "boundary": "policy rejection",
+      "summary": "The whole raw-control identifier check must keep denying parameter identifiers; the generated corpus and the declared spellings must both notice its removal.",
+      "file": "services/agent_runtime/workbench_agent_runtime/policy_validator.py",
+      "literal": "    if tokens & _RAW_CONTROL_TOKENS:\n        return True\n    compact = re.sub(r\"[^A-Za-z0-9]+\", \"\", separated).casefold()\n    return any(compact.startswith(token) or compact.endswith(token) for token in _RAW_CONTROL_TOKENS)",
+      "replacement": "    return False",
+      "tests": [
+        "tests/property/test_property_policy_rejection.py"
+      ]
+    },
+    {
+      "id": "lifecycle-configure-guard",
+      "boundary": "state transitions",
+      "summary": "configure() may only succeed from the created state.",
+      "file": "libs/kernel/workbench/kernel/lifecycle.py",
+      "literal": "        if self.state == LifecycleState.CREATED:",
+      "replacement": "        if True:",
+      "tests": [
+        "tests/property/test_property_state_transitions.py"
+      ]
+    },
+    {
+      "id": "can-ack-semantics",
+      "boundary": "frame decoding",
+      "summary": "An acknowledgement whose result, fault and mode disagree must be rejected.",
+      "file": "libs/hardware/workbench/hardware/can_driver_safe.py",
+      "literal": "        if not valid_partition or not valid_result:",
+      "replacement": "        if False:",
+      "tests": [
+        "tests/property/test_property_frame_decoding.py"
+      ]
+    },
+    {
+      "id": "can-command-reserved-bytes",
+      "boundary": "frame decoding",
+      "summary": "A command frame whose reserved bytes are non-zero must be rejected.",
+      "file": "libs/hardware/workbench/hardware/can_driver_safe.py",
+      "literal": "        if any(data[index] != 0 for index in (5, 6, 7)):",
+      "replacement": "        if False:",
+      "tests": [
+        "tests/property/test_property_frame_decoding.py"
+      ]
+    }
+  ],
+  "excluded_paths": {
+    "firmware/**": "AGENTS.md keeps firmware/ out of AI write tasks, and a probe edits the file even though the edit is confined to a throwaway copy. The VirtualMcu boundary is still covered by tests/property/test_property_state_transitions.py, which only reads it.",
+    "robot/control/**": "AGENTS.md keeps robot/control/ out of AI write tasks, and a probe edits the file even inside the copy. Motion boundaries are owned by their own validation suite."
+  }
+}

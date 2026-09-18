@@ -1,0 +1,59 @@
+name: quality-gates
+
+on:
+  schedule:
+    # Weekly, the morning after the nightly scripted pipeline.
+    - cron: "41 21 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  property-and-mutation:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run the seeded property suites
+        run: make property-gate
+
+      - name: Prove every registered rejection is load-bearing
+        run: make mutation-gate
+
+      - name: Report evidence class
+        if: always()
+        run: |
+          {
+            echo "### Quality gates"
+            echo
+            echo "Seeded, dependency-free property suites cover event ordering, schema"
+            echo "validation, policy rejection, frame decoding and state transitions."
+            echo "The mutation gate neuters one rejection or threshold at a time inside"
+            echo "a throwaway copy of the repository and requires the named tests to"
+            echo "notice, proving the repository copy itself was left byte-identical."
+            echo
+            echo "Exit codes are the contract: 0 PASS, 1 FAIL, 2 INCOMPLETE. Nothing is"
+            echo "retried, and a gate that could not run is never reported as a pass."
+            echo
+            echo "This is software-only evidence on a hosted runner. Target hardware,"
+            echo "real ROS/Gazebo and physical robot behaviour remain NOT_EXECUTED."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: quality-gate-summary
+          path: |
+            runs/qa/property-gate/summary.json
+            runs/qa/mutation-gate/summary.json
+          if-no-files-found: error
