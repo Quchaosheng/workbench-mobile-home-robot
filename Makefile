@@ -7,11 +7,25 @@ PYTHON ?= python3
 	container-build container-check container-colcon-build container-colcon-test container-image-verify \
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
-	container-project-check property-gate mutation-gate quality-gates ready-gate
+	container-project-check property-gate mutation-gate quality-gates ready-gate lock-python lock-python-verify
 
+# The root Python environment is installed from the hash-checked lock, not from
+# the ranges in pyproject.toml, so every developer, CI job and container resolves
+# the same artifacts. pip cannot hash an editable local project, so the project
+# is installed as a separate --no-deps step after the locked third-party set.
+# See docs/security/reproducible-python-lock.md.
 bootstrap:
 	$(PYTHON) -m pip install --upgrade pip
-	$(PYTHON) -m pip install -e ".[dev]"
+	$(PYTHON) -m pip install --require-hashes -r docker/requirements-dev.lock
+	$(PYTHON) -m pip install --no-deps -e .
+
+# Resolve the pyproject ranges into the committed lock. This is the only target
+# that needs the index; every other target reads the lock offline.
+lock-python:
+	$(PYTHON) tools/scripts/lock_python_dependencies.py generate
+
+lock-python-verify:
+	$(PYTHON) tools/scripts/lock_python_dependencies.py verify
 
 # Both rules and formatting are gated in CI. Run `make fmt` to fix locally.
 lint:

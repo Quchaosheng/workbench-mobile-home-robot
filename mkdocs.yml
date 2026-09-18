@@ -32,6 +32,7 @@ nav:
   - Secure review: security/secure-review-standard.md
   - Incident response: security/incident-response.md
   - Release provenance: security/release-provenance.md
+  - Reproducible Python lock: security/reproducible-python-lock.md
   - System architecture: architecture/system.md
   - Observability contract: architecture/observability-contract-v1.md
   - Linux driver architecture: architecture/linux-drivers.md

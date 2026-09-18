@@ -230,9 +230,18 @@ def validate() -> dict[str, object]:
             row["severity"] for row in read_csv("hardware/support/escalation-matrix.csv")
         }
         == {"S0", "S1", "S2", "S3"},
-        "documentation_build_is_in_ci": 'python -m pip install -e ".[dev,docs]"'
-        in (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        and "make docs" in (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"),
+        # CI installs the dev and docs extras from the committed hash-checked lock
+        # and then builds the strict documentation site. The lock covers both
+        # extras, so this still proves the documentation toolchain is present in
+        # CI; it asserts the invariant rather than the literal command string that
+        # used to spell it out, which is what a lock-backed install replaces.
+        "documentation_build_is_in_ci": all(
+            needle in (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+            for needle in (
+                "--require-hashes -r docker/requirements-dev.lock",
+                "make docs",
+            )
+        ),
     }
     report: dict[str, object] = {
         "package": baseline["package"],

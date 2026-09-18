@@ -52,7 +52,12 @@ def test_image_records_build_inventory_and_uses_system_site_packages() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert dockerfile.count("--system-site-packages") == 2
-    assert 'python -m pip install --no-compile ".[dev]"' in dockerfile
+    # The image installs its third-party dependencies from the committed
+    # hash-checked lock, then the project itself without dependency resolution.
+    # pip cannot hash an editable local project, so the two steps stay separate;
+    # see docs/security/reproducible-python-lock.md.
+    assert "--require-hashes -r /tmp/requirements-dev.lock" in dockerfile
+    assert "-m pip install --no-compile --no-deps -e ." in dockerfile
     assert "/usr/share/workbench/container/apt-packages.tsv" in dockerfile
     assert "/usr/share/workbench/container/python-packages.txt" in dockerfile
     assert 'org.opencontainers.image.base.digest="sha256:' in dockerfile

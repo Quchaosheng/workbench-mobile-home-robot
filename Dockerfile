@@ -93,6 +93,7 @@ RUN python3 -m venv --system-site-packages /opt/workbench-venv \
 
 COPY requirements-mujoco.txt /tmp/requirements-mujoco.txt
 COPY docker/python-constraints.txt /tmp/python-constraints.txt
+COPY docker/requirements-dev.lock /tmp/requirements-dev.lock
 COPY pyproject.toml README.md README.zh-CN.md LICENSE NOTICE ./
 COPY libs/application ./libs/application
 COPY libs/contracts ./libs/contracts
@@ -104,8 +105,9 @@ COPY services/backend ./services/backend
 COPY services/world_model ./services/world_model
 COPY firmware/virtual_mcu ./firmware/virtual_mcu
 RUN --mount=type=cache,target=/root/.cache/pip \
-    /opt/workbench-venv/bin/python -m pip install --no-compile ".[dev]" \
-      --constraint /tmp/python-constraints.txt \
+    /opt/workbench-venv/bin/python -m pip install --no-compile \
+      --require-hashes -r /tmp/requirements-dev.lock \
+    && /opt/workbench-venv/bin/python -m pip install --no-compile --no-deps -e . \
     && /opt/workbench-mujoco-venv/bin/python -m pip install --no-compile \
       --constraint /tmp/python-constraints.txt -r /tmp/requirements-mujoco.txt
 

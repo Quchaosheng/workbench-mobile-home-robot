@@ -43,6 +43,13 @@ SIGNED_ATTESTATION_STATUSES = frozenset({"signed", "verified"})
 
 _SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _PINNED_PACKAGE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9][A-Za-z0-9._+-]*)$")
+# A hash-checked lock line carries one or more sha256 digests after the pin, as
+# `name==version --hash=sha256:<hex> [--hash=sha256:<hex> ...]`.
+_PINNED_PACKAGE_WITH_HASHES = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[A-Za-z0-9][A-Za-z0-9._+-]*)"
+    r"(?P<hashes>(?:\s+--hash=sha256:[0-9a-f]{64})+)$"
+)
+_LINE_HASH = re.compile(r"--hash=sha256:(?P<hash>[0-9a-f]{64})")
 _FROM_LINE = re.compile(r"^FROM\s+(?P<reference>\S+)", re.IGNORECASE | re.MULTILINE)
 
 
@@ -116,26 +123,35 @@ def lock_revision(path: Path) -> dict[str, Any]:
     except (OSError, UnicodeError) as exc:
         raise ProvenanceError(f"dependency lock is unreadable: {lock_path}") from exc
 
-    packages: list[dict[str, str]] = []
+    packages: list[dict[str, Any]] = []
     seen: set[str] = set()
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        match = _PINNED_PACKAGE.fullmatch(line)
+        match = _PINNED_PACKAGE_WITH_HASHES.fullmatch(line) or _PINNED_PACKAGE.fullmatch(line)
         if match is None:
-            raise ProvenanceError(f"dependency lock line {line_number} is not pinned as name==version: {line!r}")
-        name = match.group(1)
+            raise ProvenanceError(
+                f"dependency lock line {line_number} is not pinned as name==version"
+                f" with optional --hash=sha256: {line!r}"
+            )
+        name = match.group("name") if "name" in match.groupdict() else match.group(1)
+        version = match.group("version") if "version" in match.groupdict() else match.group(2)
         if name.lower() in seen:
             raise ProvenanceError(f"dependency lock pins {name!r} more than once")
         seen.add(name.lower())
-        packages.append({"name": name, "version": match.group(2)})
+        entry: dict[str, Any] = {"name": name, "version": version}
+        hashes = sorted(set(_LINE_HASH.findall(line)))
+        if hashes:
+            entry["hashes"] = hashes
+        packages.append(entry)
     if not packages:
         raise ProvenanceError(f"dependency lock has no pinned packages: {lock_path}")
     return {
         "path": str(lock_path),
         "sha256": sha256(lock_path),
         "package_count": len(packages),
+        "hashed_package_count": sum(1 for package in packages if package.get("hashes")),
         "packages": packages,
     }
 
@@ -270,6 +286,27 @@ def verify_manifest(manifest: Mapping[str, Any]) -> tuple[str, ...]:
         count = lock.get("package_count")
         if isinstance(count, bool) or not isinstance(count, int) or count < 1:
             reasons.append("lock.package_count must be a positive integer")
+        packages = lock.get("packages")
+        if not isinstance(packages, list):
+            reasons.append("lock.packages must be a list")
+        else:
+            if isinstance(count, int) and not isinstance(count, bool) and len(packages) != count:
+                reasons.append("lock.packages must list every pinned package")
+            # Each package is checked on its own, so a count mismatch cannot mask
+            # a malformed hash in the same revision.
+            for package in packages:
+                if not isinstance(package, Mapping):
+                    reasons.append("lock.packages entries must be objects")
+                    break
+                hashes = package.get("hashes")
+                if hashes is None:
+                    continue
+                if not isinstance(hashes, list) or not hashes:
+                    reasons.append("lock.packages hashes must be a non-empty list when present")
+                    break
+                if any(not isinstance(item, str) or re.fullmatch(r"[0-9a-f]{64}", item) is None for item in hashes):
+                    reasons.append("lock.packages hashes must be sha256 hex digests")
+                    break
 
     sbom = manifest.get("sbom")
     if not isinstance(sbom, Mapping):
@@ -333,8 +370,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lock",
         type=Path,
-        default=Path("docker/python-constraints.txt"),
-        help="pinned dependency lock",
+        default=Path("docker/requirements-dev.lock"),
+        help="hash-checked root Python dependency lock",
     )
     parser.add_argument("--workflow-ref", default=None, help="workflow ref that produced the artifact")
     parser.add_argument("--attestation-status", default="unsigned", choices=("unsigned", "signed", "verified"))

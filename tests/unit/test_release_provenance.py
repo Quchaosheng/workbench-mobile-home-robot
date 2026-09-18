@@ -40,7 +40,24 @@ def pinned_base() -> object:
 
 
 def lock_payload() -> dict:
-    return {"path": "docker/python-constraints.txt", "sha256": HEX, "package_count": 3, "packages": []}
+    """A lock revision whose package list matches its own count.
+
+    The list is not decoration: it is where the resolved package hashes live, so a
+    count that disagrees with the list is refused by verify_manifest.
+    """
+
+    packages = [
+        {"name": "pydantic", "version": "2.13.5", "hashes": [HEX]},
+        {"name": "pytest", "version": "9.1.1", "hashes": [HEX]},
+        {"name": "jsonschema", "version": "4.26.0", "hashes": [HEX]},
+    ]
+    return {
+        "path": "docker/requirements-dev.lock",
+        "sha256": HEX,
+        "package_count": len(packages),
+        "hashed_package_count": len(packages),
+        "packages": packages,
+    }
 
 
 def sbom_payload() -> dict:
