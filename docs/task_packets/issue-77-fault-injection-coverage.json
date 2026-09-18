@@ -1,0 +1,116 @@
+{
+  "issue": 77,
+  "human_owner": "Quchaosheng",
+  "objective": "Turn the declared simulation fault taxonomy into executable coverage: give every fault in tools/scripts/scenario_tools.P2_FAULT_TYPES plus the two runtime faults (link loss, process restart) a seeded injector, an explicit trigger, an observable safe behaviour and an evidence requirement, drive those injectors through the shipped ExecutionController, PostActionLoop and VirtualMcu in deterministic tests, and report each declared fault as SIMULATED, HARDWARE_TESTED or NOT_EXECUTED.",
+  "decision_supported": "For each declared fault, can a reviewer point to an executable injector and a test on the shipped runtime that proves the safe behaviour, and does the coverage report state honestly which faults are only simulated rather than claim physical evidence?",
+  "allowed_paths": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py",
+    "sim/fault_injection/README.md",
+    "docs/task_packets/issue-77-fault-injection-coverage.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/task_packets/README.md",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "tools/scripts/scenario_tools.py",
+    "services/agent_runtime/workbench_agent_runtime/post_action.py",
+    "services/agent_runtime/workbench_agent_runtime/execution_controller.py",
+    "firmware/virtual_mcu/workbench_virtual_mcu/state_machine.py",
+    "libs/contracts/workbench_contracts/models.py",
+    "libs/application/workbench/application/task_graph.py",
+    "sim/scenarios/expanded",
+    "sim/scenarios/frozen",
+    "pyproject.toml",
+    "Makefile"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "apps/dashboard/**",
+    "services/backend/**",
+    "services/world_model/**",
+    "services/perception/**"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "tools/scripts/scenario_tools.py",
+    "sim/scenarios/expanded/low-light-001.json",
+    "services/agent_runtime/workbench_agent_runtime/post_action.py",
+    "services/agent_runtime/workbench_agent_runtime/execution_controller.py",
+    "firmware/virtual_mcu/workbench_virtual_mcu/state_machine.py",
+    "sim/fault_injection/README.md"
+  ],
+  "outputs": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py",
+    "sim/fault_injection/README.md"
+  ],
+  "acceptance": [
+    "every fault type declared in tools/scripts/scenario_tools.P2_FAULT_TYPES has a FaultSpec naming its trigger, safe behaviour, evidence requirement and declaring manifest directory, and a test asserts the declared set cannot drift from P2_FAULT_TYPES",
+    "the two runtime faults link_loss and process_restart are declared separately, are asserted never to appear in P2_FAULT_TYPES, and still receive a spec and an injector",
+    "an undeclared fault name raises instead of resolving to a default spec",
+    "camera dropout and a stale observation cannot yield a confirmed completion without fresh evidence, and occlusion withholds only the named entity while camera dropout withholds every entity",
+    "a stale-observation injector ages a real sample from the port and reports a miss when the port has nothing to age, rather than synthesising a reading",
+    "actuator timeout raises and reaches a terminal failed state under bounded retry, and never reports success even when a verifier would confirm",
+    "link loss drives the shipped VirtualMcu watchdog to its fault state and requires an explicit reset to clear, exercised through the real MCU boundary rather than a stub",
+    "a process restart invalidates the correlation of the run it restarted and leaves another run's correlation intact",
+    "injection is seeded so one seed replays the same injected sequence deterministically",
+    "coverage reports every declared fault as SIMULATED, HARDWARE_TESTED or NOT_EXECUTED, defaults to NOT_EXECUTED rather than passing, refuses an undeclared fault name, and refuses a HARDWARE_TESTED claim that names no physical evidence reference",
+    "the coverage document is JSON-serializable and carries FAULT_INJECTION_VERSION",
+    "the sim/fault_injection README documents the shipped contract and no longer describes a services/world_model faults hook that does not exist"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-77-fault-injection-coverage.json",
+    "python3 -m pytest tests/integration/test_fault_injection_coverage.py -v",
+    "python3 -m pytest tests/unit tests/integration -k fault -v",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 -m pytest tests/unit tests/integration -q --deselect tests/unit/test_multi_host_deployment.py",
+    "make contract",
+    "make scenario-check",
+    "make golden-check",
+    "make context-check",
+    "make docs",
+    "git diff --check",
+    "git diff --name-only"
+  ],
+  "evidence": [
+    "Task Packet schema validation output with exit code",
+    "targeted pytest output listing the collected Issue #77 test names, pass counts and exit codes",
+    "the -k fault selection output showing the fault tests are collected by the repository-wide fault keyword",
+    "mutation probe output: with the actuator timeout returning a completed result, the bounded-and-terminal test fails",
+    "mutation probe output: with the grasp failure outcome no longer set to failed, the refused-without-fresh-evidence test fails",
+    "mutation probe output: with occlusion blocking every entity instead of the named one, the entity-scoped test fails",
+    "mutation probe output: with the stale injector no longer aging the sample, the aged-real-sample test fails",
+    "mutation probe output: with the stale injector inventing a sample when the port is silent, the reports-a-miss test fails",
+    "mutation probe output: with the hardware coverage claim accepted without an evidence reference, the refusal test fails",
+    "mutation probe output: with coverage defaulting a fault to SIMULATED, the not-executed tests fail",
+    "mutation probe output: with link loss no longer driving the MCU watchdog, the MCU safe-state test fails",
+    "each mutation probe restored byte-identically, confirmed with diff -q against the pre-probe snapshot",
+    "ruff check, ruff format --check, the full pytest run, make contract, make scenario-check, make golden-check, make context-check and make docs output with exit codes",
+    "final git diff --check and git diff --name-only output proving every changed path is allowed"
+  ],
+  "stop_conditions": [
+    "Meeting the acceptance requires changing tools/scripts/scenario_tools.py, the agent runtime, the virtual MCU, an interface schema or a path owned by another module.",
+    "A fault injector can make a verification succeed or a completion confirmed that the underlying truth does not support.",
+    "A declared fault is reported as covered, hardware-tested or passing without an executable injector and a test that exercises it.",
+    "Fault injection is unseeded, so the same scenario does not deterministically replay.",
+    "A HARDWARE_TESTED claim is accepted without a named physical evidence reference, or a development-host fixture is reported as physical evidence."
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; tests use synthetic action identifiers, synthetic seeds, a fixed clock and synthetic observation records, and read no real robot, camera, operator or credential data",
+  "model_policy": "no model call; fault selection, injection, safe-behaviour assertion and coverage reporting are deterministic seeded logic",
+  "risks_and_fallbacks": [
+    "A fault taxonomy that only exists in a manifest generator is a promise, not coverage. Each fault is bound to a spec, an injector and a test on the shipped runtime, and a test asserts the spec set cannot drift from P2_FAULT_TYPES.",
+    "A fault test that stubs the controller would prove the stub, not the product. The injectors wrap the real ActionAdapter, ObservationPort, VirtualMcu and PostActionLoop boundaries.",
+    "An injector that invents evidence would turn a fault into a false pass. The stale injector only ages a real sample and reports a miss when the port is silent, and the camera dropout injector reports a missing entity instead of fabricating one.",
+    "A coverage report that defaults to green would be worse than no report. Coverage defaults to NOT_EXECUTED, refuses undeclared names, and refuses a hardware claim with no physical evidence reference.",
+    "A hardware-tested claim cannot be made from a development host. The report separates SIMULATED from HARDWARE_TESTED and requires a named evidence reference for the latter."
+  ]
+}
