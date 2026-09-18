@@ -1,0 +1,111 @@
+{
+  "issue": 86,
+  "human_owner": "Quchaosheng",
+  "objective": "Bind a release artifact to the exact inputs that produced it: one manifest that records the source commit, workflow ref, digest-pinned base image, committed dependency-lock revision, SBOM hash, registry image digest and attestation status, plus a verification gate that refuses promotion when any of those is missing, mutable or inconsistent, and a release workflow that verifies before it attests or publishes.",
+  "decision_supported": "May this built image be promoted to a release, or is its provenance incomplete, tag-based instead of digest-based, or lacking a signed attestation?",
+  "allowed_paths": [
+    "tools/scripts/release_manifest.py",
+    "tests/unit/test_release_provenance.py",
+    ".github/workflows/release-image.yml",
+    "docs/security/release-provenance.md",
+    "docs/security/supply-chain.md",
+    "mkdocs.yml",
+    "docs/task_packets/issue-86-release-artifact-provenance.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/task_packets/README.md",
+    "docs/task_packets/devops-release-sbom-permissions.json",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "Dockerfile",
+    "docker/python-constraints.txt",
+    "docs/security/hardening.md",
+    "tests/unit/test_release_workflow.py",
+    "pyproject.toml",
+    "Makefile"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "sim/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "apps/dashboard/**",
+    "Dockerfile",
+    "docker/**"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "Dockerfile",
+    "docker/python-constraints.txt",
+    "docs/security/supply-chain.md",
+    ".github/workflows/release-image.yml",
+    "tools/scripts/release_manifest.py",
+    "tests/unit/test_release_workflow.py"
+  ],
+  "outputs": [
+    "tools/scripts/release_manifest.py",
+    "tests/unit/test_release_provenance.py",
+    ".github/workflows/release-image.yml",
+    "docs/security/release-provenance.md"
+  ],
+  "acceptance": [
+    "the release manifest records source commit, workflow ref, base-image digest, lock revision, SBOM hash, image digest and attestation status",
+    "the base image is read from the Dockerfile and must be pinned to an immutable sha256 digest",
+    "the dependency lock must pin name==version, and a range, duplicate, empty or missing lock is refused",
+    "a mutable tag or a local-only image cannot substitute for a registry sha256 digest",
+    "promotion refuses a manifest with a missing provenance field, a short commit, a non-v-prefixed version or an unknown schema version",
+    "provenance completeness and attestation status are separate decisions, and promotion additionally requires a signed or verified attestation",
+    "the workflow verifies provenance before the image is attested and gates promotion before the provenance artifact is uploaded",
+    "a failed run preserves the diagnostic manifest instead of publishing a partial artifact",
+    "verification is deterministic and image inspection is injectable, so the tests need no Docker daemon and no network",
+    "the existing least-privilege SBOM permissions are preserved"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-86-release-artifact-provenance.json",
+    "python3 -m pytest tests/unit/test_release_provenance.py tests/unit/test_release_workflow.py -v",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make golden-check",
+    "make context-check",
+    "make docs",
+    "git diff --check",
+    "git diff --name-only"
+  ],
+  "evidence": [
+    "Task Packet schema validation output with exit code",
+    "targeted pytest output listing the collected Issue #86 test names, pass counts and exit codes",
+    "a dry-run and verification run showing a complete manifest accepted, a tag-only image refused, an unpinned base image refused, and an unsigned manifest promotable only after the attestation is recorded",
+    "mutation probe 1 output: with the registry-digest check removed, the mutable-tag test fails",
+    "mutation probe 2 output: with the base-image pin check removed, the unpinned-base test fails",
+    "mutation probe 3 output: with the unpinned-lock refusal removed, the range and duplicate lock tests fail",
+    "mutation probe 4 output: with the commitment hash check relaxed, the short-commit test fails",
+    "make test, make contract, make scenario-check, make golden-check, make context-check and make docs output with exit codes",
+    "final git diff --check and git diff --name-only output proving every changed path is allowed"
+  ],
+  "stop_conditions": [
+    "Meeting the acceptance requires changing the Dockerfile, the dependency lock or a service owned by another module.",
+    "A mutable tag, an empty digest or a local-only image is accepted as a release identity.",
+    "An unpinned or duplicate dependency lock entry is silently re-resolved instead of refused.",
+    "Provenance is verified after the image is attested or after the artifact is published.",
+    "A failed verification publishes a partial manifest or drops the diagnostic record.",
+    "The change requires contents-write permission, a new tag, or release credentials."
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; tests use synthetic manifests and hashes and read only the committed lock and Dockerfile",
+  "model_policy": "no model call; provenance rules are deterministic parsing and string comparisons",
+  "risks_and_fallbacks": [
+    "A provenance checker could become a rubber stamp that reports eligible on anything. Verification returns named reasons for every refusal and release_eligible is derived from that same function, so a manifest cannot claim eligibility it did not earn.",
+    "Requiring a signed attestation at build time would make the build manifest permanently ineligible, because attestation happens afterwards. Provenance completeness and promotion readiness are separate functions, and the workflow records the attestation before the promotion check.",
+    "A lock parser could reject the shipped lock and block releases. lock_revision is exercised against the repository's own committed lock in a test, and it refuses with the specific failing line number.",
+    "A tag could still reach the registry even when promotion is refused. The gate refuses further release steps rather than pretending to prevent an already-pushed tag, and the manifest records the digest that was actually published.",
+    "The workflow could be edited to bypass the gate. A regression test asserts the ordering of verification, attestation and artifact upload in the workflow file."
+  ]
+}

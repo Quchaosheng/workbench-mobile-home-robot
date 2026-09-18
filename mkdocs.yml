@@ -28,6 +28,7 @@ nav:
   - Security program: security/README.md
   - Secure review: security/secure-review-standard.md
   - Incident response: security/incident-response.md
+  - Release provenance: security/release-provenance.md
   - System architecture: architecture/system.md
   - Linux driver architecture: architecture/linux-drivers.md
   - Hardware:

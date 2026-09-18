@@ -19,6 +19,8 @@
 4. Required tests run against the exact pin or digest.
 5. A human reviewer merges. A separate human-owned tag may publish only after release gates pass.
 
+The release manifest that binds these inputs is defined in [release provenance](release-provenance.md).
+
 SBOM generation inventories the built candidate. It does not prove a component is safe, licensed for every use, or present in a deployed physical unit. Store the SBOM and provenance with the release evidence index.
 
 ## Triage

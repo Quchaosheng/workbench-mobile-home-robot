@@ -113,7 +113,17 @@ jobs:
             --sbom workbench-1.spdx.json \
             --version "$RELEASE_VERSION" \
             --registry-image "$REGISTRY_IMAGE" \
+            --workflow-ref "$GITHUB_WORKFLOW_REF" \
             --output release-manifest.json
+
+      # Provenance is checked before the image is attested or the manifest is
+      # published as an artifact. A manifest missing a digest-pinned base image,
+      # a committed lock revision or a registry image digest stops here rather
+      # than becoming release evidence.
+      - name: Verify release provenance
+        run: |
+          python tools/scripts/release_manifest.py \
+            --verify release-manifest.json
 
       - name: Attest published image
         if: steps.publish.outputs.digest != ''
@@ -123,7 +133,18 @@ jobs:
           subject-digest: ${{ steps.publish.outputs.digest }}
           push-to-registry: true
 
+      # Record the attestation outcome and refuse promotion unless the manifest
+      # is complete *and* the published image carries a signed attestation.
+      - name: Verify promotion readiness
+        if: steps.publish.outputs.digest != ''
+        run: |
+          python tools/scripts/release_manifest.py \
+            --mark-attestation signed \
+            --output release-manifest.json \
+            --require-promotion
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
         with:
           name: workbench-1-release-provenance
           path: release-manifest.json
