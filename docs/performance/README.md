@@ -1,6 +1,6 @@
 # 性能与证据基线
 
-本目录的报告必须由脚本从原始数据生成。所有耗时以阶段事件的 `duration_ms` 记录，汇总同时给出 P50、P95 和最大值；不要把任务执行耗时当成容器启动耗时。
+本目录的报告必须由脚本从原始数据生成。所有耗时以阶段事件的 `duration_ms` 记录，汇总同时给出 P50、P95、P99 和最大值，并显式标注单位；不要把任务执行耗时当成容器启动耗时。每份报告同时记录解析出的 git 提交号（`revision`），使结果可以追溯到具体代码。
 
 ## 端到端阶段
 
@@ -33,7 +33,7 @@ python tools/scripts/benchmark_resources.py \
   --output runs/performance/resources.json
 ```
 
-该脚本使用 `docker stats` 采集每个服务容器的 CPU 百分比和 RSS 近似值，并保存机器、Python、采样次数和间隔。
+该脚本使用 `docker stats` 采集每个服务容器的 CPU 百分比和 RSS 近似值，并保存机器、Python、采样次数和间隔。报告还记录事件日志总字节数、单次运行的磁盘增长、并发运行数，以及只读 API 的 P50/P95/P99 延迟和失败率，因此事件日志大小、并发、API 延迟、内存、CPU 与磁盘增长都有可比较的预算输入。`--data-dir` 指定统计事件日志的目录（默认 `runs`）。
 
 ## 真机日志
 
@@ -55,3 +55,6 @@ python tools/scripts/analyze_telemetry.py runs/hardware/run-001.jsonl \
 同环境基线比较、绝对预算和失败关闭规则见
 [`software-regression-gate.md`](software-regression-gate.md)。该门禁只适用于开发主机的
 软件性能，不替代目标板或物理机器人测量。
+
+没有提交基线的宿主机（例如计划任务 runner）运行 `make performance-budget-check`：
+它只检查绝对预算，未提供的报告记为 `not_evaluated` 并返回 `INCOMPLETE`，不会伪装成通过。

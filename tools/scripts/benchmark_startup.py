@@ -11,7 +11,7 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
-from performance_tools import software_environment
+from performance_tools import code_revision, software_environment
 
 
 def command(args: list[str], environment: dict[str, str]) -> str:
@@ -28,17 +28,36 @@ def command(args: list[str], environment: dict[str, str]) -> str:
 
 
 def wait_http(url: str, timeout_s: float) -> tuple[float, dict]:
+    """Poll `url` until it answers 200, bounded by the caller's deadline.
+
+    Each attempt is preceded by a monotonic deadline check, so a slow or
+    repeatedly failing endpoint cannot extend the wait past `timeout_s`. When
+    the budget is exhausted the raised error names the last observed cause, so a
+    timeout is diagnosable instead of a bare "too slow".
+    """
     deadline = time.perf_counter() + timeout_s
-    while time.perf_counter() < deadline:
+    attempts = 0
+    last_cause = "no attempt was made"
+    while True:
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            raise TimeoutError(f"timed out waiting for {url} after {attempts} attempt(s) in {timeout_s}s: {last_cause}")
+        attempts += 1
         try:
-            with urllib.request.urlopen(url, timeout=2) as response:
+            with urllib.request.urlopen(url, timeout=min(2.0, remaining)) as response:
                 payload = json.loads(response.read())
                 if response.status == 200:
                     return time.perf_counter(), payload
-        except (OSError, urllib.error.URLError, json.JSONDecodeError):
-            pass
-        time.sleep(0.25)
-    raise TimeoutError(f"timed out waiting for {url}")
+                last_cause = f"HTTP {response.status}"
+        except urllib.error.HTTPError as exc:
+            last_cause = f"HTTP {exc.code}"
+        except urllib.error.URLError as exc:
+            last_cause = f"connection error: {exc.reason!r}"
+        except (OSError, json.JSONDecodeError) as exc:
+            last_cause = f"{type(exc).__name__}"
+        # A fixed sleep would both overshoot a short deadline and add latency to
+        # a fast one, so the wait is capped by the time actually remaining.
+        time.sleep(max(0.0, min(0.25, deadline - time.perf_counter())))
 
 
 def main() -> int:
@@ -76,6 +95,7 @@ def main() -> int:
         "project": args.project,
         "cache_mode": "disabled" if args.no_cache else "standard",
         "environment": software_environment(),
+        "revision": code_revision(),
         "target_full_stack_s": 120,
         "phases_s": {
             "image_build": build_s,

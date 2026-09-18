@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "evidence_class": "local_software",
+  "scope": "scripted runtime only; no Docker, so container startup, container resources and API latency are out of scope here",
+  "required_reports": [
+    "telemetry"
+  ],
+  "minimum_samples": 5,
+  "metrics": {
+    "telemetry.end_to_end.p95_ms": {
+      "maximum": 120.0,
+      "max_regression_percent": 25.0,
+      "noise_tolerance": 5.0
+    },
+    "telemetry.end_to_end.p99_ms": {
+      "maximum": 200.0,
+      "max_regression_percent": 25.0,
+      "noise_tolerance": 8.0
+    },
+    "telemetry.failure_rate": {
+      "maximum": 0.05,
+      "max_regression_percent": 0.0,
+      "noise_tolerance": 0.0
+    }
+  }
+}

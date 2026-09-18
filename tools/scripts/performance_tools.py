@@ -6,6 +6,8 @@ import hashlib
 import json
 import math
 import platform
+import re
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,13 @@ MAX_DURATION_MS = 24 * 60 * 60 * 1000.0
 MAX_CPU_PERCENT = 100.0 * 1024
 MAX_MEMORY_BYTES = 1 << 50  # 1 PiB, above any plausible container limit
 
+# A failure is counted from the record itself, never inferred from a missing
+# stage: a dropped producer looks like a quiet run, and a quiet run is not a
+# passing one. Both an error level and an explicitly terminal failure event
+# count, so a producer that logs a failure at INFO is still counted once.
+FAILURE_LEVELS = frozenset({"ERROR", "CRITICAL"})
+FAILURE_EVENTS = frozenset({"stage_failed", "fault", "policy_violation", "run_failed", "task_failed"})
+
 # Identity fields must be non-empty strings so grouping keys stay hashable and
 # comparable; `details` is the only free-form object and is validated per event.
 _TELEMETRY_STRING_FIELDS = ("timestamp", "level", "service", "source", "run_id", "event", "message")
@@ -64,13 +73,73 @@ def _finite_bounded(value: object, label: str, maximum: float) -> float:
     return converted
 
 
-def software_environment() -> dict[str, str]:
-    """Return the stable environment identity shared by software reports."""
-    return {
+def software_environment(commit: str | None = None) -> dict[str, str]:
+    """Return the stable environment identity shared by software reports.
+
+    `commit` is optional so existing callers keep the three-field identity; when
+    supplied it must be a git object name, because a report that claims a
+    revision it cannot name is not reproducible evidence.
+    """
+    environment = {
         "platform": platform.platform(),
         "python": platform.python_version(),
         "machine": platform.machine(),
     }
+    if commit is not None:
+        if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{7,40}", commit):
+            raise ValueError("commit must be a 7-40 character lowercase hex object name")
+        environment["commit"] = commit
+    return environment
+
+
+def _failure_counts(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Count failures per source from the records themselves.
+
+    A record counts once even when it carries both a failure level and a failure
+    event, so one incident is not reported as two failures.
+    """
+    totals: dict[str, int] = defaultdict(int)
+    failures: dict[str, int] = defaultdict(int)
+    by_event: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for record in records:
+        source = record["source"]
+        totals[source] += 1
+        level = record["level"]
+        event = record["event"]
+        failed = level in FAILURE_LEVELS or event in FAILURE_EVENTS
+        if not failed:
+            continue
+        failures[source] += 1
+        by_event[source][event] += 1
+    return {
+        source: {
+            "total": totals[source],
+            "failed": failures[source],
+            "failure_rate": failures[source] / totals[source],
+            "by_event": dict(sorted(by_event[source].items())),
+        }
+        for source in sorted(totals)
+    }
+
+
+def code_revision() -> str | None:
+    """Return the current git object name, or None outside a git checkout.
+
+    A missing revision is recorded as absent rather than invented, because a
+    fabricated revision is worse evidence than an honest gap.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    revision = result.stdout.strip()
+    return revision if re.fullmatch(r"[0-9a-f]{7,40}", revision) else None
 
 
 def write_json_report(path: Path, report: dict[str, Any]) -> None:
@@ -211,15 +280,19 @@ def summarize_telemetry(
                     "samples": len(values),
                     "p50_ms": percentile(values, 0.50),
                     "p95_ms": percentile(values, 0.95),
+                    "p99_ms": percentile(values, 0.99),
                     "max_ms": max(values),
+                    "unit": "ms",
                 }
                 for stage, values in sorted(stages.items())
-            }
+            },
+            "failures": _failure_counts([record for record in records if record["source"] == source]),
         }
     return {
         "schema_version": 1,
         "generated_by": "tools/scripts/analyze_telemetry.py",
         "environment": software_environment(),
+        "revision": code_revision(),
         "record_count": len(records),
         "sources": sources,
         "hardware_evidence": (

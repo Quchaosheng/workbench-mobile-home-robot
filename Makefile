@@ -88,6 +88,15 @@ benchmark-resources:
 performance-regression-test:
 	$(PYTHON) -m pytest tests/unit/test_performance_regression.py -v
 
+# Absolute budgets only: needs neither Docker nor a committed baseline, so a
+# scheduled run can gate latency and failure rate on its own host. The policy
+# covers only the reports this host can produce; anything out of scope is
+# declared there rather than silently skipped.
+performance-budget-check:
+	$(PYTHON) tools/scripts/demo_scripted.py --iterations 30 --telemetry runs/performance/budget/simulation.jsonl
+	$(PYTHON) tools/scripts/analyze_telemetry.py runs/performance/budget/simulation.jsonl --output runs/performance/budget/telemetry.json
+	$(PYTHON) tools/scripts/performance_regression.py --policy docs/performance/software-budget-policy-scripted-v1.json --budgets-only --current-telemetry runs/performance/budget/telemetry.json --output runs/performance/budget/budgets.json
+
 dashboard-test:
 	$(PYTHON) -m unittest tests.unit.test_dashboard_backend -v
 

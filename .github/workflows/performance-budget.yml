@@ -1,0 +1,52 @@
+name: performance-budget
+
+on:
+  schedule:
+    # Weekly, after the nightly pipeline has had time to run.
+    - cron: "23 19 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scripted-budget:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Enforce recorded software budgets
+        run: make performance-budget-check
+
+      - name: Report evidence class
+        if: always()
+        run: |
+          {
+            echo "### Scripted software budget"
+            echo
+            echo "This job measures the scripted runtime on a GitHub-hosted runner."
+            echo "Absolute budgets only: no cross-host baseline is committed, so no"
+            echo "relative regression is claimed. Container startup, container"
+            echo "resources and API latency are out of scope without Docker."
+            echo
+            echo "Target hardware, real ROS/Gazebo and physical robot measurements"
+            echo "remain NOT_EXECUTED."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: performance-budget-report
+          path: |
+            runs/performance/budget/telemetry.json
+            runs/performance/budget/budgets.json
+          if-no-files-found: error

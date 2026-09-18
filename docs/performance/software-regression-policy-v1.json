@@ -1,7 +1,11 @@
 {
   "schema_version": 1,
   "evidence_class": "local_software",
-  "required_reports": ["startup", "resources", "telemetry"],
+  "required_reports": [
+    "startup",
+    "resources",
+    "telemetry"
+  ],
   "minimum_samples": 5,
   "metrics": {
     "startup.container_start_to_health": {
@@ -33,6 +37,46 @@
       "maximum": 50.0,
       "max_regression_percent": 25.0,
       "noise_tolerance": 2.0
+    },
+    "resources.event_log_bytes_max": {
+      "maximum": 1073741824,
+      "max_regression_percent": 25.0,
+      "noise_tolerance": 1048576
+    },
+    "resources.event_log_growth_bytes_per_run": {
+      "maximum": 10485760,
+      "max_regression_percent": 25.0,
+      "noise_tolerance": 65536
+    },
+    "resources.concurrent_runs_max": {
+      "maximum": 64,
+      "max_regression_percent": 25.0,
+      "noise_tolerance": 1.0
+    },
+    "api.latency_p95_ms": {
+      "maximum": 250.0,
+      "max_regression_percent": 25.0,
+      "noise_tolerance": 5.0
+    },
+    "api.latency_p99_ms": {
+      "maximum": 500.0,
+      "max_regression_percent": 25.0,
+      "noise_tolerance": 10.0
+    },
+    "api.failure_rate": {
+      "maximum": 0.01,
+      "max_regression_percent": 0.0,
+      "noise_tolerance": 0.0
+    },
+    "telemetry.end_to_end.p99_ms": {
+      "maximum": 80.0,
+      "max_regression_percent": 25.0,
+      "noise_tolerance": 3.0
+    },
+    "telemetry.failure_rate": {
+      "maximum": 0.05,
+      "max_regression_percent": 0.0,
+      "noise_tolerance": 0.0
     }
   }
 }

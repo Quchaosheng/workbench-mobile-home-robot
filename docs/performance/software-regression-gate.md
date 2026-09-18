@@ -51,3 +51,26 @@ python tools/scripts/performance_regression.py \
 门禁。结果始终标记为 `local_software`，并明确保留
 `target_hardware_measurement: NOT_EXECUTED`。目标板、真实 ROS/Gazebo 和物理机器人
 必须重新建立各自的可比基线，不能沿用本门禁作为发布证据。
+
+## 预算范围与失败率
+
+除启动、CPU 与内存外，门禁还覆盖事件日志字节数、单次运行磁盘增长、并发运行数、
+API P95/P99 与失败率，以及遥测阶段失败率。遥测报告因此额外给出 P99 和单位
+（`unit: "ms"`），并从记录本身统计失败：`level` 为 `ERROR`/`CRITICAL`，或事件属于
+`stage_failed`、`fault`、`policy_violation`、`run_failed`、`task_failed`。同一条记录
+即使同时命中级别与事件也只计一次，安静但未上报的流水线不会被当成通过。
+
+每个报告都记录解析出的 git 提交号（`revision`）以及平台、Python 和机器。提交号与
+环境分开保存，因此基线可比性仍只由平台、Python、机器和 cache 模式决定。
+
+## 无基线的预算门禁
+
+宿主机没有提交基线时可用 `--budgets-only`：只检查绝对预算，不声称任何相对退化。
+缺失的报告会记入 `not_evaluated` 并把状态置为 `INCOMPLETE`（退出码 2），绝不会被当作
+通过。计划任务使用 `docs/performance/software-budget-policy-scripted-v1.json`，它只
+声明该主机能产出的遥测指标；容器启动、容器资源和 API 延迟在无 Docker 的情况下
+明确不在范围内。
+
+```bash
+make performance-budget-check
+```
