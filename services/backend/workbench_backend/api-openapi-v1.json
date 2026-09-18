@@ -3,7 +3,7 @@
   "info": {
     "title": "Workbench Desk Robot read-only API",
     "version": "1.0.0",
-    "description": "Read-only run, event, readiness, and expression projections. No endpoint grants robot or ROS control authority."
+    "description": "Read-only run, event, health, alert, readiness, and expression projections. No endpoint grants robot or ROS control authority."
   },
   "servers": [{"url": "/"}],
   "paths": {
@@ -60,12 +60,45 @@
         }
       }
     },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Current robot health, active alerts, and history bounds.",
+        "description": "Read-only. Status and alerts are derived from validated monotonic snapshots; missing data is unknown or degraded, never healthy or zero. It cannot clear an alarm, reset a fault, release contactors, or move the robot.",
+        "responses": {
+          "200": {"description": "Current health projection.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthReport"}}}},
+          "413": {"description": "Response exceeds 4 MiB.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "The instance is draining, at its concurrency bound, or the health document is malformed.", "headers": {"Retry-After": {"description": "Seconds to wait before retrying; present when the refusal is transient.", "schema": {"type": "integer", "minimum": 1}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/api/v1/health/history": {
+      "get": {
+        "operationId": "getHealthHistory",
+        "summary": "Bounded recent snapshot history and cleared alerts.",
+        "description": "Read-only. Returns at most the configured snapshot, entry and age limits; safety-incident evidence is referenced rather than dropped.",
+        "parameters": [{"$ref": "#/components/parameters/HistorySince"}],
+        "responses": {
+          "200": {"description": "Bounded history projection.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthHistory"}}}},
+          "400": {"description": "The since filter is not a finite non-negative number.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "413": {"description": "Response exceeds 4 MiB.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "The instance is draining, at its concurrency bound, or the health document is malformed.", "headers": {"Retry-After": {"description": "Seconds to wait before retrying; present when the refusal is transient.", "schema": {"type": "integer", "minimum": 1}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
     "/api/v1/expression-states": {
       "get": {"operationId": "expressionContract", "responses": {"200": {"description": "Expression states and transitions.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExpressionContract"}}}}, "503": {"description": "The instance is draining, at its concurrency bound, or the event source is invalid.", "headers": {"Retry-After": {"description": "Seconds to wait before retrying; present when the refusal is transient.", "schema": {"type": "integer", "minimum": 1}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}}}
     }
   },
   "components": {
     "parameters": {
+      "HistorySince": {
+        "name": "since",
+        "in": "query",
+        "required": false,
+        "description": "Only report snapshots and cleared alerts at or after this monotonic timestamp (seconds).",
+        "schema": {"type": "number", "minimum": 0}
+      },
       "RunId": {
         "name": "run_id",
         "in": "path",
@@ -135,6 +168,143 @@
           "events": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/components/schemas/Event"}}
         }
       },
+      "HealthStatus": {"enum": ["healthy", "degraded", "fault", "unknown"]},
+      "HealthMetric": {
+        "type": "object",
+        "required": ["name", "unit", "expected_source", "state", "source_status", "missing", "stale"],
+        "properties": {
+          "name": {"type": "string", "description": "Registry metric name."},
+          "value": {"type": ["boolean", "integer", "number", "string", "null"], "description": "Validated value; null when missing or in conflict."},
+          "unit": {"type": "string"},
+          "expected_source": {"type": "string", "description": "The only source permitted to write this metric."},
+          "source": {"type": ["string", "null"]},
+          "observed_at": {"type": ["number", "null"], "description": "Monotonic seconds; null when missing."},
+          "age_s": {"type": ["number", "null"], "minimum": 0, "description": "Monotonic age in seconds; null when missing."},
+          "state": {"enum": ["fresh", "degraded", "fault", "stale", "conflict", "missing"]},
+          "source_status": {"enum": ["available", "stale", "missing", "conflict"]},
+          "missing": {"type": "boolean"},
+          "stale": {"type": "boolean"}
+        }
+      },
+      "HealthDomain": {
+        "type": "object",
+        "required": ["status", "metrics"],
+        "properties": {
+          "status": {"$ref": "#/components/schemas/HealthStatus"},
+          "metrics": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"$ref": "#/components/schemas/HealthMetric"}}
+        }
+      },
+      "HealthSnapshot": {
+        "type": "object",
+        "required": ["collected_at", "clock_id", "overall", "domains"],
+        "properties": {
+          "collected_at": {"type": "number", "minimum": 0, "description": "Monotonic seconds when the snapshot was taken."},
+          "clock_id": {"const": "monotonic"},
+          "overall": {"$ref": "#/components/schemas/HealthStatus"},
+          "domains": {"type": "object", "maxProperties": 128, "additionalProperties": {"$ref": "#/components/schemas/HealthDomain"}}
+        }
+      },
+      "HealthAlert": {
+        "type": "object",
+        "required": ["alert_id", "condition", "severity", "state", "metric", "domain", "first_seen_at", "last_seen_at", "count", "evidence_ref", "rules_version"],
+        "properties": {
+          "alert_id": {"type": "string", "description": "Stable metric:condition:source identity used for deduplication."},
+          "condition": {"enum": ["estop_unavailable", "estop_disagreement", "watchdog_loss", "bms_fault", "contactor_denied", "can_bus_off", "can_link_loss", "controller_fault", "stop_fault", "localization_stale", "perception_stale", "event_store_integrity", "backend_unavailable", "disk_pressure", "source_missing", "source_stale", "source_fault"]},
+          "severity": {"enum": ["info", "warning", "critical"]},
+          "state": {"enum": ["active", "cleared"]},
+          "metric": {"type": "string"},
+          "domain": {"type": "string"},
+          "source_status": {"type": "string"},
+          "observed_value": {"type": ["boolean", "integer", "number", "string", "null"]},
+          "unit": {"type": "string"},
+          "first_seen_at": {"type": "number", "minimum": 0},
+          "last_seen_at": {"type": "number", "minimum": 0},
+          "count": {"type": "integer", "minimum": 1},
+          "evidence_ref": {"type": "string"},
+          "summary": {"type": "string"},
+          "rules_version": {"const": "robot-alerts-v1"}
+        }
+      },
+      "AlertSummary": {
+        "type": "object",
+        "required": ["total", "by_severity"],
+        "properties": {
+          "total": {"type": "integer", "minimum": 0},
+          "by_severity": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+          "by_condition": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+          "rules_version": {"const": "robot-alerts-v1"}
+        }
+      },
+      "HealthLimits": {
+        "type": "object",
+        "required": ["max_snapshots", "max_history_entries", "max_history_age_s", "max_document_bytes"],
+        "properties": {
+          "max_snapshots": {"type": "integer", "minimum": 1, "maximum": 256},
+          "max_history_entries": {"type": "integer", "minimum": 1, "maximum": 512},
+          "max_history_age_s": {"type": "number", "maximum": 86400},
+          "max_document_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576}
+        }
+      },
+      "HealthHistoryBounds": {
+        "type": "object",
+        "required": ["snapshot_count", "limits"],
+        "properties": {
+          "snapshot_count": {"type": "integer", "minimum": 0, "maximum": 256},
+          "oldest_collected_at": {"type": ["number", "null"]},
+          "newest_collected_at": {"type": ["number", "null"]},
+          "limits": {"$ref": "#/components/schemas/HealthLimits"}
+        }
+      },
+      "HealthReport": {
+        "type": "object",
+        "required": ["read_only", "status", "source", "current", "alerts", "history", "integrity"],
+        "properties": {
+          "read_only": {"const": true},
+          "rules_version": {"const": "robot-alerts-v1"},
+          "history_version": {"const": "backend-health-history-v1"},
+          "status": {"$ref": "#/components/schemas/HealthStatus"},
+          "source": {"type": "string"},
+          "current": {"anyOf": [{"$ref": "#/components/schemas/HealthSnapshot"}, {"type": "null"}]},
+          "alerts": {
+            "type": "object",
+            "required": ["summary", "active"],
+            "properties": {
+              "summary": {"$ref": "#/components/schemas/AlertSummary"},
+              "active": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/HealthAlert"}}
+            }
+          },
+          "history": {"$ref": "#/components/schemas/HealthHistoryBounds"},
+          "integrity": {
+            "type": "object",
+            "required": ["malformed_documents", "source_restarts"],
+            "properties": {"malformed_documents": {"type": "integer", "minimum": 0}, "source_restarts": {"type": "integer", "minimum": 0}}
+          },
+          "reason": {"type": "string"}
+        }
+      },
+      "HealthHistoryEntry": {
+        "type": "object",
+        "required": ["collected_at", "clock_id", "overall", "domains"],
+        "properties": {
+          "collected_at": {"type": "number", "minimum": 0},
+          "clock_id": {"const": "monotonic"},
+          "overall": {"$ref": "#/components/schemas/HealthStatus"},
+          "domains": {"type": "object", "additionalProperties": {"$ref": "#/components/schemas/HealthStatus"}}
+        }
+      },
+      "HealthHistory": {
+        "type": "object",
+        "required": ["read_only", "source", "snapshots", "cleared_alerts", "limits"],
+        "properties": {
+          "read_only": {"const": true},
+          "rules_version": {"const": "robot-alerts-v1"},
+          "history_version": {"const": "backend-health-history-v1"},
+          "source": {"type": "string"},
+          "snapshots": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/HealthHistoryEntry"}},
+          "cleared_alerts": {"type": "array", "maxItems": 512, "items": {"$ref": "#/components/schemas/HealthAlert"}},
+          "limits": {"$ref": "#/components/schemas/HealthLimits"}
+        }
+      },
       "ExpressionContract": {
         "type": "object",
         "required": ["states", "transitions"],
@@ -150,6 +320,6 @@
     "legacy_alias": "/api",
     "policy": "v1 is additive and read-only; aliases remain until a documented v2 migration."
   },
-  "x-limits": {"max_response_bytes": 4194304, "max_event_log_bytes": 10485760, "max_events_per_run": 10000},
+  "x-limits": {"max_response_bytes": 4194304, "max_event_log_bytes": 10485760, "max_events_per_run": 10000, "max_health_document_bytes": 1048576, "max_health_snapshots": 256, "max_health_history_entries": 512},
   "x-headers": {"content_type": "application/json; charset=utf-8", "api_version": "X-API-Version"}
 }

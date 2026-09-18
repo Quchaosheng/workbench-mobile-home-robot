@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import mimetypes
 import os
 import re
@@ -7,12 +8,15 @@ import signal
 import socket
 import threading
 import time
+from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
 
+from .health import HealthHistoryError, HealthReadModel
 from .inbound_http import InboundHttpConfigurationError, InboundHttpPolicy
 from .logging import StructuredLogger
 from .read_model import (
@@ -173,6 +177,7 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
 
 class DashboardHandler(BaseHTTPRequestHandler):
     read_model = DashboardReadModel(DEFAULT_DATA_DIR)
+    health_model = HealthReadModel(Path(DEFAULT_DATA_DIR) / "health.jsonl")
     static_dir = DEFAULT_STATIC_DIR
     logger = StructuredLogger("workbench-backend")
     data_source = "dashboard-fixtures"
@@ -433,6 +438,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if route in {"/api/expression-states", "/api/v1/expression-states"}:
             self._send_json(self.read_model.expression_contract(), api_version=api_version)
             return
+        if route in {"/api/health", "/api/v1/health"}:
+            # Read-only current health, active alerts and bounded history. It
+            # never writes, clears an alarm or acknowledges anything.
+            self._send_health(lambda: self.health_model.current_payload(), api_version=api_version)
+            return
+        if route in {"/api/health/history", "/api/v1/health/history"}:
+            try:
+                since = self._health_since()
+            except ValueError:
+                self._send_json({"error": "invalid_since"}, HTTPStatus.BAD_REQUEST, api_version=api_version)
+                return
+            self._send_health(lambda: self.health_model.history_payload(since=since), api_version=api_version)
+            return
         run_prefix = "/api/v1/runs/" if route.startswith("/api/v1/runs/") else "/api/runs/"
         if route.startswith(run_prefix):
             suffix = unquote(route.removeprefix(run_prefix))
@@ -455,6 +473,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         static_path = "index.html" if route in {"", "/"} else route.lstrip("/")
         self._send_file(static_path)
+
+    def _health_since(self) -> float | None:
+        """Parse the optional ``since`` history filter.
+
+        Raises ``ValueError`` when the filter is present but unusable, so the
+        caller can answer 400 instead of silently ignoring a malformed bound.
+        """
+        values = parse_qs(urlparse(self.path).query, keep_blank_values=True).get("since")
+        if not values:
+            return None
+        if len(values) != 1:
+            raise ValueError("since must appear once")
+        try:
+            value = float(values[0])
+        except (TypeError, ValueError):
+            raise ValueError("since must be a number") from None
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("since must be a finite non-negative number")
+        return value
+
+    def _send_health(self, project: "Callable[[], dict[str, Any]]", *, api_version: str | None = None) -> None:
+        """Serve one health projection, failing closed on a bad document."""
+        try:
+            payload = project()
+        except HealthHistoryError:
+            # The document is present but not trustworthy. Report a transient,
+            # retryable failure instead of a partial or inferred projection.
+            self._send_json(
+                {"error": "invalid_health_source", "message": "The health document is unavailable or malformed."},
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                api_version=api_version,
+            )
+            return
+        self._send_json(payload, api_version=api_version)
 
     def _reject_write(self) -> None:
         if not self._authorize_request():
@@ -488,6 +540,7 @@ def create_server(
     static_dir: str | Path = DEFAULT_STATIC_DIR,
     event_source_url: str | None = None,
     event_source_allowlist: str | None = None,
+    health_path: str | Path | None = None,
     published_host: str = "127.0.0.1",
     trust_mode: str = "local",
     trusted_proxy_allowlist: str | None = None,
@@ -511,9 +564,13 @@ def create_server(
     else:
         configured_read_model = DashboardReadModel(data_dir)
     configured_static_dir = Path(static_dir)
+    configured_health_model = HealthReadModel(
+        health_path if health_path is not None else Path(data_dir) / "health.jsonl"
+    )
 
     class ConfiguredHandler(DashboardHandler):
         read_model = configured_read_model
+        health_model = configured_health_model
         static_dir = configured_static_dir
         data_source = configured_read_model.data_source if event_source_url else "dashboard-fixtures"
         inbound_policy = configured_inbound_policy

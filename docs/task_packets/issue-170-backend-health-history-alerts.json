@@ -1,0 +1,121 @@
+{
+  "issue": 170,
+  "human_owner": "Quchaosheng",
+  "objective": "Expose the bounded snapshots from Issue #169 as a read-only current-health and recent-alert HTTP API: re-validate every metric against the fixed registry, recompute the domain and overall status instead of trusting the document, derive deduplicated alerts with explicit severity and evidence, keep a fixed count/age/byte-bounded history, and publish the whole surface in the versioned OpenAPI contract.",
+  "decision_supported": "Is the robot healthy right now, which validated conditions are active alerts, how did each alert open and clear, and can the backend answer that without ever writing, clearing an alarm or issuing control?",
+  "allowed_paths": [
+    "libs/application/workbench/application/alerts.py",
+    "tests/unit/test_robot_alerts.py",
+    "services/backend/workbench_backend/health.py",
+    "services/backend/workbench_backend/server.py",
+    "services/backend/workbench_backend/api-openapi-v1.json",
+    "docs/api-openapi-v1.json",
+    "docs/api.md",
+    "tests/unit/test_backend_health.py",
+    "docs/task_packets/issue-170-backend-health-history-alerts.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/task_packets/README.md",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "libs/application/workbench/application/monitoring.py",
+    "tests/unit/test_monitoring.py",
+    "tests/unit/test_dashboard_backend.py",
+    "tests/unit/test_multi_host.py",
+    "services/backend/workbench_backend/read_model.py",
+    "pyproject.toml",
+    "Makefile",
+    "mkdocs.yml"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "sim/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "apps/dashboard/**",
+    "services/agent_runtime/**",
+    "services/world_model/**"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "libs/application/workbench/application/monitoring.py",
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/server.py",
+    "services/backend/workbench_backend/api-openapi-v1.json",
+    "docs/api.md",
+    "tests/unit/test_dashboard_backend.py",
+    "tests/unit/test_monitoring.py"
+  ],
+  "outputs": [
+    "libs/application/workbench/application/alerts.py",
+    "services/backend/workbench_backend/health.py",
+    "services/backend/workbench_backend/server.py",
+    "services/backend/workbench_backend/api-openapi-v1.json",
+    "docs/api-openapi-v1.json",
+    "docs/api.md",
+    "tests/unit/test_backend_health.py",
+    "tests/unit/test_robot_alerts.py"
+  ],
+  "acceptance": [
+    "read-only GET /api/v1/health exposes overall status, per-domain source status and freshness, active alerts and bounded history limits, and GET /api/v1/health/history exposes the recent snapshots and cleared alerts",
+    "the checked-in OpenAPI contract defines the new fields, units, enums, limits, status codes, versioning and failure responses for both routes",
+    "the backend re-validates every metric against the fixed registry and refuses an unregistered metric, a wrong source, a duplicate metric, a non-finite timestamp and an incompatible clock",
+    "the domain and overall statuses are recomputed from the validated metrics, so a document cannot report healthy while carrying a faulted, stale, missing or conflicting critical metric",
+    "missing data is unknown or degraded, never healthy or zero, and an absent document reports unknown with reason no_health_snapshot rather than an error",
+    "alerts carry explicit severity info/warning/critical, condition, source status, first/last seen, active/cleared state, count and an evidence reference",
+    "critical conditions include E-stop unavailable, watchdog loss, BMS/contactor fault, CAN bus-off and link loss, controller and STOP fault, localization and perception loss, and event-store integrity failure",
+    "alerts are deduplicated by metric:condition:source and state transitions use bounded debounce on monotonic samples",
+    "history is bounded by snapshot count, alert count, alert age and document bytes, and a malformed or oversized document fails closed with 503 rather than a partial projection",
+    "a backwards monotonic clock is refused as a source restart instead of silently reordering the timeline",
+    "the API is GET-only and cannot clear alarms, reset faults, release contactors, move the robot or issue STOP",
+    "local and split-host clients receive the same validated contract, and concurrent readers never observe a partial history"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-170-backend-health-history-alerts.json",
+    "python3 -m pytest tests/unit/test_robot_alerts.py tests/unit/test_backend_health.py tests/unit/test_dashboard_backend.py tests/unit/test_multi_host.py -v",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make golden-check",
+    "make context-check",
+    "make docs",
+    "git diff --check",
+    "git diff --name-only"
+  ],
+  "evidence": [
+    "Task Packet schema validation output with exit code",
+    "targeted pytest output listing the collected Issue #170 test names, pass counts and exit codes",
+    "an API run showing a healthy, faulted, missing, stale and cleared projection plus the versioned contract served over HTTP",
+    "mutation probe 1 output: with the status recomputation removed, the fabricated-healthy test fails",
+    "mutation probe 2 output: with the registered-coverage check removed, the truncated-document test fails",
+    "mutation probe 3 output: with the metric source check removed, the wrong-source test fails",
+    "mutation probe 4 output: with the monotonic-order check removed, the backwards-clock test fails",
+    "make test, make contract, make scenario-check, make golden-check, make context-check and make docs output with exit codes",
+    "final git diff --check and git diff --name-only output proving every changed path is allowed"
+  ],
+  "stop_conditions": [
+    "Meeting the acceptance requires changing the monitoring collector, an interface schema, a control path or a path owned by another module.",
+    "The endpoint can clear an alarm, reset a fault, release a contactor, move the robot or issue STOP.",
+    "A document can report healthy while carrying a faulted, stale, missing or conflicting critical metric.",
+    "Missing data is rendered as zero or healthy, or an absent document is served as an error instead of unknown.",
+    "Alert state transitions become non-deterministic or unbounded in count or history size.",
+    "The change requires a new web framework, an external database, a message broker or a write/acknowledge endpoint."
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; tests use synthetic monotonic snapshots and fixed metric values and read no real robot, camera or credential data",
+  "model_policy": "no model call; alert derivation and validation are deterministic set and comparison logic",
+  "risks_and_fallbacks": [
+    "A health endpoint could become a rubber stamp that echoes the document's own status. The backend recomputes every metric, domain and overall status from the fixed registry and refuses a document that contradicts its values.",
+    "Treating an absent document as an error would make the dashboard unusable before the robot ever writes health. Absent is reported as unknown with a named reason; only a present-but-malformed document fails closed.",
+    "Requiring every registered metric could reject a legitimately partial snapshot. The collector always emits the full registry with missing=true for absent inputs, so a short document is truncation, and the completeness check is a trust boundary rather than a compatibility restriction.",
+    "An alert that clears on a single noisy sample would page-and-clears repeatedly. Debounce and hysteresis run on monotonic samples with explicit open_after_s and clear_after_s bounds.",
+    "A cache keyed only on arrival would serve stale health after an atomic replace. The read model keys on document size and mtime so a replaced file is reloaded.",
+    "The endpoint surface could quietly grow a write verb. The handler installs the existing read-only rejection for every non-GET method and the contract test asserts every operation is a GET."
+  ]
+}
