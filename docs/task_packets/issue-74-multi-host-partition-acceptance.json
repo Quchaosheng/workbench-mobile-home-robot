@@ -1,0 +1,112 @@
+{
+  "issue": 74,
+  "human_owner": "Quchaosheng",
+  "objective": "Measure the failure behaviour docs/deployment/multi-host.md promises for a split-host controller: prove readiness becomes NOT_READY within a bounded time when the simulation host is absent, slow, resetting, erroring or unresolvable; prove a transient outage recovers without duplicating or losing runs; prove a partial, gapped or old event stream is never rendered as fresh or complete state; and prove run and source identity survive a source restart, using the shipped backend against a deterministic in-process HTTP fake.",
+  "decision_supported": "Can an operator trust the split-host controller to report NOT_READY within a bounded time and to refuse to render an absent, slow, partitioned or malformed simulation peer as healthy state, and does an outage leave the visible run set and identity unchanged afterwards?",
+  "allowed_paths": [
+    "tests/unit/test_multi_host_acceptance.py",
+    "docs/task_packets/issue-74-multi-host-partition-acceptance.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/task_packets/README.md",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "docs/deployment/multi-host.md",
+    "deploy/multi-host/compose.sim.yaml",
+    "deploy/multi-host/compose.controller.yaml",
+    "services/backend/workbench_backend/server.py",
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/remote_http.py",
+    "services/backend/workbench_backend/inbound_http.py",
+    "tests/unit/test_multi_host.py",
+    "tests/unit/test_multi_host_deployment.py",
+    "pyproject.toml",
+    "Makefile"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "sim/**",
+    "apps/dashboard/**",
+    "services/agent_runtime/**",
+    "services/world_model/**",
+    "services/perception/**",
+    ".github/**"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "docs/deployment/multi-host.md",
+    "deploy/multi-host/compose.controller.yaml",
+    "services/backend/workbench_backend/server.py",
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/remote_http.py",
+    "tests/unit/test_multi_host.py"
+  ],
+  "outputs": [
+    "tests/unit/test_multi_host_acceptance.py"
+  ],
+  "acceptance": [
+    "readiness becomes NOT_READY within a bounded client timeout when the simulation peer resets every connection, and the controller process stays live and answers /healthz",
+    "a transient outage recovers to ready without duplicating, renumbering or dropping the runs the operator saw before it",
+    "a slow peer is reported unavailable within the client timeout instead of inheriting an unbounded wait, and the peer observes the client giving up before its own response completes",
+    "malformed JSON, a non-JSON content type and an error status each fail closed as invalid_event_source rather than rendering as empty or partial state",
+    "an event stream with a sequence gap is refused, and a legitimate in-progress prefix of a run reads as running rather than as the confirmed outcome the full stream would carry",
+    "an old run keeps its own observed timestamps instead of being stamped with the read time",
+    "an unresolvable simulation hostname yields NOT_READY rather than crashing the controller",
+    "a run's event timestamps and a partially written local log are not served as fresh or complete state",
+    "run IDs, event timestamps and the remote data-source identity survive a source stop and restart unchanged",
+    "every request the fake peer receives is recorded as path, mode, outcome and elapsed seconds, so each failure is asserted from observed peer behaviour and measured timing"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-74-multi-host-partition-acceptance.json",
+    "python3 -m pytest tests/unit/test_multi_host_acceptance.py -v",
+    "python3 -m pytest tests/unit/test_multi_host.py tests/unit/test_multi_host_acceptance.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 -m pytest -q --deselect tests/unit/test_multi_host_deployment.py",
+    "make contract",
+    "make scenario-check",
+    "make golden-check",
+    "make context-check",
+    "make docs",
+    "git diff --check",
+    "git diff --name-only"
+  ],
+  "evidence": [
+    "Task Packet schema validation output with exit code",
+    "targeted pytest output listing the collected Issue #74 test names, pass counts and exit codes",
+    "the combined multi-host run showing the new acceptance tests and the existing Issue #65/#66/#71 tests all pass together",
+    "three consecutive runs of the acceptance module with identical pass counts, showing the timing assertions are not flaky",
+    "mutation probe 1 output: with sequence contiguity no longer enforced, the gapped-stream test fails",
+    "mutation probe 2 output: with the pre-connect deadline check removed, the bounded-readiness test fails",
+    "mutation probe 3 output: with the read-model error path swallowed instead of failing closed, the malformed-response test fails",
+    "mutation probe 4 output: with updated_at stamped at read time, the old-run test fails",
+    "mutation probe 5 output: with an unparseable local log line silently dropped, the partially-written-log test fails",
+    "mutation probe 6 output: with a transport failure returned as an empty success, the partition-recovery and transport-identity tests fail",
+    "each mutation probe restored byte-identically, confirmed with diff -q against the pre-probe snapshot and an empty git diff for services/backend",
+    "ruff check, ruff format --check, the full pytest run, make contract, make scenario-check, make golden-check, make context-check and make docs output with exit codes",
+    "final git diff --check and git diff --name-only output proving every changed path is allowed"
+  ],
+  "stop_conditions": [
+    "Meeting the acceptance requires changing the backend server, read model, remote HTTP client, a Compose file, the deployment document or a path owned by another module.",
+    "A partition, timeout or malformed response is rendered as healthy, empty or partially complete state instead of failing closed.",
+    "A test claims real inter-host network latency, packet loss or clock-skew evidence; that remains NOT_EXECUTED without two physical machines.",
+    "Passing the suite requires Docker, a second physical host or an external network service.",
+    "A readiness assertion is unbounded, so a hung peer could hold the check open indefinitely."
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; tests use loopback HTTP fakes, synthetic run and event identifiers and synthetic timestamps, and read no real robot, camera, credential or operator data",
+  "model_policy": "no model call; readiness, validation, projection and recovery are deterministic backend logic driven by a scripted in-process peer",
+  "risks_and_fallbacks": [
+    "A documented but unmeasured failure promise is the defect: the split-host document asserted bounded readiness and fail-closed malformed handling that no test exercised. Each promise now has an executable test against the shipped controller.",
+    "A green test on loopback could be read as network evidence. The fake is explicitly a stand-in, timing is asserted against the client's own timeout, and real inter-host latency, loss and clock skew remain NOT_EXECUTED.",
+    "Timing assertions can be flaky on a loaded machine. The bounds compare against the client timeout and the peer's own sleep rather than a tight wall-clock constant, and three consecutive runs were checked for stability.",
+    "A test that only asserts a status code would not show what the peer did. The fake records path, mode, outcome and elapsed seconds per request, so a failure is asserted from observed behaviour.",
+    "A legitimate in-progress run must not be mistaken for a broken one. The partial-stream test asserts a prefix reads as running, while a genuine sequence gap fails closed, so the two cases stay distinct."
+  ]
+}
