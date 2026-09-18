@@ -1,0 +1,96 @@
+{
+  "issue": 360,
+  "human_owner": "Quchaosheng",
+  "objective": "Install the JavaScript runtime the in-image dashboard checks need, add it to docker/apt-packages.txt, and pin the requirement in the container baseline test so the shipped image can run the dashboard monitoring contract instead of failing every container-full-stack run with a TypeError caused by a missing node binary.",
+  "decision_supported": "Can a reviewer confirm that the runtime image provably contains a JavaScript runtime for the tests that the container project check executes in-image, that the requirement is asserted by a committed baseline test rather than by prose, and that removing the package makes a named test fail?",
+  "allowed_paths": [
+    "docs/task_packets/issue-360-container-javascript-runtime.json",
+    "docker/apt-packages.txt",
+    "tests/unit/test_container_baseline.py"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "Dockerfile",
+    "Makefile",
+    "apps/dashboard/app.js",
+    "tests/unit/test_dashboard_accessibility.py",
+    "tests/unit/test_dashboard_execution_claims.py",
+    "docker/python-packages.txt",
+    "docker/python-constraints.txt",
+    "docker/requirements-dev.lock",
+    "docs/security/reproducible-python-lock.md",
+    "tools/scripts/check_task_packet.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "sim/**",
+    "apps/**",
+    "services/**",
+    "kernel/**",
+    "deploy/**",
+    "hardware/**",
+    ".github/**"
+  ],
+  "input_refs": [
+    "docker/apt-packages.txt",
+    "tests/unit/test_container_baseline.py",
+    "tests/unit/test_dashboard_accessibility.py",
+    "tests/unit/test_dashboard_execution_claims.py",
+    "Dockerfile",
+    "Makefile"
+  ],
+  "outputs": [
+    "docker/apt-packages.txt",
+    "tests/unit/test_container_baseline.py"
+  ],
+  "acceptance": [
+    "docker/apt-packages.txt names the distribution JavaScript runtime package nodejs, so the image installs a real node binary instead of leaving shutil.which('node') as None",
+    "tests/unit/test_container_baseline.py asserts nodejs is present in the committed apt package list, in the same required-package block that already pins ros-jazzy-ros-base and liburdfdom-tools, so the requirement cannot be dropped without a named test failing",
+    "removing the nodejs line from docker/apt-packages.txt makes the baseline test fail by name, proving the assertion is load-bearing rather than decorative",
+    "no dashboard application code, dashboard test or workflow file is modified, so the monitoring view keeps failing closed when no runtime is available and the fix is limited to giving the image the runtime its own checks require",
+    "the container baseline and container profile tests both pass unchanged on the host and ruff accepts the edited test module",
+    "no production module, interface schema, contract model or firmware source is modified by this change"
+  ],
+  "commands": [
+    "git diff --check",
+    "git diff --name-only",
+    "make context-check",
+    "make contract",
+    "make docs",
+    "make golden-check",
+    "make scenario-check",
+    "python3 -m pytest -q --deselect tests/unit/test_multi_host_deployment.py",
+    "python3 -m pytest tests/unit/test_container_baseline.py tests/unit/test_container_profiles.py -v",
+    "python3 -m pytest tests/unit/test_dashboard_accessibility.py -v",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-360-container-javascript-runtime.json"
+  ],
+  "evidence": [
+    "Task Packet schema validation output with exit code",
+    "the committed docker/apt-packages.txt listing the nodejs package next to the other required distribution packages",
+    "targeted pytest output for tests/unit/test_container_baseline.py and tests/unit/test_container_profiles.py with exit code",
+    "the host node version and the demonstrated absence of node inside the built image before the change, together with the TypeError raised by subprocess.run([None, ...]) in tests/unit/test_dashboard_accessibility.py",
+    "a mutation probe showing the baseline assertion fails by name when the nodejs line is removed, with docker/apt-packages.txt restored byte-identically and confirmed with diff -q and sha256sum",
+    "ruff check, ruff format --check, the full pytest run, make contract, make scenario-check, make golden-check, make context-check and make docs output with exit codes",
+    "final git diff --check and git diff --name-only output proving every changed path is allowed"
+  ],
+  "stop_conditions": [
+    "Installing a JavaScript runtime requires a third-party apt repository, a network key fetch at verification time or a version the distribution does not ship.",
+    "The dashboard module needs an ES2023+ feature the distribution runtime does not provide, which would make the fix a dashboard code change instead of an image change.",
+    "The container project check can only pass by skipping the accessibility tests rather than by providing the runtime they intentionally require.",
+    "Satisfying the acceptance requires editing a workflow file or the Dockerfile."
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; the change names a public Ubuntu distribution package and reads only committed build configuration and test files, and handles no credential, token or private registry URL",
+  "model_policy": "no model call; the edit is a deterministic package-list addition plus a committed assertion",
+  "risks_and_fallbacks": [
+    "A larger image is a real cost. The runtime is one distribution package with no recommended extras, installed from the same already-trusted Ubuntu archive the image already uses, and it is required by checks the image already runs.",
+    "A distribution runtime could lag the syntax app.js uses. The module only relies on replaceAll, at() and optional chaining, all long supported, so the package the distribution ships is sufficient; the acceptance keeps dashboards code untouched.",
+    "Pinning a runtime in the baseline test couples the test to one package name. The block already pins ros-jazzy-ros-base and liburdfdom-tools the same way, and the test asserts presence rather than an exact version, so an upstream rename would surface as a named failure instead of a silent omission.",
+    "The container image cannot be built on this host because the docker CLI is absent, so the in-image run of make container-project-check is verified by the container-full-stack workflow after the push; the committed baseline test and the host suite are the evidence available locally."
+  ]
+}
