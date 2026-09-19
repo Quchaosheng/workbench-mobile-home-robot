@@ -90,7 +90,7 @@
       "scenario_id": "kit-three-parts",
       "scenario_version": "0.2",
       "task_family": "kitting",
-      "status": "PLANNED",
+      "status": "REGISTERED",
       "environment_status": "SCRIPTED_FIXTURE",
       "semantic_actions": [
         "observe",
@@ -101,9 +101,6 @@
         "motion",
         "perception",
         "simulation"
-      ],
-      "missing_capabilities": [
-        "not_available"
       ],
       "verifier": "services/world_model/workbench_world_model/verifier.py::verify_kit_contents",
       "recovery_policy": [
@@ -116,18 +113,20 @@
       "adapter_owner": "Motion / Perception",
       "evidence_owner": "World Model",
       "release_owner": "Release / QA",
-      "manifest": "sim/scenarios/expanded/multi-object-001.json",
+      "manifest": "sim/registry/kit-three-parts.json",
       "tests": [
+        "tests/unit/test_scenario_migration.py",
         "tests/unit/test_world_model.py"
       ],
       "evidence_report": "docs/evaluation/failure-cases.md",
-      "notes": "The verifier and the scripted evaluator exist, and the family is exercised by the expanded multi_object variant. The registry manifest is not written yet; Issue #301 owns registration and the byte-for-byte equivalence proof."
+      "notes": "The verifier and the scripted evaluator existed before the registry; Issue #301 registered the family and proved the legacy task_id and the registry identity resolve to the same verifier and the same frozen corpus. The simulation adapter is a fixture, so no Gazebo or physical claim is made.",
+      "missing_capabilities": []
     },
     {
       "scenario_id": "inspect-workpieces",
       "scenario_version": "0.2",
       "task_family": "inspection",
-      "status": "PLANNED",
+      "status": "REGISTERED",
       "environment_status": "SCRIPTED_FIXTURE",
       "semantic_actions": [
         "observe"
@@ -135,9 +134,6 @@
       "required_adapters": [
         "perception",
         "simulation"
-      ],
-      "missing_capabilities": [
-        "not_available"
       ],
       "verifier": "services/world_model/workbench_world_model/verifier.py::verify_inspection_evidence",
       "recovery_policy": [
@@ -149,34 +145,31 @@
       "adapter_owner": "Perception",
       "evidence_owner": "World Model",
       "release_owner": "Release / QA",
-      "manifest": "sim/scenarios/expanded/low-light-001.json",
+      "manifest": "sim/registry/inspect-workpieces.json",
       "tests": [
+        "tests/unit/test_scenario_migration.py",
         "tests/unit/test_world_model.py",
         "tests/unit/test_observed_attributes.py"
       ],
       "evidence_report": "docs/evaluation/failure-cases.md",
-      "notes": "Inspection is observation-only: it issues no grasp or place action. The family is exercised by the expanded low_light variant and is not registered yet; Issue #301 owns that."
+      "notes": "Inspection is observation-only: it issues no grasp or place action. Issue #301 registered the family and proved the legacy entry point and the registry resolve to the same verifier. The fixture is not release eligible.",
+      "missing_capabilities": []
     },
     {
       "scenario_id": "clear-workspace",
       "scenario_version": "0.2",
       "task_family": "cleaning",
-      "status": "PLANNED",
+      "status": "REGISTERED",
       "environment_status": "SCRIPTED_FIXTURE",
       "semantic_actions": [
         "observe",
-        "navigate",
         "grasp",
         "place"
       ],
       "required_adapters": [
         "motion",
-        "navigation",
         "perception",
         "simulation"
-      ],
-      "missing_capabilities": [
-        "not_available"
       ],
       "verifier": "services/world_model/workbench_world_model/verifier.py::verify_workspace_clearance",
       "recovery_policy": [
@@ -186,21 +179,23 @@
       ],
       "evidence_status": "SCRIPTED_FIXTURE",
       "scenario_rules_owner": "Task / Simulation",
-      "adapter_owner": "Motion / Navigation",
+      "adapter_owner": "Motion / Perception",
       "evidence_owner": "World Model",
       "release_owner": "Release / QA",
-      "manifest": "sim/scenarios/expanded/path-blocked-001.json",
+      "manifest": "sim/registry/clear-workspace.json",
       "tests": [
+        "tests/unit/test_scenario_migration.py",
         "tests/unit/test_world_model.py"
       ],
       "evidence_report": "docs/evaluation/failure-cases.md",
-      "notes": "The blocking cylinder is cleared by grasp and place, not by a dedicated cleaning action, so this family declares no pending action. The expanded path_blocked variant exercises it and it is not registered yet; Issue #301 owns that."
+      "notes": "The blocking cylinder is cleared by grasp and place, not by a dedicated cleaning action, so this family declares no pending action and no navigation adapter. Issue #301 registered it and proved the legacy entry point and the registry agree. The fixture is not release eligible.",
+      "missing_capabilities": []
     },
     {
       "scenario_id": "sort-parcels",
       "scenario_version": "0.2",
       "task_family": "parcels",
-      "status": "PLANNED",
+      "status": "REGISTERED",
       "environment_status": "SCRIPTED_FIXTURE",
       "semantic_actions": [
         "observe",
@@ -211,9 +206,6 @@
         "motion",
         "perception",
         "simulation"
-      ],
-      "missing_capabilities": [
-        "not_available"
       ],
       "verifier": "services/world_model/workbench_world_model/verifier.py::verify_parcel_sorting",
       "recovery_policy": [
@@ -226,12 +218,14 @@
       "adapter_owner": "Motion / Perception",
       "evidence_owner": "World Model",
       "release_owner": "Release / QA",
-      "manifest": "sim/scenarios/expanded/parcel-intake-001.json",
+      "manifest": "sim/registry/sort-parcels.json",
       "tests": [
+        "tests/unit/test_scenario_migration.py",
         "tests/unit/test_world_model.py"
       ],
       "evidence_report": "docs/evaluation/failure-cases.md",
-      "notes": "Bounded to the tabletop workstation. Requests that need a mobile base fail closed until a navigation contract and hardware are owned, so no navigation adapter is declared."
+      "notes": "Bounded to the tabletop workstation. Requests that need a mobile base fail closed until a navigation contract and hardware are owned, so no navigation adapter is declared. Issue #301 registered the family and proved the legacy task_id and the registry agree.",
+      "missing_capabilities": []
     },
     {
       "scenario_id": "assemble-two-parts",

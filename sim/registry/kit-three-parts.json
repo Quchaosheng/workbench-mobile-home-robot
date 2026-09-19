@@ -1,0 +1,35 @@
+{
+  "scenario_id": "kit-three-parts",
+  "scenario_version": "0.2",
+  "goal": "Assemble a three-part kit in the kit tray",
+  "task_id": "task-kit-three-parts",
+  "semantic_actions": [
+    "observe",
+    "grasp",
+    "place"
+  ],
+  "required_adapters": [
+    "motion",
+    "perception",
+    "simulation"
+  ],
+  "evidence_policy": "A fresh observation plus a grasp and place ActionResult with evidence references for red_block, blue_cylinder and green_gear are required before verification runs.",
+  "verifier": "services/world_model/workbench_world_model/verifier.py::verify_kit_contents",
+  "recovery_policy": {
+    "allowed": [
+      "re_observe",
+      "retry_action",
+      "abort"
+    ],
+    "max_attempts": 3,
+    "requires_fresh_evidence": true
+  },
+  "evidence_status": "SCRIPTED_FIXTURE",
+  "non_goals": [
+    "does not claim Gazebo or physical validation",
+    "does not define controller trajectories, joint values or stop authority"
+  ],
+  "timeout_s": 240,
+  "world_version": "WorkbenchSim-v0",
+  "owner": "Task / Simulation"
+}

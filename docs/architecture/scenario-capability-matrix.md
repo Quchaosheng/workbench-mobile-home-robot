@@ -40,8 +40,8 @@ a scenario can request a semantic action, never implement one.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `assemble-two-parts@0.3` | BLOCKED | BLOCKED | observe, grasp, place | motion, perception | blocked | BLOCKED | no | Task / Simulation | Motion | World Model | Release / QA |
 | `clean-and-inspect-workspace@0.1` | NOT_REGISTERED | NOT_EXECUTED | observe, navigate, clean_workspace | motion, navigation, perception, simulation | not_available, blocked | NOT_EXECUTED | no | Scenario / Simulation | Motion / Navigation | World Model | Release / QA |
-| `clear-workspace@0.2` | PLANNED | SCRIPTED_FIXTURE | observe, navigate, grasp, place | motion, navigation, perception, simulation | not_available | SCRIPTED_FIXTURE | no | Task / Simulation | Motion / Navigation | World Model | Release / QA |
-| `inspect-workpieces@0.2` | PLANNED | SCRIPTED_FIXTURE | observe | perception, simulation | not_available | SCRIPTED_FIXTURE | no | Task / Simulation | Perception | World Model | Release / QA |
-| `kit-three-parts@0.2` | PLANNED | SCRIPTED_FIXTURE | observe, grasp, place | motion, perception, simulation | not_available | SCRIPTED_FIXTURE | no | Task / Simulation | Motion / Perception | World Model | Release / QA |
+| `clear-workspace@0.2` | REGISTERED | SCRIPTED_FIXTURE | observe, grasp, place | motion, perception, simulation | - | SCRIPTED_FIXTURE | no | Task / Simulation | Motion / Perception | World Model | Release / QA |
+| `inspect-workpieces@0.2` | REGISTERED | SCRIPTED_FIXTURE | observe | perception, simulation | - | SCRIPTED_FIXTURE | no | Task / Simulation | Perception | World Model | Release / QA |
+| `kit-three-parts@0.2` | REGISTERED | SCRIPTED_FIXTURE | observe, grasp, place | motion, perception, simulation | - | SCRIPTED_FIXTURE | no | Task / Simulation | Motion / Perception | World Model | Release / QA |
 | `pick-place-red-block@1.0` | REGISTERED | SCRIPTED_FIXTURE | observe, grasp, place | motion, perception, simulation | - | SCRIPTED_FIXTURE | no | Task / Simulation | Motion / Perception | World Model | Release / QA |
-| `sort-parcels@0.2` | PLANNED | SCRIPTED_FIXTURE | observe, grasp, place | motion, perception, simulation | not_available | SCRIPTED_FIXTURE | no | Task / Simulation | Motion / Perception | World Model | Release / QA |
+| `sort-parcels@0.2` | REGISTERED | SCRIPTED_FIXTURE | observe, grasp, place | motion, perception, simulation | - | SCRIPTED_FIXTURE | no | Task / Simulation | Motion / Perception | World Model | Release / QA |
