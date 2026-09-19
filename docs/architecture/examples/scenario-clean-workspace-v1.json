@@ -1,0 +1,22 @@
+{
+  "scenario_id": "clean-and-inspect-workspace",
+  "scenario_version": "0.1",
+  "goal": "Reduce debris occupying the declared target region below the scenario threshold, then confirm the region is clear",
+  "semantic_actions": ["observe", "navigate", "clean_workspace"],
+  "required_adapters": ["motion", "navigation", "perception", "simulation"],
+  "evidence_policy": "A pre-clean occupancy observation, a post-clean occupancy observation, and an ActionResult referencing both are required before verification runs.",
+  "verifier": "services/world_model/workbench_world_model/verifier.py::verify_workspace_clearance",
+  "recovery_policy": {
+    "allowed": ["re_observe", "retry_action", "safe_stop", "abort"],
+    "max_attempts": 2,
+    "requires_fresh_evidence": true
+  },
+  "evidence_status": "NOT_EXECUTED",
+  "non_goals": [
+    "does not claim a cleaning endpoint that exists in this repository",
+    "does not define brush speed, suction power or any other actuator parameter",
+    "does not claim Gazebo or physical validation"
+  ],
+  "timeout_s": 300,
+  "owner": "Scenario / Simulation"
+}

@@ -8,6 +8,7 @@ Architecture decisions remain in `docs/decisions/`. This index adds delivery and
 | ADR-0002 | existing | keep license decision explicit | pending review | `docs/decisions/ADR-0002-license-pending.md` | code/model/asset release composition changes |
 | ADR-0003 | existing | use RISC-V QEMU for MCU baseline | accepted | `docs/decisions/ADR-0003-mcu-riscv-qemu.md` | selected physical MCU changes |
 | ADR-0004 | existing | use UR5e plus Robotiq baseline | accepted | `docs/decisions/ADR-0004-arm-selection.md` | vendor package or reachability invalidates choice |
+| ADR-0006 | 2026-09-19 | freeze the multi-scenario registry contract before implementation | proposed | `docs/decisions/ADR-0006-scenario-registry-contract.md`, issue #308 | a registry field is added or identity drift is observed |
 | D-2026-001 | 2026-08-11 | retain `contents: read` and disable implicit SBOM release-asset upload | implemented in merged PR #21; release verification pending | issue #20, failed run `31406815969`, merge `889f699` | next human-owned tag run |
 
 ## New decision record

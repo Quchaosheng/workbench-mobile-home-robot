@@ -1,0 +1,95 @@
+{
+  "issue": 308,
+  "human_owner": "Quchaosheng",
+  "objective": "Freeze the multi-scenario registry contract and ownership boundary as one machine-readable file plus an executable validator, before any registry implementation is written.",
+  "decision_supported": "Whether Issue #300 may implement a Scenario Registry against this field list, and whether #311, #301, #302, #305 and #306 may add fields only by amending the contract in a reviewed change.",
+  "allowed_paths": [
+    "docs/decisions/ADR-0006-scenario-registry-contract.md",
+    "docs/architecture/scenario-contract-v1.json",
+    "docs/architecture/examples/**",
+    "tasks/README.md",
+    "mkdocs.yml",
+    "docs/project-management/decision-log.md",
+    "tools/scripts/check_scenario_contract.py",
+    "tests/unit/test_scenario_contract.py",
+    "docs/task_packets/issue-308-scenario-registry-contract.json"
+  ],
+  "read_only_paths": [
+    "libs/contracts/**",
+    "interfaces/**",
+    "services/world_model/**",
+    "sim/scenarios/**",
+    "tools/scripts/sim_cli.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "services/backend/**",
+    "apps/dashboard/**"
+  ],
+  "input_refs": [
+    "libs/contracts/workbench_contracts/models.py",
+    "interfaces/json_schema/scenario.schema.json",
+    "tools/scripts/sim_cli.py",
+    "tools/scripts/scenario_tools.py",
+    "docs/architecture/system.md",
+    "docs/decisions/ADR-0005-hardware-device-runtime.md",
+    "tasks/README.md"
+  ],
+  "outputs": [
+    "docs/decisions/ADR-0006-scenario-registry-contract.md",
+    "docs/architecture/scenario-contract-v1.json",
+    "docs/architecture/examples/scenario-pick-place-red-block-v1.json",
+    "docs/architecture/examples/scenario-clean-workspace-v1.json",
+    "tools/scripts/check_scenario_contract.py",
+    "tests/unit/test_scenario_contract.py"
+  ],
+  "acceptance": [
+    "the contract file declares required fields, optional fields, exact version matching, diagnostic codes, bounds, allowed adapters, forbidden field names and an ownership table",
+    "the detector imports the shared ActionType vocabulary instead of copying it, so a manifest cannot declare a private action vocabulary",
+    "a manifest that names joint, velocity, torque, CAN, controller-goal, trajectory or emergency-stop fields fails closed at any nesting depth",
+    "a manifest that declares a second policy or verifier implementation fails closed",
+    "an unknown field, unstable scenario_id, inexact scenario_version, unknown adapter and out-of-vocabulary evidence_status each fail with a stable diagnostic code",
+    "a duplicate scenario_id and scenario_version pair fails closed, and a distinct version is not a duplicate",
+    "the cleaning example declares clean_workspace as pending, reports NOT_EXECUTABLE, and is turned into a failure only by --require-executable",
+    "SCRIPTED_FIXTURE, NOT_EXECUTED and BLOCKED are non-release-eligible so a fixture is never rendered as physical success",
+    "the detector never imports the runtime, starts ROS or Gazebo, or writes a run or an event",
+    "the ADR is linked from tasks/README.md and both examples are committed non-executable manifests"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-308-scenario-registry-contract.json",
+    "python3 -m pytest tests/unit/test_scenario_contract.py -q",
+    "python3 tools/scripts/check_scenario_contract.py",
+    "python3 tools/scripts/check_scenario_contract.py --require-executable",
+    "python3 -m ruff check tools/scripts/check_scenario_contract.py tests/unit/test_scenario_contract.py",
+    "python3 -m ruff format --check tools/scripts/check_scenario_contract.py tests/unit/test_scenario_contract.py",
+    "python3 -m mkdocs build --strict",
+    "make contract",
+    "make scenario-check",
+    "make context-check"
+  ],
+  "evidence": [
+    "pytest transcript for tests/unit/test_scenario_contract.py with the passed count",
+    "check_scenario_contract.py stdout showing PASS for the committed examples and FAIL for --require-executable",
+    "the contract file and both example manifests as committed artifacts",
+    "ruff check and format output",
+    "mkdocs strict build output",
+    "make contract, make scenario-check and make context-check output"
+  ],
+  "stop_conditions": [
+    "the change requires editing interfaces/json_schema/scenario.schema.json or the ScenarioManifest model, which is a separately approved follow-up",
+    "the change requires extending the shared ActionType vocabulary, which belongs to Issue #306",
+    "the change requires a new runtime dependency",
+    "a frozen scenario fixture would have to be renamed, re-seeded or re-hashed"
+  ],
+  "max_iterations": 12,
+  "data_classification": "public repository documentation and contract test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may draft the ADR, the contract file, the examples, the detector and the tests; a named human Owner accepts the contract boundary and any field addition",
+  "risks_and_fallbacks": [
+    "the contract could over-specify fields that #300 does not need; fallback is that #300 amends the contract file in a reviewed change and adds one test per new field",
+    "a forbidden-field name list is a denylist and cannot be exhaustive; fallback is that the ownership table routes authority away from manifests so a missed name grants no authority",
+    "the cleaning example could be read as a claim that cleaning exists; fallback is evidence_status NOT_EXECUTED, the SCENARIO_PENDING_ACTION notice and the explicit non_goals entries",
+    "rollback is a single revert of this commit; no runtime, schema, fixture or hardware path is touched"
+  ]
+}

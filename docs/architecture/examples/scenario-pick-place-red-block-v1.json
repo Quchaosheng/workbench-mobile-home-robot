@@ -1,0 +1,23 @@
+{
+  "scenario_id": "pick-place-red-block",
+  "scenario_version": "1.0",
+  "goal": "Place the red block in the tray",
+  "task_id": "task-place-red-block",
+  "semantic_actions": ["observe", "grasp", "place"],
+  "required_adapters": ["motion", "perception", "simulation"],
+  "evidence_policy": "A grasp and place ActionResult with evidence references, plus a fresh observation of the red block and the tray, are required before verification runs.",
+  "verifier": "services/world_model/workbench_world_model/verifier.py::verify_object_in_tray",
+  "recovery_policy": {
+    "allowed": ["re_observe", "retry_action", "ask_confirm", "abort"],
+    "max_attempts": 3,
+    "requires_fresh_evidence": true
+  },
+  "evidence_status": "SCRIPTED_FIXTURE",
+  "non_goals": [
+    "does not claim Gazebo or physical validation",
+    "does not define controller trajectories, joint values or stop authority"
+  ],
+  "timeout_s": 120,
+  "world_version": "WorkbenchSim-v0",
+  "owner": "Task / Simulation"
+}
