@@ -1,0 +1,102 @@
+{
+  "issue": 304,
+  "human_owner": "Quchaosheng",
+  "objective": "Add one registry-wide conformance gate that validates every registered scenario against the shared safety, provenance, replay, evidence-freshness and release-status guarantees, requires a committed failure corpus per scenario identity, and reports per-scenario results so CI names the scenario and the failed rule.",
+  "decision_supported": "Whether a newly registered scenario can enter the registry without proving it honours the shared fail-closed boundaries, and whether an existing scenario can silently drop one.",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/scenario_conformance.py",
+    "tools/scripts/check_scenario_conformance.py",
+    "tools/qa/scenario-conformance-v1.json",
+    "tests/unit/test_scenario_conformance.py",
+    "sim/registry/README.md",
+    "Makefile",
+    ".github/workflows/ci.yml",
+    "docs/task_packets/issue-304-registry-conformance-gate.json"
+  ],
+  "read_only_paths": [
+    "docs/architecture/scenario-contract-v1.json",
+    "docs/architecture/scenario-capability-matrix-v1.json",
+    "sim/registry/pick-place-red-block.json",
+    "sim/registry/kit-three-parts.json",
+    "sim/registry/inspect-workpieces.json",
+    "sim/registry/clear-workspace.json",
+    "sim/registry/sort-parcels.json",
+    "sim/scenarios/**",
+    "services/world_model/**",
+    "libs/contracts/**",
+    "interfaces/**",
+    "tools/scripts/scenario_registry.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "services/backend/**",
+    "apps/dashboard/**"
+  ],
+  "input_refs": [
+    "docs/architecture/scenario-contract-v1.json",
+    "sim/registry/README.md",
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "libs/kernel/workbench/kernel/scenario_capability.py",
+    "tools/scripts/check_scenario_capabilities.py",
+    "tools/qa/mutations-v1.json",
+    "tools/qa/quarantine-v1.json",
+    "Makefile",
+    ".github/workflows/ci.yml"
+  ],
+  "outputs": [
+    "libs/kernel/workbench/kernel/scenario_conformance.py",
+    "tools/scripts/check_scenario_conformance.py",
+    "tools/qa/scenario-conformance-v1.json",
+    "tests/unit/test_scenario_conformance.py"
+  ],
+  "acceptance": [
+    "the gate discovers every manifest under sim/registry without a hand-maintained allow-list, because adding a manifest must add it to the gate matrix",
+    "a registered scenario with no committed conformance case set fails the gate, and a case set missing a required dimension fails, so a new scenario without required tests fails CI",
+    "the committed corpus declares a case for stale evidence, conflicting evidence, missing provenance, replay determinism, an unsafe/raw-control field and release-status truthfulness for every registered identity",
+    "each declared case names a test file and a test function that exist, so a case cannot be satisfied by prose",
+    "derived probes independently confirm the manifest declares no raw control or e-stop authority, that a fixture is never release eligible, and that replaying one event stream twice yields an identical state hash",
+    "the gate emits machine-readable per-scenario results and a human summary that names the scenario identity and the failed rule, and uses 0 PASS, 1 FAIL, 2 INCOMPLETE",
+    "the gate is read-only: it imports no simulator, writes no run or event, and never starts ROS, Gazebo or hardware"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-304-registry-conformance-gate.json",
+    "python3 -m pytest tests/unit/test_scenario_conformance.py -q",
+    "python3 tools/scripts/check_scenario_conformance.py",
+    "python3 tools/scripts/check_scenario_conformance.py --json",
+    "python3 tools/scripts/check_scenario_contract.py",
+    "python3 tools/scripts/check_scenario_capabilities.py --check-generated",
+    "python3 -m pytest tests/unit/test_scenario_registry.py tests/unit/test_scenario_capabilities.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "make scenario-check",
+    "make context-check"
+  ],
+  "evidence": [
+    "pytest transcript for tests/unit/test_scenario_conformance.py with the passed count",
+    "check_scenario_conformance.py stdout showing five registered identities, their dimension coverage and exit code 0",
+    "check_scenario_conformance.py --json output showing per-scenario results",
+    "a failing run showing a scenario that lacks a case set is reported by identity and by rule",
+    "ruff check and ruff format output",
+    "make scenario-check and make context-check output"
+  ],
+  "stop_conditions": [
+    "the change would require editing a frozen fixture, a seed or a committed matrix document",
+    "the change would require editing docs/architecture/scenario-contract-v1.json, which is a reviewed contract amendment",
+    "the change would require adding a runtime dependency or importing ROS, Gazebo, MoveIt or a hardware SDK",
+    "the change would require a physical or Gazebo claim, which this repository cannot make from a fixture",
+    "a scenario would have to be declared conformant without a committed test that proves it"
+  ],
+  "max_iterations": 12,
+  "data_classification": "public repository source, documentation and test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may write the conformance rules, the gate, the corpus and the tests; a named human Owner accepts the required dimension set and any scenario added to the registry",
+  "risks_and_fallbacks": [
+    "the gate could become a hand-maintained allow-list; fallback is that the corpus is keyed by registry identity and the gate derives the identity set from the registry every run, so an unlisted scenario is a failure rather than a skip",
+    "a scenario could declare a case that does not exist; fallback is that the gate resolves the named file and test function and fails when either is absent",
+    "the gate could re-implement the verifiers and drift from them; fallback is that the verifier-semantics dimensions are proven by committed tests the gate only resolves and names, while the cheap invariants are derived from the loaded registry",
+    "the required dimension set could block a legitimate scenario; fallback is that a dimension may be declared `not_applicable` with a written justification, and the gate reports it as a notice rather than silently accepting it",
+    "rollback is a revert of this commit; the gate is additive, no manifest or fixture changes, and no CI job becomes required until the workflow edit lands"
+  ]
+}
