@@ -2,6 +2,13 @@
 
 Baseline date: 2026-08-11. The schedule is a planning baseline, not proof that a task has started or completed.
 
+The P2/P3 rows below predate the re-scoped product baseline in
+[ADR-0007](../decisions/ADR-0007-household-mvp-baseline.md) (Issue #166), which
+fixes the household MVP as a single-arm mobile system and puts dual-arm
+coordination out of scope. The dates, gates and `NOT_READY` states are unchanged.
+This table remains the historical planning baseline, and it is not evidence that
+a dual-arm mobile product is in scope.
+
 ```mermaid
 gantt
     title Workbench Desk Robot - 12 week delivery baseline

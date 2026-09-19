@@ -1,6 +1,20 @@
 project:
   p0_scope: fixed-tabletop-single-arm-simulator
   required_platform: ubuntu-24.04-ros2-jazzy-gazebo-harmonic
+  # Three separate systems share this repository. See
+  # docs/decisions/ADR-0007-household-mvp-baseline.md.
+  stages:
+    p0_tabletop_simulator: STAGE-P0-TABLETOP
+    fixed_development_bench: STAGE-BENCH-UR5E
+    household_product: STAGE-HOUSEHOLD-MVP
+  household_mvp:
+    arm_count: 1
+    rgbd_camera_count: 1
+    onboard_compute_count: 1
+    safety_mcu_count: 1
+    dual_arm_coordination: out_of_scope
+    bounded_scenarios: [159, 163, 164, 152]
+    status: proposed_pending_owner_approval
 safety:
   agent_may_emit_joint_commands: false
   cloud_required_for_scripted_demo: false
