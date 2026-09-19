@@ -1,0 +1,104 @@
+{
+  "issue": 300,
+  "human_owner": "Quchaosheng",
+  "objective": "Implement the smallest fail-closed Scenario Registry selected by the M0 contract, so operators can list and select known scenarios by stable scenario_id and scenario_version while an invalid, duplicate or unsafe manifest is rejected before any run event is written.",
+  "decision_supported": "Whether Issue #301 may migrate the five existing task families onto sim/registry/**, and whether the shared runtime can resolve a scenario by exact identity without a second policy or verifier implementation.",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "tools/scripts/check_scenario_contract.py",
+    "tools/scripts/sim_cli.py",
+    "sim/registry/**",
+    "tests/unit/test_scenario_registry.py",
+    "tests/unit/test_scenario_contract.py",
+    "tasks/README.md",
+    "mkdocs.yml",
+    "docs/task_packets/issue-300-scenario-registry.json"
+  ],
+  "read_only_paths": [
+    "libs/contracts/**",
+    "interfaces/**",
+    "services/world_model/**",
+    "sim/scenarios/**",
+    "docs/architecture/scenario-contract-v1.json",
+    "docs/decisions/ADR-0006-scenario-registry-contract.md"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "services/backend/**",
+    "apps/dashboard/**",
+    "services/agent_runtime/**"
+  ],
+  "input_refs": [
+    "docs/architecture/scenario-contract-v1.json",
+    "docs/decisions/ADR-0006-scenario-registry-contract.md",
+    "libs/contracts/workbench_contracts/models.py",
+    "tools/scripts/sim_cli.py",
+    "tools/scripts/scenario_tools.py",
+    "sim/scenarios/frozen/normal-001.json",
+    "tasks/README.md"
+  ],
+  "outputs": [
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "sim/registry/README.md",
+    "sim/registry/pick-place-red-block.json",
+    "tests/unit/test_scenario_registry.py"
+  ],
+  "acceptance": [
+    "one manifest validator serves both the CI gate and the registry, so the contract has one implementation and cannot drift",
+    "the registry loads deterministically and independently of file discovery order",
+    "a valid manifest registers and a committed registry-native manifest loads",
+    "missing required fields, unknown fields, raw control fields, policy or verifier bypass fields, unstable scenario_id, inexact scenario_version, unknown semantic actions, unknown adapters, unsafe verifier paths, out-of-vocabulary evidence_status and oversized values each raise a stable SCENARIO_* diagnostic code",
+    "a duplicate scenario_id and scenario_version pair fails closed, and distinct versions are allowed",
+    "malformed JSON, an oversized manifest, an empty root and a missing root each fail closed with a distinct code",
+    "one invalid manifest rejects the whole catalog; there is no partial catalog",
+    "resolution is exact and an ambiguous or unknown identity is refused rather than resolved to an arbitrary version",
+    "SCRIPTED_FIXTURE, NOT_EXECUTED and BLOCKED are not release eligible, and a manifest that declares a pending action reports executable false",
+    "the registry imports no ROS, Gazebo, MoveIt or hardware module and writes nothing",
+    "list and describe are deterministic and bounded, and the existing list command is unchanged"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-300-scenario-registry.json",
+    "python3 -m pytest tests/unit/test_scenario_registry.py -q",
+    "python3 -m pytest tests/unit/test_scenario_contract.py -q",
+    "python3 -m pytest tests/unit/test_sim_cli.py -q",
+    "python3 tools/scripts/sim_cli.py registry-list",
+    "python3 tools/scripts/sim_cli.py describe pick-place-red-block@1.0",
+    "python3 tools/scripts/check_scenario_contract.py",
+    "python3 tools/scripts/check_scenario_contract.py --require-executable",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 -m mkdocs build --strict",
+    "make scenario-check",
+    "make contract",
+    "make context-check"
+  ],
+  "evidence": [
+    "pytest transcript for tests/unit/test_scenario_registry.py with the passed count",
+    "pytest transcript for the contract gate, sim_cli and the full unit suite",
+    "sim_cli registry-list and describe stdout, including a version mismatch refusal",
+    "ruff check and format output",
+    "mkdocs strict build output",
+    "make scenario-check, make contract and make context-check output"
+  ],
+  "stop_conditions": [
+    "the change requires editing docs/architecture/scenario-contract-v1.json or the frozen public schema, which is a reviewed contract amendment rather than a registry change",
+    "the change requires migrating the legacy sim/scenarios manifests, which belongs to Issue #301",
+    "the change requires extending the shared ActionType vocabulary, which belongs to Issue #306",
+    "the change requires a new runtime dependency or any ROS, Gazebo or hardware import",
+    "a frozen scenario fixture would have to be renamed, re-seeded or re-hashed"
+  ],
+  "max_iterations": 14,
+  "data_classification": "public repository source, documentation and test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may implement the registry, the shared validator, the CLI surface and the tests; a named human Owner accepts the registry boundary, the manifest root and any change to the frozen contract",
+  "risks_and_fallbacks": [
+    "the registry-native root could be mistaken for the regression corpus; fallback is that sim/registry/README.md states the split and sim/scenarios/** stays authoritative for regression runs",
+    "a single committed registry manifest could be read as migration of the five families; fallback is that only pick_place has a manifest and Issue #301 owns the rest with byte-for-byte equivalence tests",
+    "extracting the validator could change the #308 gate verdicts; fallback is that the 57 gate tests still pass unchanged against the shared module and the gate keeps exit 0 PASS, 1 FAIL and 2 INCOMPLETE",
+    "the ambiguous-id refusal could block a future caller that wants newest-wins; fallback is that the caller names the version explicitly, which is the behaviour the contract requires",
+    "rollback is a revert of this commit; the registry is additive and read-only, and no runtime path imports it yet"
+  ]
+}

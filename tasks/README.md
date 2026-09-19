@@ -40,6 +40,28 @@ python3 tools/scripts/check_scenario_contract.py
 python3 tools/scripts/check_scenario_contract.py --require-executable
 ```
 
+The rules live in `libs/kernel/workbench/kernel/scenario_contract.py` so the gate
+and the registry enforce one contract rather than two. The registry itself is
+`libs/kernel/workbench/kernel/scenario_registry.py`, and it reads its manifests
+from `sim/registry/**`.
+
+```bash
+python3 tools/scripts/sim_cli.py registry-list
+python3 tools/scripts/sim_cli.py describe <scenario_id>@<scenario_version>
+```
+
+Loading is deterministic and order independent, discovery is a sorted directory
+walk, and the catalog is sorted by `(scenario_id, scenario_version)`. A
+malformed, duplicate, unsafe or incompatible manifest raises with a stable
+`SCENARIO_*` diagnostic code and the whole load fails; there is no partial
+catalog and no skipped file.
+
+Resolution is exact. Requesting a version that is not registered is a
+`SCENARIO_REGISTRY_VERSION_MISMATCH`, and omitting the version for an ID with
+more than one registered version is a `SCENARIO_REGISTRY_AMBIGUOUS_ID` rather
+than an arbitrary pick, because silently choosing the newest is the implicit
+upgrade this boundary refuses.
+
 A manifest may declare semantic actions only. Joint values, velocities,
 torques, CAN frames, controller goals, trajectories and emergency-stop
 authority belong to Motion, MCU and Safety, and are rejected by name before any
