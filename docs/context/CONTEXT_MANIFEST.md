@@ -3,7 +3,7 @@
 ## Always loaded
 
 - `AGENTS.md`
-- P0 scope and non-goals
+- P0 scope, the separate bench and household-MVP stages, and non-goals
 - interface/version rules
 - safety, privacy and license constraints
 - task packet and review rules

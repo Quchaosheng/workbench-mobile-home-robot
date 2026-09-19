@@ -68,6 +68,15 @@ For the current software phase, promise only:
 Do not promise completed Gazebo task worlds, physical robot capability, or
 general-purpose autonomous household operation until their evidence gates pass.
 
+The product baseline behind this promise is re-scoped in
+[ADR-0007](../decisions/ADR-0007-household-mvp-baseline.md): the household MVP is
+one mobile base, one arm/gripper, one RGB-D camera, one onboard compute and one
+safety MCU, bounded to issues #159, #163, #164 and #152. That record is
+`proposed`; it grants no scope, procurement or release authority until its owner
+approval register is complete. The fixed tabletop simulator (ADR-0001) and the
+fixed UR5e development bench (ADR-0004) remain separate stages and are not the
+household product.
+
 ## Non-goals
 
 - A universal robot controller or motion-planning replacement.
