@@ -1,0 +1,121 @@
+{
+  "issue": 182,
+  "human_owner": "kukuboring",
+  "objective": "Protect the split-host simulation event-source inbound listener by defaulting the published simulation port to loopback, requiring an explicit non-wildcard private bind address for cross-host use, failing configuration visibly when the two disagree, and removing wildcard addresses from the deployment documentation, without changing the read-only API, the Wire V1 contracts, or the robot-control boundary.",
+  "decision_supported": "Can the simulation event source be published for split-host operation without exposing its unauthenticated read API on every host interface by accident, while keeping the same-host smoke path and the existing GET-only read surface unchanged?",
+  "allowed_paths": [
+    "docs/task_packets/issue-182-sim-event-source-listener.json",
+    "deploy/multi-host/compose.sim.yaml",
+    "docs/deployment/multi-host.md",
+    "services/backend/workbench_backend/inbound_http.py",
+    "services/backend/workbench_backend/server.py",
+    "tests/fixtures/issue-182-sim.env",
+    "tests/unit/test_multi_host.py",
+    "tests/unit/test_multi_host_deployment.py"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "Makefile",
+    "pyproject.toml",
+    "tools/schemas/task-packet-v1.schema.json",
+    "docs/task_packets/example-001-world-reducer.json",
+    "docs/task_packets/issue-66-controller-http-boundary.json",
+    "docs/task_packets/issue-71-backend-egress-policy.json",
+    "docs/task_packets/issue-71-backend-egress-policy-phase-b.json",
+    "docs/architecture/system.md",
+    "services/backend/README.md",
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/remote_http.py",
+    "services/backend/workbench_backend/api-openapi-v1.json",
+    "deploy/multi-host/compose.controller.yaml",
+    "tests/fixtures/issue-66-controller.env",
+    "tests/fixtures/issue-71-controller.env"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/world_model/**",
+    "services/agent_runtime/**",
+    "services/perception/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    ".github/**",
+    "Dockerfile",
+    "compose.yaml",
+    "deploy/multi-host/compose.controller.yaml",
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/remote_http.py",
+    "services/backend/workbench_backend/api-openapi-v1.json"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "deploy/multi-host/compose.sim.yaml",
+    "deploy/multi-host/compose.controller.yaml",
+    "docs/deployment/multi-host.md",
+    "services/backend/workbench_backend/inbound_http.py",
+    "services/backend/workbench_backend/server.py",
+    "tests/unit/test_multi_host.py",
+    "tests/unit/test_multi_host_deployment.py",
+    "docs/task_packets/issue-66-controller-http-boundary.json"
+  ],
+  "outputs": [
+    "deploy/multi-host/compose.sim.yaml",
+    "docs/deployment/multi-host.md",
+    "services/backend/workbench_backend/inbound_http.py",
+    "services/backend/workbench_backend/server.py",
+    "tests/fixtures/issue-182-sim.env",
+    "tests/unit/test_multi_host.py",
+    "tests/unit/test_multi_host_deployment.py",
+    "docs/task_packets/issue-182-sim-event-source-listener.json"
+  ],
+  "acceptance": [
+    "The simulation Compose service publishes its port with an explicit host_ip that defaults to 127.0.0.1, so the default rendered configuration binds the event source to loopback only.",
+    "Cross-host operation requires an explicit SIM_BIND_ADDRESS value that is a literal loopback, RFC1918 IPv4 or IPv6 unique-local address; wildcard, public, link-local, multicast, hostname and empty values fail configuration or startup visibly.",
+    "The event source refuses to start when the published bind address is non-loopback and no explicit cross-host trust configuration is supplied, matching the controller's fail-closed pattern.",
+    "Tests render the simulation Compose configuration and assert the default host_ip is loopback and that no wildcard publication appears; the assertions do not depend on a running Docker daemon.",
+    "Documentation never uses 0.0.0.0 as a client destination and states that cross-host exposure requires a firewall or an approved TLS/authenticating reverse-proxy boundary.",
+    "The same-host smoke path still works with the loopback default and is documented without weakening the cross-host boundary.",
+    "Read APIs remain GET-only and no robot-control, motion, or actuation endpoint is added."
+  ],
+  "commands": [
+    "make task-check PACKET=docs/task_packets/issue-182-sim-event-source-listener.json",
+    "python -m pytest tests/unit/test_multi_host_deployment.py -v",
+    "python -m pytest tests/unit/test_multi_host.py -v",
+    "docker compose --env-file tests/fixtures/issue-182-sim.env -f deploy/multi-host/compose.sim.yaml config",
+    "python tools/scripts/check_task_packet.py docs/task_packets/issue-182-sim-event-source-listener.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Rendered simulation Compose JSON showing host_ip 127.0.0.1 and no wildcard publication for the default configuration.",
+    "Focused unit-test output for the default loopback bind, the explicit private bind, and the rejected wildcard, public, link-local, multicast, hostname and empty values.",
+    "Task Packet validation output against the fixed branch base.",
+    "Repository test, contract, scenario, context and whitespace-check output.",
+    "Documentation diff showing no wildcard client destination remains."
+  ],
+  "stop_conditions": [
+    "A change to the Wire V1 identifiers, payload layout, public schema, firmware HAL, MCU behavior, robot control or safety authority is required.",
+    "Making the simulation port safe requires a service mesh, custom proxy, certificate authority or public Internet deployment.",
+    "A second inbound policy implementation would be introduced instead of reusing the existing controller policy.",
+    "Physical CAN, USB-CAN-FD, MCU, actuator or hard-real-time evidence is required to demonstrate the change.",
+    "A write outside allowed_paths is required.",
+    "The change would break the documented same-host smoke path or the existing read-only GET surface."
+  ],
+  "data_classification": "Repository-local synthetic Compose configuration, loopback and RFC1918 documentation addresses, and non-secret environment variables only; no credentials, tokens, customer data or personal data.",
+  "model_policy": "Deterministic local Python, Docker Compose rendering and local unit tests only; no model inference, no training and no external service calls.",
+  "risks_and_fallbacks": [
+    "Bounding the published simulation port to loopback by default changes the previous behaviour; the split-host documentation and fixtures must state the explicit opt-in required for cross-host access.",
+    "The simulation service has no TLS or authentication of its own; the fallback is an explicit private bind address plus an approved firewall or authenticating reverse proxy, never a wildcard publication.",
+    "If Docker networking hides the real peer address, the fix must still fail closed rather than infer trust, and the documentation must record the observed behaviour instead of assuming it.",
+    "If the existing controller inbound policy cannot be reused without changing public contracts, stop and report rather than duplicating the policy."
+  ]
+}

@@ -1,11 +1,32 @@
 services:
   sim:
     image: ${WORKBENCH_IMAGE:-workbench-1:local}
-    command: ["python", "-m", "workbench_backend.server", "--host", "0.0.0.0", "--port", "8090"]
+    command:
+      [
+        "python",
+        "-m",
+        "workbench_backend.server",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8090",
+        "--published-host",
+        "${SIM_BIND_ADDRESS:-127.0.0.1}",
+        "--trust-mode",
+        "${WORKBENCH_SIM_TRUST_MODE:-local}",
+        "--trusted-proxy-allowlist",
+        "${WORKBENCH_SIM_TRUSTED_SOURCE_ALLOWLIST:-}",
+      ]
     environment:
       WORKBENCH_OFFLINE: "1"
+      SIM_BIND_ADDRESS: ${SIM_BIND_ADDRESS:-127.0.0.1}
+      WORKBENCH_SIM_TRUST_MODE: ${WORKBENCH_SIM_TRUST_MODE:-local}
+      WORKBENCH_SIM_TRUSTED_SOURCE_ALLOWLIST: ${WORKBENCH_SIM_TRUSTED_SOURCE_ALLOWLIST:-}
     ports:
-      - "${SIM_PORT:-8090}:8090"
+      - target: 8090
+        published: "${SIM_PORT:-8090}"
+        host_ip: "${SIM_BIND_ADDRESS:-127.0.0.1}"
+        protocol: tcp
     read_only: true
     tmpfs:
       - /tmp:size=32m

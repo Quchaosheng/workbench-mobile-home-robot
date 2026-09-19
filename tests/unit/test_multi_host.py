@@ -14,7 +14,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
-from workbench_backend.inbound_http import InboundHttpConfigurationError, InboundHttpPolicy
+from workbench_backend.inbound_http import (
+    InboundHttpConfigurationError,
+    InboundHttpPolicy,
+    validate_published_bind_address,
+)
 from workbench_backend.read_model import ReadModelError, RemoteDashboardReadModel
 from workbench_backend.remote_http import (
     MAX_REMOTE_RESPONSE_BYTES,
@@ -71,6 +75,47 @@ def json_body_with_size(size: int) -> bytes:
     if len(body) != size:
         raise AssertionError("incorrect test body size")
     return body
+
+
+class SimEventSourcePublishedBindTests(unittest.TestCase):
+    """The simulation host publishes its port, so its boundary is the bind address.
+
+    Issue #182: the event source listens on 0.0.0.0 inside its own network
+    namespace and is only reachable through the host publication Docker
+    creates. Validating that published address is what stops an accidental
+    all-interface exposure, because the process itself cannot observe which
+    host interface the operator chose.
+    """
+
+    def test_loopback_and_private_bind_addresses_are_accepted(self) -> None:
+        for value in ("127.0.0.1", "127.0.0.2", "10.20.30.40", "172.16.5.9", "192.168.7.1", "::1", "fd12:3456::40"):
+            with self.subTest(value=value):
+                address = validate_published_bind_address(value, setting="SIM_BIND_ADDRESS")
+                self.assertEqual(str(address), value)
+
+    def test_wildcard_public_and_ambiguous_bind_addresses_fail_closed(self) -> None:
+        rejected = (
+            "",
+            "   ",
+            "0.0.0.0",
+            "::",
+            "8.8.8.8",
+            "2001:4860:4860::8888",
+            "169.254.1.10",
+            "fe80::1",
+            "224.0.0.1",
+            "ff02::1",
+            "240.0.0.1",
+            "0.0.0.0/0",
+            "simulation.internal",
+        )
+        for value in rejected:
+            with self.subTest(value=value), self.assertRaises(InboundHttpConfigurationError):
+                validate_published_bind_address(value, setting="SIM_BIND_ADDRESS")
+
+    def test_rejection_names_the_setting_that_failed(self) -> None:
+        with self.assertRaisesRegex(InboundHttpConfigurationError, "SIM_BIND_ADDRESS"):
+            validate_published_bind_address("0.0.0.0", setting="SIM_BIND_ADDRESS")
 
 
 class ControllerInboundPolicyTests(unittest.TestCase):
