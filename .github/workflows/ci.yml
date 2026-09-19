@@ -32,6 +32,7 @@ jobs:
       - run: make scenario-check
       - run: make scenario-conformance
       - run: make run-identity-check
+      - run: make run-provenance-check
       - name: Assert skipped Gazebo execution is not a pass
         run: |
           mkdir -p runs

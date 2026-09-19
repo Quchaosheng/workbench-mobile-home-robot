@@ -44,7 +44,12 @@ PASS = 0
 FAIL = 1
 INCOMPLETE = 2
 
-SCHEMA_VERSION_HEADER = "workbench-run-identity-v1"
+SCHEMA_VERSION_HEADER = "workbench-run-identity-v2"
+# Versions this module wrote before. A bundle written under one of these is
+# reported as written under that version rather than being re-hashed in place,
+# because re-hashing it would silently bless an identity computed from a
+# different input list.
+LEGACY_SCHEMA_VERSIONS: tuple[str, ...] = ("workbench-run-identity-v1",)
 HASH_ALGORITHM = "sha256"
 DEFAULT_IDENTITY_FILENAME = "identity.json"
 
@@ -58,6 +63,9 @@ RUN_IDENTITY_MALFORMED = "RUN_IDENTITY_MALFORMED"
 RUN_IDENTITY_UNSAFE_RELEASE_CLAIM = "RUN_IDENTITY_UNSAFE_RELEASE_CLAIM"
 RUN_IDENTITY_EVENTS_UNREADABLE = "RUN_IDENTITY_EVENTS_UNREADABLE"
 RUN_IDENTITY_REGISTRY_UNREADABLE = "RUN_IDENTITY_REGISTRY_UNREADABLE"
+# A bundle written under a previous identity input list is refused by version
+# rather than re-hashed, so an artifact cannot be silently upgraded.
+RUN_IDENTITY_SCHEMA_UNSUPPORTED = "RUN_IDENTITY_SCHEMA_UNSUPPORTED"
 
 EMITTED_CODES = (
     RUN_IDENTITY_MISSING,
@@ -68,6 +76,7 @@ EMITTED_CODES = (
     RUN_IDENTITY_UNSAFE_RELEASE_CLAIM,
     RUN_IDENTITY_EVENTS_UNREADABLE,
     RUN_IDENTITY_REGISTRY_UNREADABLE,
+    RUN_IDENTITY_SCHEMA_UNSUPPORTED,
 )
 
 # The identity input list, in the order it is hashed. This is the whole contract:
@@ -82,6 +91,13 @@ IDENTITY_INPUTS: tuple[str, ...] = (
     "world_version",
     "config_hash",
     "commit",
+    # Issue #313 added one composed input rather than six raw ones. The identity
+    # answers "which definition produced this stream"; the seed, clock, ordering,
+    # adapter versions and environment class answer "what inputs produced it", and
+    # they have their own contract in ``run_provenance``. Composing them here
+    # keeps the identity list about the definition while still making a run with
+    # a different seed a different identity.
+    "provenance_hash",
 )
 
 # A run must carry these before its identity can be computed at all.
@@ -248,12 +264,13 @@ def identity_from_entry(
     event_stream_hash_value: str,
     config_hash: str = "",
     commit: str = "",
+    provenance_hash: str = "",
 ) -> RunIdentity:
     """Build the identity of a run from the registry entry that defines it.
 
-    ``config_hash`` and ``commit`` default to a stable placeholder rather than
-    being omitted, because an omitted input is a missing field and the identity
-    is supposed to be total over its declared inputs.
+    ``config_hash``, ``commit`` and ``provenance_hash`` default to a stable
+    placeholder rather than being omitted, because an omitted input is a missing
+    field and the identity is supposed to be total over its declared inputs.
     """
 
     if not isinstance(entry, Mapping):
@@ -273,6 +290,11 @@ def identity_from_entry(
         "world_version": _non_blank(str(entry.get("world_version", "WorkbenchSim-v0")), "world_version"),
         "config_hash": config_hash or "none",
         "commit": commit or "unspecified",
+        # ``unspecified`` is deliberate rather than an omission: an omitted input
+        # is a missing field, and the identity is total over its declared inputs.
+        # A bundle that never recorded its provenance is refused by the
+        # provenance gate, not silently given a defaulted identity.
+        "provenance_hash": provenance_hash or "unspecified",
     }
     return run_identity(material)
 
@@ -364,6 +386,25 @@ def verify_bundle_identity(
         fail(
             RUN_IDENTITY_MISSING,
             "the run metadata carries no identity block; re-run with the Issue #302 metadata extension",
+        )
+        return IdentityVerdict(run_id=run_id, identity=identity, ok=False, findings=tuple(findings))
+
+    # The version check comes before the field checks on purpose. A v1 bundle is
+    # missing ``provenance_hash`` by construction, and reporting that as a
+    # missing field would hide the real cause: it was written under an input
+    # list this module no longer computes.
+    block_version = block.get("schema_version")
+    if block_version in LEGACY_SCHEMA_VERSIONS:
+        fail(
+            RUN_IDENTITY_SCHEMA_UNSUPPORTED,
+            f"the bundle was written under {block_version!r}; re-run it under {SCHEMA_VERSION_HEADER!r} to "
+            "record the Issue #313 provenance input, which changes every identity hash",
+        )
+        return IdentityVerdict(run_id=run_id, identity=identity, ok=False, findings=tuple(findings))
+    if block_version != SCHEMA_VERSION_HEADER:
+        fail(
+            RUN_IDENTITY_SCHEMA_UNSUPPORTED,
+            f"identity schema_version {block_version!r} is not {SCHEMA_VERSION_HEADER!r}",
         )
         return IdentityVerdict(run_id=run_id, identity=identity, ok=False, findings=tuple(findings))
 
@@ -505,6 +546,11 @@ def scan_run_root(root: Path, *, runs_root: Path, registry: Mapping[str, Mapping
                         event_stream_hash_value=stream_hash,
                         config_hash=str(metadata.get("scene_hash", "")) or "none",
                         commit=str(metadata.get("commit", "")) or "unspecified",
+                        # Read from the run's own provenance block rather than
+                        # from a default, because a recomputed identity that
+                        # silently dropped this input would disagree with every
+                        # bundle and look like a stream mismatch.
+                        provenance_hash=str(metadata.get("provenance_hash", "")),
                     )
             except RunIdentityError:
                 recomputed = None
