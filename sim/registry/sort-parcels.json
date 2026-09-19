@@ -1,0 +1,36 @@
+{
+  "scenario_id": "sort-parcels",
+  "scenario_version": "0.2",
+  "goal": "Scan the parcel batch, route verified intact parcels to pickup, and isolate exceptions",
+  "task_id": "task-sort-parcels",
+  "semantic_actions": [
+    "observe",
+    "grasp",
+    "place"
+  ],
+  "required_adapters": [
+    "motion",
+    "perception",
+    "simulation"
+  ],
+  "evidence_policy": "A full-batch pre-manipulation observation plus a grasp and place ActionResult with evidence references for every planned parcel are required before verification runs.",
+  "verifier": "services/world_model/workbench_world_model/verifier.py::verify_parcel_sorting",
+  "recovery_policy": {
+    "allowed": [
+      "re_observe",
+      "retry_action",
+      "abort"
+    ],
+    "max_attempts": 2,
+    "requires_fresh_evidence": true
+  },
+  "evidence_status": "SCRIPTED_FIXTURE",
+  "non_goals": [
+    "does not claim Gazebo or physical validation",
+    "does not declare a navigation adapter: the batch is bounded to the tabletop workstation",
+    "does not define controller trajectories, joint values or stop authority"
+  ],
+  "timeout_s": 300,
+  "world_version": "WorkbenchSim-v0",
+  "owner": "Task / Simulation"
+}

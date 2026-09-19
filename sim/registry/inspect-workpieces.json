@@ -1,0 +1,32 @@
+{
+  "scenario_id": "inspect-workpieces",
+  "scenario_version": "0.2",
+  "goal": "Inspect presence, identity, and orientation of three workpieces",
+  "task_id": "task-inspect-workpieces",
+  "semantic_actions": [
+    "observe"
+  ],
+  "required_adapters": [
+    "perception",
+    "simulation"
+  ],
+  "evidence_policy": "A fresh observation above the declared confidence threshold for red_block, blue_cylinder and green_gear is required before verification runs; inspection issues no manipulation action.",
+  "verifier": "services/world_model/workbench_world_model/verifier.py::verify_inspection_evidence",
+  "recovery_policy": {
+    "allowed": [
+      "re_observe",
+      "abort"
+    ],
+    "max_attempts": 2,
+    "requires_fresh_evidence": true
+  },
+  "evidence_status": "SCRIPTED_FIXTURE",
+  "non_goals": [
+    "does not claim Gazebo or physical validation",
+    "does not issue grasp or place actions",
+    "does not define camera exposure, lighting or any actuator parameter"
+  ],
+  "timeout_s": 180,
+  "world_version": "WorkbenchSim-v0",
+  "owner": "Task / Simulation"
+}

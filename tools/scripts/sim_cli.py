@@ -32,6 +32,7 @@ enable_local_packages()
 
 from scenario_tools import canonical_hash, materialize_scenario, validate_simulation_manifest
 from workbench.kernel.scenario_contract import ContractError
+from workbench.kernel.scenario_migration import ScenarioMigrationError, migration_report
 from workbench.kernel.scenario_registry import ScenarioRegistryError, load_registry
 
 SCENARIO_ROOT = ROOT / "sim" / "scenarios"
@@ -724,6 +725,36 @@ def _registry_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _migration_command(args: argparse.Namespace) -> int:
+    """Report the legacy task_id -> registry identity migration without creating a run."""
+
+    try:
+        report = migration_report(ROOT, registry_root=REGISTRY_ROOT)
+    except (ScenarioMigrationError, ScenarioRegistryError, ContractError) as exc:
+        code = getattr(exc, "code", "SCENARIO_MIGRATION_MISMATCH")
+        print(f"NOT_EXECUTED: {code}: {exc}", file=sys.stderr)
+        return 2
+
+    if args.as_json:
+        print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))
+        return 0 if report["ok"] else 1
+
+    for family in report["families"]:
+        print(
+            f"{family['task_id']} -> {family['identity']} "
+            f"registered={str(family['registered']).lower()} "
+            f"corpus={family['actual_corpus_count']} fixtures"
+        )
+    for finding in report["findings"]:
+        print(f"{finding['code']} {finding['path']}: {finding['detail']}", file=sys.stderr)
+    print(
+        f"{'PASS' if report['ok'] else 'FAIL'}: {len(report['families'])} famil(ies); "
+        f"authoritative from {report['authoritative_release']}, "
+        f"task_id entry points removed in {report['deprecation_release']}"
+    )
+    return 0 if report["ok"] else 1
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run truthful Workbench simulation probes")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -738,6 +769,11 @@ def _parser() -> argparse.ArgumentParser:
     registry_describe = subparsers.add_parser("describe", help="describe one registered scenario by ID and version")
     registry_describe.add_argument("scenario", help="scenario_id, or scenario_id@scenario_version")
     registry_describe.add_argument("--json", action="store_true", dest="as_json")
+
+    migration_parser = subparsers.add_parser(
+        "migration", help="show the legacy task_id to registry identity migration (#301)"
+    )
+    migration_parser.add_argument("--json", action="store_true", dest="as_json")
 
     list_parser = subparsers.add_parser("list", help="list validated scenarios and deterministic scene hashes")
     list_parser.add_argument("--json", action="store_true", dest="as_json")
@@ -767,6 +803,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return exit_code
         if args.subcommand in {"registry-list", "describe"}:
             return _registry_command(args)
+        if args.subcommand == "migration":
+            return _migration_command(args)
         scenarios = load_scenarios()
         if args.subcommand == "list":
             if args.expanded:

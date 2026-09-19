@@ -67,6 +67,10 @@ class ScenarioEntry:
     release_eligible: bool
     executable: bool
     notices: tuple[str, ...] = ()
+    # The existing TaskGraph identifier this scenario migrated, when it migrated
+    # one. Issue #301 uses it to prove the legacy entry point and the registry
+    # resolve to the same definition; a scenario written registry-native has none.
+    task_id: str | None = None
 
     @property
     def identity(self) -> str:
@@ -83,6 +87,7 @@ class ScenarioEntry:
             "evidence_status": self.evidence_status,
             "evidence_policy": self.evidence_policy,
             "verifier": self.verifier,
+            "task_id": self.task_id,
             "path": self.path,
             "release_eligible": self.release_eligible,
             "executable": self.executable,
@@ -149,6 +154,7 @@ def _entry(
         release_eligible=evidence_status not in contract["non_release_eligible_status"],
         executable=verdict.status != "NOT_EXECUTABLE",
         notices=notices,
+        task_id=manifest.get("task_id"),
     )
 
 

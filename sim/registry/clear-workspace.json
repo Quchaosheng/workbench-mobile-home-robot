@@ -1,0 +1,36 @@
+{
+  "scenario_id": "clear-workspace",
+  "scenario_version": "0.2",
+  "goal": "Clear the blocking cylinder, then place the red block in the tray",
+  "task_id": "task-clear-workspace",
+  "semantic_actions": [
+    "observe",
+    "grasp",
+    "place"
+  ],
+  "required_adapters": [
+    "motion",
+    "perception",
+    "simulation"
+  ],
+  "evidence_policy": "A fresh observation plus a grasp and place ActionResult with evidence references for blue_cylinder and red_block are required before verification runs.",
+  "verifier": "services/world_model/workbench_world_model/verifier.py::verify_workspace_clearance",
+  "recovery_policy": {
+    "allowed": [
+      "re_observe",
+      "retry_action",
+      "abort"
+    ],
+    "max_attempts": 3,
+    "requires_fresh_evidence": true
+  },
+  "evidence_status": "SCRIPTED_FIXTURE",
+  "non_goals": [
+    "does not claim Gazebo or physical validation",
+    "does not declare a navigation adapter: the scripted plan clears the blocker by grasp and place",
+    "does not define controller trajectories, joint values or stop authority"
+  ],
+  "timeout_s": 240,
+  "world_version": "WorkbenchSim-v0",
+  "owner": "Task / Simulation"
+}
