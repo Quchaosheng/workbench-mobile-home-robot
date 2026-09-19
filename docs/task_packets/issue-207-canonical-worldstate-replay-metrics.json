@@ -1,0 +1,105 @@
+{
+  "issue": 207,
+  "human_owner": "Quchaosheng",
+  "objective": "Replace the evaluation event-envelope replay digest with the Issue #47 canonical WorldEvent contract, World Model reducer and WorldState.state_hash, and make the scripted fixture producer emit records that reducer can actually replay.",
+  "decision_supported": "Do replay metrics represent successful canonical WorldState reconstruction and semantic state consistency, rather than a sorted summary of the same event envelopes?",
+  "allowed_paths": [
+    "docs/task_packets/issue-207-canonical-worldstate-replay-metrics.json",
+    "tools/scripts/collect_metrics.py",
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_canonical_replay_metrics.py",
+    "tests/unit/test_evaluation_tools.py"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "interfaces/json_schema/world_event.schema.json",
+    "interfaces/json_schema/world_state.schema.json",
+    "interfaces/json_schema/observation.schema.json",
+    "interfaces/json_schema/action_result.schema.json",
+    "interfaces/examples/world-event-observation.json",
+    "libs/contracts/workbench_contracts/models.py",
+    "services/world_model/workbench_world_model/reducer.py",
+    "services/world_model/workbench_world_model/event_payloads.py",
+    "tests/unit/test_release_eligibility.py",
+    "tests/unit/test_sim_cli.py",
+    "Makefile",
+    "pyproject.toml"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**",
+    "services/agent_runtime/**",
+    "services/perception/**",
+    "services/backend/**",
+    "robot/control/**",
+    "firmware/**",
+    "sim/**",
+    "apps/**",
+    "deploy/**",
+    ".github/**"
+  ],
+  "input_refs": [
+    "interfaces/json_schema/world_event.schema.json",
+    "interfaces/json_schema/world_state.schema.json",
+    "interfaces/json_schema/action_result.schema.json",
+    "libs/contracts/workbench_contracts/models.py",
+    "services/world_model/workbench_world_model/reducer.py",
+    "services/world_model/workbench_world_model/event_payloads.py",
+    "tools/scripts/run_evaluation.py",
+    "tools/scripts/collect_metrics.py",
+    "docs/evaluation/release-eligibility.md"
+  ],
+  "outputs": [
+    "tools/scripts/collect_metrics.py",
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_canonical_replay_metrics.py",
+    "docs/task_packets/issue-207-canonical-worldstate-replay-metrics.json"
+  ],
+  "acceptance": [
+    "Each run is parsed through the strict WorldEvent Pydantic contract and replayed through Issue #47 create_world_state_snapshot before any metric is published.",
+    "state_hash_consistency compares canonical WorldState.state_hash values for forward and permuted delivery; no evaluation-owned reducer, serializer or hash algorithm is introduced.",
+    "A semantic Observation confidence or location change changes the canonical WorldState hash.",
+    "Permutations of the same valid stream produce the same canonical WorldState hash.",
+    "Mixed run IDs, duplicate sequence ownership, duplicate run ownership, non-contract record fields, malformed JSON and reducer failures stop collection with a RuntimeError.",
+    "replay_success_rate is derived from successful canonical replay; contiguous numbering is no longer sufficient on its own.",
+    "The scripted fixture producer emits contract-valid Observation and ActionResult payloads, so the nightly scripted pipeline replays without a producer exception.",
+    "A task family whose runs carry no verification record no longer crashes the family aggregate."
+  ],
+  "commands": [
+    "python -m pytest tests/unit/test_canonical_replay_metrics.py tests/unit/test_evaluation_tools.py tests/unit/test_release_eligibility.py tests/unit/test_sim_cli.py -v",
+    "python tools/scripts/check_task_packet.py docs/task_packets/issue-207-canonical-worldstate-replay-metrics.json",
+    "python -m ruff check tools/scripts/collect_metrics.py tools/scripts/run_evaluation.py tests/unit/test_canonical_replay_metrics.py",
+    "python -m ruff format --check tools/scripts/collect_metrics.py tools/scripts/run_evaluation.py tests/unit/test_canonical_replay_metrics.py",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "make evaluation-scripted",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Focused output showing a confidence and location change alter the Issue #47 state hash while a delivery permutation does not.",
+    "Fail-closed output for mixed run IDs, duplicate sequence ownership, duplicate run ownership, extra record fields, non-state event types, malformed JSON and reducer rejection.",
+    "Real scripted fixture output showing 72 runs across two versions replay through the canonical reducer with replay_success_rate 1.0.",
+    "Full unit, contract, scenario, context and lint output for this commit.",
+    "Task Packet validation and changed-path boundary output."
+  ],
+  "stop_conditions": [
+    "Implementation requires an evaluation-owned state reducer, canonical serializer or hash algorithm.",
+    "A WorldEvent, WorldState, Observation or ActionResult schema, Pydantic model or World Model change is required rather than a consumer or fixture-producer change.",
+    "Compatibility requires rewriting, inventing or silently dropping events on the replay path, instead of rejecting a record the contract cannot represent.",
+    "A write outside allowed_paths is required, or an allowed path contains unrelated user modifications.",
+    "make evaluation-scripted or the scripted unit suite cannot pass without weakening an existing fail-closed check."
+  ],
+  "max_iterations": 5,
+  "data_classification": "Local deterministic JSON event fixtures only; no personal data and no network access.",
+  "model_policy": "Strict Pydantic contract validation and the Issue #47 canonical World Model reducer only; no evaluation-specific state or hash inference.",
+  "risks_and_fallbacks": [
+    "The scripted log keeps its evaluation-only runner envelope, because the release-eligibility gate reads commit, runner, scenario and seed from it; canonical replay removes that envelope in memory rather than changing the on-disk log format.",
+    "A planning record such as task_graph stays in the log and out of the state projection, because the World Model event vocabulary does not include it and adding it would require an interfaces/ change with three human approvals.",
+    "Because any unreplayable run aborts collection, a successful collection reports replay_success_rate 1.0; the honesty of the metric comes from refusing to publish a partial score, not from a lower number.",
+    "The fixture producer previously emitted an action_result status field and a scalar pose yaw that the canonical ActionResult and Pose contracts cannot represent; both are now written in the contract's own vocabulary, and any consumer that still needs the legacy rendering must read the dashboard projection instead.",
+    "Rollback is reverting this commit; no schema or persistent-data migration is involved."
+  ]
+}

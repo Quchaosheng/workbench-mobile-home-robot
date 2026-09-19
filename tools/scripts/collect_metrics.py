@@ -2,7 +2,6 @@
 """Extract reproducible metrics from one version's JSON Lines event logs."""
 
 import argparse
-import hashlib
 import json
 import math
 from collections import Counter
@@ -11,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from _jsonio import JsonInputError, load_json, load_jsonl
+from _paths import enable_local_packages
 from release_eligibility import (
     discover_manifests,
     evaluate_eligibility,
@@ -18,7 +18,20 @@ from release_eligibility import (
     manifest_search_dirs,
 )
 
+enable_local_packages()
+
+from workbench_contracts import WorldEvent, WorldEventType
+from workbench_world_model import create_world_state_snapshot
+
 ALLOWED_ACTIONS = {"ask_confirm", "express", "grasp", "observe", "place", "stop"}
+# The evaluation log envelope field. It is log provenance owned by the runner,
+# not event state: ``WorldEvent`` forbids extra fields, so replay drops it and
+# the other metrics keep reading it from the untrusted record.
+LOG_ENVELOPE_FIELD = "evaluation"
+# The record classes the World Model reducer owns. A planning record such as
+# ``task_graph`` is stored in the same log but is not state, so it stays out of
+# the state projection instead of being forced into a contract it does not have.
+STATE_EVENT_TYPES = {event_type.value for event_type in WorldEventType}
 EVENT_TYPES = {
     "action_request",
     "action_result",
@@ -252,23 +265,45 @@ def duration_sources(runs: dict[str, list[dict[str, Any]]]) -> dict[str, str]:
     return sources
 
 
-def replay_digest(events: list[dict[str, Any]]) -> str:
-    state = {
-        "run_id": events[0].get("run_id") if events else None,
-        "event_ids": [],
-        "last_action": None,
-        "verification_status": None,
-        "evidence_refs": [],
-    }
-    for event in sorted(events, key=lambda item: item.get("sequence_no", -1)):
-        state["event_ids"].append(event.get("event_id"))
-        if event.get("event_type") == "action_result":
-            state["last_action"] = event.get("payload")
-        if event.get("event_type") == "verification":
-            state["verification_status"] = event.get("payload", {}).get("status")
-        state["evidence_refs"].extend(event.get("evidence_refs", []))
-    encoded = json.dumps(state, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(encoded).hexdigest()
+def _world_event(run_id: str, record: dict[str, Any]) -> WorldEvent:
+    """Project one log record onto the canonical WorldEvent contract.
+
+    Only the runner's log envelope is removed. Every other field must already be
+    a valid WorldEvent field, so a record with an unknown key, a non-canonical
+    event type, or a malformed payload is rejected here instead of being
+    repaired into something the reducer would accept.
+    """
+    body = {key: value for key, value in record.items() if key != LOG_ENVELOPE_FIELD}
+    unknown = sorted(set(body) - set(WorldEvent.model_fields))
+    if unknown:
+        raise ValueError(f"log record carries fields outside the WorldEvent contract: {unknown}")
+    try:
+        encoded = json.dumps(body, allow_nan=False, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError, UnicodeError) as error:
+        raise ValueError("log record is not representable as finite UTF-8 JSON") from error
+    return WorldEvent.model_validate_json(encoded)
+
+
+def canonical_replay(run_id: str, events: list[dict[str, Any]]) -> tuple[str, str]:
+    """Replay one run through the World Model reducer and return its state hashes.
+
+    The forward hash and the hash of the same stream delivered in a permuted
+    order are both computed from the canonical WorldState produced by
+    ``create_world_state_snapshot``, so the comparison exercises semantic state
+    rather than a sorted summary of event envelopes. Any validation or reducer
+    failure propagates as a RuntimeError: a run that cannot be replayed must stop
+    metric collection rather than contribute a partial numerator.
+    """
+    records = [event for event in events if event.get("event_type") in STATE_EVENT_TYPES]
+    if not records:
+        raise RuntimeError(f"run {run_id!r} has no state-affecting events to replay")
+    try:
+        typed_events = [_world_event(run_id, record) for record in records]
+        forward = create_world_state_snapshot(run_id, typed_events)
+        permuted = create_world_state_snapshot(run_id, list(reversed(typed_events)))
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"canonical WorldState replay failed for run {run_id!r}: {error}") from error
+    return forward.state_hash, permuted.state_hash
 
 
 def load_human_audit(audit_path: Path | None) -> dict[str, Any] | None:
@@ -335,12 +370,12 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
 
     recoverable = [run for run in runs.values() if "refuted" in verification_statuses(run)[:-1]]
     recovered = sum(verification_statuses(run)[-1] == "confirmed" for run in recoverable)
-    valid_replays = sum(
-        [event.get("sequence_no") for event in run] == list(range(len(run)))
-        and all(event.get("run_id") == run_id for event in run)
-        for run_id, run in runs.items()
-    )
-    stable_hashes = sum(replay_digest(run) == replay_digest(list(reversed(run))) for run in runs.values())
+    # Every run must replay through the canonical reducer before any metric is
+    # published, so a malformed, ambiguous or unreplayable run aborts the
+    # collection instead of being scored as a partial success.
+    replayed = {run_id: canonical_replay(run_id, run) for run_id, run in runs.items()}
+    valid_replays = len(replayed)
+    stable_hashes = sum(forward == permuted for forward, permuted in replayed.values())
     false_completions, audit_complete, reviewed_by = audit_false_completions(runs, audit_path)
     # Eligibility is recomputed from the logs and the provenance record. The
     # summary is consulted only to detect a disagreement, never to grant a pass.
@@ -356,7 +391,11 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
     task_family_vtcr = {}
     for family, family_run_count in sorted(task_family_distribution.items()):
         family_runs = [run for run_id, run in runs.items() if run_task_ids[run_id] == family]
-        family_verified = sum(verification_statuses(run)[-1] == "confirmed" for run in family_runs)
+        # A run without a verification record has not been verified, so it must
+        # not crash the family aggregate or silently count as confirmed.
+        family_verified = sum(
+            bool(verification_statuses(run)) and verification_statuses(run)[-1] == "confirmed" for run in family_runs
+        )
         task_family_vtcr[family] = family_verified / family_run_count
     observed_entities = [
         len(
