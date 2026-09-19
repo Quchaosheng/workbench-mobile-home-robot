@@ -32,7 +32,17 @@ enable_local_packages()
 
 from scenario_tools import canonical_hash, materialize_scenario, validate_simulation_manifest
 from workbench.kernel.scenario_contract import ContractError
-from workbench.kernel.scenario_migration import ScenarioMigrationError, migration_report
+from workbench.kernel.scenario_identity import (
+    RunIdentityError,
+    event_stream_hash,
+    hash_events_file,
+    identity_from_entry,
+)
+from workbench.kernel.scenario_migration import (
+    ScenarioMigrationError,
+    migration_report,
+    resolve_task_id,
+)
 from workbench.kernel.scenario_registry import ScenarioRegistryError, load_registry
 
 SCENARIO_ROOT = ROOT / "sim" / "scenarios"
@@ -396,6 +406,64 @@ def _result_from_metadata(metadata: dict[str, Any], final: Path) -> RunResult:
     )
 
 
+def _identity_entry(scenario: Scenario) -> dict[str, Any]:
+    """Resolve the registry definition a scenario belongs to (Issue #302).
+
+    A manifest under ``sim/registry`` is already registry-native. A legacy
+    fixture under ``sim/scenarios`` names a ``task_id`` that Issue #301 mapped to
+    an identity. Either way the definition comes from the registry reader, so the
+    identity is a property of the scenario, not of the caller's path.
+    """
+
+    registry = load_registry(REGISTRY_ROOT, repo_root=ROOT)
+    by_identity = {entry.identity: entry.as_dict() for entry in registry.entries}
+    by_scenario_id: dict[str, list[dict[str, Any]]] = {}
+    for entry in by_identity.values():
+        by_scenario_id.setdefault(entry["scenario_id"], []).append(entry)
+
+    version = scenario.manifest.get("scenario_version")
+    if isinstance(version, str) and version.strip():
+        identity = f"{scenario.scenario_id}@{version}"
+        if identity in by_identity:
+            return by_identity[identity]
+        raise SimulationInputError(f"{identity} is not a registered scenario; runs require a registry definition")
+
+    task_id = scenario.manifest.get("task_id")
+    if isinstance(task_id, str) and task_id.strip():
+        try:
+            family = resolve_task_id(task_id)
+        except ScenarioMigrationError as error:
+            raise SimulationInputError(f"task_id {task_id!r} does not resolve to a registry identity") from error
+        if family.identity in by_identity:
+            return by_identity[family.identity]
+
+    candidates = by_scenario_id.get(scenario.scenario_id, [])
+    if len(candidates) == 1:
+        return candidates[0]
+    raise SimulationInputError(
+        f"{scenario.scenario_id} does not resolve to exactly one registered scenario; "
+        "runs require a registry definition"
+    )
+
+
+def _record_identity(metadata: dict[str, Any], scenario: Scenario, events_path: Path) -> None:
+    """Attach the Issue #302 identity block to a run's metadata."""
+
+    entry = _identity_entry(scenario)
+    stream_hash = hash_events_file(events_path) if events_path.is_file() else event_stream_hash(())
+    identity = identity_from_entry(
+        entry,
+        event_stream_hash_value=stream_hash,
+        config_hash=scenario.scene_hash or "none",
+        commit=metadata.get("commit") or "unspecified",
+    )
+    metadata["identity"] = identity.as_dict()
+    metadata["registry_identity"] = identity.identity
+    metadata["evidence_policy_version"] = identity.material["evidence_policy_version"]
+    metadata["verifier_rule_version"] = identity.material["verifier_rule_version"]
+    metadata["event_stream_hash"] = identity.material["event_stream_hash"]
+
+
 def run_scenario(
     scenario: Scenario,
     *,
@@ -580,6 +648,10 @@ def run_scenario(
                                             "reason": "external runner completed and event log validated",
                                         }
                                     )
+        try:
+            _record_identity(metadata, scenario, events_path)
+        except RunIdentityError as error:
+            raise SimulationInputError(f"run identity could not be recorded: {error}") from error
         metadata["exit_code"] = EXIT_CODES[metadata["status"]]
         metadata["evidence_paths"] = [
             "source-manifest.json",
@@ -587,12 +659,14 @@ def run_scenario(
             "events.jsonl" if events_path.is_file() else None,
             "stdout.log",
             "stderr.log",
+            "identity.json",
             "metadata.json",
             "checksums.sha256",
         ]
         metadata["evidence_paths"] = [path for path in metadata["evidence_paths"] if path is not None]
         metadata["finished_at"] = datetime.now(UTC).isoformat()
         _write_json(staging / "metadata.json", metadata)
+        _write_json(staging / "identity.json", metadata["identity"])
         _write_checksums(staging)
         _publish_artifact(staging, final)
         return _result_from_metadata(metadata, final)
