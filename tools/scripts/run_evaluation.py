@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import math
 import os
 import platform
 import re
@@ -29,6 +30,7 @@ from workbench.application.redaction import (
     redact_text,
 )
 from workbench_agent_runtime import build_policy_routed_parcel_plan
+from workbench_contracts import ATTRIBUTE_SCHEMA_VERSION
 
 SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 EVENT_TYPES = {
@@ -130,6 +132,95 @@ def write_jsonl(path: Path, events: list[dict[str, Any]]) -> None:
     temporary.replace(path)
 
 
+def _unit_quaternion_from_yaw(yaw: float) -> dict[str, float]:
+    """Convert a planar yaw into the contract's unit quaternion.
+
+    The World Model ``Pose`` requires a quaternion, so the fixture producer
+    states the rotation in the form the contract can replay instead of emitting a
+    scalar the reducer would have to guess about.
+    """
+    return {"x": 0.0, "y": 0.0, "z": math.sin(yaw / 2.0), "w": math.cos(yaw / 2.0)}
+
+
+def _observation_payload(
+    *,
+    observation_id: str,
+    run_id: str,
+    scene_object: dict[str, Any],
+    confidence: float,
+    occurred_at: str,
+) -> dict[str, Any]:
+    """Build a contract-valid Observation payload for one scene object.
+
+    The World Model treats a payload that carries ``attributes`` but omits the
+    schema version, observation time or source as malformed rather than as a
+    legacy record, so every field the reducer needs is written explicitly.
+    """
+    return {
+        "observation_id": observation_id,
+        "run_id": run_id,
+        "entity_id": scene_object["entity_id"],
+        "entity_type": scene_object["entity_type"],
+        "colour": scene_object["colour"],
+        "attributes": scene_object.get("attributes", {}),
+        "attributes_mode": "complete",
+        "attributes_schema_version": ATTRIBUTE_SCHEMA_VERSION,
+        "observed_at": occurred_at,
+        "source": "scripted_camera",
+        "location": "on:table",
+        "pose": {
+            "frame_id": "world",
+            "position": {"x": scene_object["x"], "y": scene_object["y"], "z": 0.02},
+            "orientation": _unit_quaternion_from_yaw(scene_object["yaw"]),
+        },
+        "confidence": confidence,
+    }
+
+
+def _action_result_payload(
+    *,
+    action_id: str,
+    run_id: str,
+    occurred_at: str,
+    started_at: str,
+    succeeded: bool,
+    evidence_refs: list[str],
+    entity_id: str | None = None,
+    resulting_location: str | None = None,
+    detail: str | None = None,
+) -> dict[str, Any]:
+    """Build a contract-valid ActionResult payload for one semantic action.
+
+    A completed result that makes a spatial claim must carry both the entity and
+    the claimed location, so a completed action without a destination omits the
+    pair instead of recording half a claim. The reducer owns this rule and the
+    producer states a payload it can accept.
+    """
+    payload: dict[str, Any] = {
+        "result_id": f"result-{action_id}",
+        "action_id": action_id,
+        "run_id": run_id,
+        "outcome": "completed" if succeeded else "failed",
+        "dispatch_state": "sent",
+        "device_state": "confirmed" if succeeded else "rejected",
+        "started_at": started_at,
+        "ended_at": occurred_at,
+        "clock_id": "wall",
+        "retry_count": 0,
+        "evidence_refs": list(evidence_refs),
+    }
+    if succeeded:
+        if resulting_location is not None:
+            payload["entity_id"] = entity_id
+            payload["resulting_location"] = resulting_location
+    else:
+        payload["error_code"] = 1
+        payload["error_reason"] = detail or "action_failed"
+        if entity_id is not None:
+            payload["entity_id"] = entity_id
+    return payload
+
+
 def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_base: int) -> list[dict[str, Any]]:
     """Produce deterministic multi-task fixtures for pipeline and UI tests only."""
     scenario_id = manifest["scenario_id"]
@@ -169,6 +260,9 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
     events: list[dict[str, Any]] = []
     action_index = 0
 
+    def occurred_at_for(sequence_no: int) -> str:
+        return (start + timedelta(seconds=sequence_no * 4)).isoformat().replace("+00:00", "Z")
+
     def append(event_type: str, payload: dict[str, Any], evidence_refs: list[str] | None = None) -> None:
         sequence_no = len(events)
         events.append(
@@ -177,7 +271,7 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
                 "run_id": run_id,
                 "sequence_no": sequence_no,
                 "event_type": event_type,
-                "occurred_at": (start + timedelta(seconds=sequence_no * 4)).isoformat().replace("+00:00", "Z"),
+                "occurred_at": occurred_at_for(sequence_no),
                 "payload": payload,
                 "evidence_refs": evidence_refs or [],
                 "evaluation": {
@@ -310,7 +404,16 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
             failure_ref = f"sensor-log://{run_id}/{entity_id}/attempt-1"
             append(
                 "action_result",
-                {"action_id": observe_action_id, "status": "failed", "detail": fault_type},
+                _action_result_payload(
+                    action_id=observe_action_id,
+                    run_id=run_id,
+                    occurred_at=occurred_at_for(len(events)),
+                    started_at=occurred_at_for(len(events) - 1),
+                    succeeded=False,
+                    evidence_refs=[failure_ref],
+                    entity_id=entity_id,
+                    detail=fault_type,
+                ),
                 [failure_ref],
             )
             append_intermediate_failure(fault_type, [failure_ref])
@@ -333,26 +436,26 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
         evidence.append(frame_ref)
         append(
             "observation",
-            {
-                "observation_id": f"{run_id}-obs-{object_index + 1:03d}",
-                "run_id": run_id,
-                "entity_id": entity_id,
-                "entity_type": scene_object["entity_type"],
-                "colour": scene_object["colour"],
-                "attributes": scene_object.get("attributes", {}),
-                "location": "on:table",
-                "pose": {
-                    "frame_id": "world",
-                    "position": {"x": scene_object["x"], "y": scene_object["y"], "z": 0.02},
-                    "yaw": scene_object["yaw"],
-                },
-                "confidence": confidence,
-            },
+            _observation_payload(
+                observation_id=f"{run_id}-obs-{object_index + 1:03d}",
+                run_id=run_id,
+                scene_object=scene_object,
+                confidence=confidence,
+                occurred_at=occurred_at_for(len(events)),
+            ),
             [frame_ref],
         )
         append(
             "action_result",
-            {"action_id": observe_action_id, "status": "succeeded", "entity_id": entity_id},
+            _action_result_payload(
+                action_id=observe_action_id,
+                run_id=run_id,
+                occurred_at=occurred_at_for(len(events)),
+                started_at=occurred_at_for(len(events) - 1),
+                succeeded=True,
+                evidence_refs=[frame_ref],
+                entity_id=entity_id,
+            ),
             [frame_ref],
         )
 
@@ -368,11 +471,16 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
             failure_ref = f"motion-log://{run_id}/{entity_id}/grasp-attempt-1"
             append(
                 "action_result",
-                {
-                    "action_id": grasp_action_id,
-                    "status": "failed",
-                    "detail": "target moved" if fault_type == "moving_target" else fault_type,
-                },
+                _action_result_payload(
+                    action_id=grasp_action_id,
+                    run_id=run_id,
+                    occurred_at=occurred_at_for(len(events)),
+                    started_at=occurred_at_for(len(events) - 1),
+                    succeeded=False,
+                    evidence_refs=[failure_ref],
+                    entity_id=entity_id,
+                    detail="target moved" if fault_type == "moving_target" else fault_type,
+                ),
                 [failure_ref],
             )
             evidence.append(failure_ref)
@@ -395,7 +503,15 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
         evidence.append(grasp_ref)
         append(
             "action_result",
-            {"action_id": grasp_action_id, "status": "succeeded", "entity_id": entity_id},
+            _action_result_payload(
+                action_id=grasp_action_id,
+                run_id=run_id,
+                occurred_at=occurred_at_for(len(events)),
+                started_at=occurred_at_for(len(events) - 1),
+                succeeded=True,
+                evidence_refs=[grasp_ref],
+                entity_id=entity_id,
+            ),
             [grasp_ref],
         )
 
@@ -414,7 +530,16 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
             failure_ref = f"motion-log://{run_id}/{entity_id}/place-attempt-1"
             append(
                 "action_result",
-                {"action_id": place_action_id, "status": "failed", "detail": fault_type},
+                _action_result_payload(
+                    action_id=place_action_id,
+                    run_id=run_id,
+                    occurred_at=occurred_at_for(len(events)),
+                    started_at=occurred_at_for(len(events) - 1),
+                    succeeded=False,
+                    evidence_refs=[failure_ref],
+                    entity_id=entity_id,
+                    detail=fault_type,
+                ),
                 [failure_ref],
             )
             evidence.append(failure_ref)
@@ -436,12 +561,16 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
         evidence.append(place_ref)
         append(
             "action_result",
-            {
-                "action_id": place_action_id,
-                "status": "succeeded",
-                "entity_id": entity_id,
-                "resulting_location": f"in:{destination_id}",
-            },
+            _action_result_payload(
+                action_id=place_action_id,
+                run_id=run_id,
+                occurred_at=occurred_at_for(len(events)),
+                started_at=occurred_at_for(len(events) - 1),
+                succeeded=True,
+                evidence_refs=[place_ref],
+                entity_id=entity_id,
+                resulting_location=f"in:{destination_id}",
+            ),
             [place_ref],
         )
 
