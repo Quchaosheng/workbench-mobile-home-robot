@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: bootstrap lint fmt test contract scenario-check golden-check evaluation-check evaluation-scripted \
+.PHONY: bootstrap lint fmt test contract scenario-check run-identity-check golden-check evaluation-check evaluation-scripted \
 	context-check dashboard-test dashboard demo demo-scripted demo-offline demo-model model-provision \
 	performance-test benchmark-startup benchmark-resources performance-regression-test offline-integration \
 	uart-spi-test irq-test docs task-check check container-smoke pm-test sim sim-doctor sim-list sim-run \
@@ -41,7 +41,7 @@ test:
 	$(PYTHON) -m pytest -v
 
 # Everything CI runs, in one command. Run this before opening a PR.
-check: lint test contract scenario-check scenario-conformance golden-check context-check demo-scripted demo-offline
+check: lint test contract scenario-check scenario-conformance run-identity-check golden-check context-check demo-scripted demo-offline
 
 contract:
 	$(PYTHON) tools/scripts/validate_contracts.py
@@ -53,6 +53,15 @@ scenario-check:
 # evidence boundaries with a committed test (Issue #304).
 scenario-conformance:
 	$(PYTHON) tools/scripts/check_scenario_conformance.py
+
+# Every stored run must resolve to the scenario definition it was produced from
+# (Issue #302). A run that cannot be attributed cannot be replayed or verified.
+# The runs are produced first, in the workspace's own gitignored run root, so
+# the gate never passes vacuously over an empty tree.
+run-identity-check:
+	$(PYTHON) tools/scripts/sim_cli.py run --all --runner scripted \
+		--output-dir runs/identity-check --version ci-identity
+	$(PYTHON) tools/scripts/check_run_identity.py --runs-root runs/identity-check
 
 golden-check:
 	$(PYTHON) tools/scripts/validate_golden_set.py

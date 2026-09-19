@@ -1,0 +1,86 @@
+{
+  "issue": 302,
+  "human_owner": "Quchaosheng",
+  "objective": "Bind every simulation run's metadata, replay and verification to the registry scenario identity and to the evidence-policy and verifier-rule versions, so a run cannot be replayed or verified against the wrong scenario definition, and a missing or mismatched definition fails closed.",
+  "decision_supported": "Whether a stored run can be attributed to the scenario definition that produced it, and whether replaying it with a different definition is refused rather than silently accepted.",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/scenario_identity.py",
+    "tools/scripts/check_run_identity.py",
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_run_identity.py",
+    "Makefile",
+    ".github/workflows/ci.yml",
+    "docs/task_packets/issue-302-run-identity.json"
+  ],
+  "read_only_paths": [
+    "sim/registry/**",
+    "sim/scenarios/**",
+    "libs/contracts/**",
+    "interfaces/**",
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "libs/kernel/workbench/kernel/scenario_capability.py",
+    "services/world_model/**",
+    "tools/qa/**"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "services/backend/**",
+    "apps/dashboard/**"
+  ],
+  "input_refs": [
+    "sim/registry/README.md",
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "libs/kernel/workbench/kernel/scenario_capability.py",
+    "tools/scripts/sim_cli.py",
+    "services/world_model/workbench_world_model/reducer.py",
+    "tools/scripts/run_evaluation.py"
+  ],
+  "outputs": [
+    "libs/kernel/workbench/kernel/scenario_identity.py",
+    "tools/scripts/check_run_identity.py",
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_run_identity.py"
+  ],
+  "acceptance": [
+    "the same event stream under two scenario versions produces two different run identities, and the two differ only in the version that changed",
+    "run identity is a documented canonical serialization with a named hash algorithm over a fixed, ordered input list",
+    "replaying or verifying a bundle whose recorded metadata is absent, unknown, or mismatched against the registry fails closed with a stable diagnostic rather than falling back to a default scenario",
+    "the evidence-policy and verifier-rule versions are part of the identity, so changing either changes the identity",
+    "a run's recorded release_eligible status cannot be raised by omitting metadata, and a scripted fixture stays release_eligible false",
+    "identity computation is a pure function of its declared inputs, so two processes computing it from the same bundle agree"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-302-run-identity.json",
+    "python3 -m pytest tests/unit/test_run_identity.py -q",
+    "python3 tools/scripts/check_run_identity.py",
+    "python3 -m pytest tests/unit/test_scenario_registry.py tests/unit/test_scenario_conformance.py tests/unit/test_world_state_snapshot_replay.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "pytest transcript for tests/unit/test_run_identity.py with the passed count",
+    "check_run_identity.py stdout showing the identity of each committed run directory and exit code",
+    "the identity vector table: same events, two versions, two policy versions, four distinct identities",
+    "ruff check and ruff format output"
+  ],
+  "stop_conditions": [
+    "the change would require editing a frozen fixture, a seed, a scene hash or a committed matrix document",
+    "the change would require a contract amendment to libs/contracts or interfaces/, which needs three human approvals",
+    "the change would require adding a runtime dependency or importing ROS, Gazebo, MoveIt or a hardware SDK",
+    "the change would require a physical or Gazebo claim, which this repository cannot make from a fixture",
+    "the change would require reinterpreting an existing stored run directory rather than adding a field to it"
+  ],
+  "max_iterations": 12,
+  "data_classification": "public repository source, documentation and test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may write the identity module, the gate, the metadata wiring and the tests; a named human Owner accepts the identity input list and the hash algorithm",
+  "risks_and_fallbacks": [
+    "the identity could omit an input that actually changes semantics; fallback is that the input list is a single ordered constant with its ordering asserted by a test, and any new input is an explicit addition that changes every identity by construction",
+    "an existing run directory without the new metadata would be unreadable; fallback is that a bundle with no recorded identity is reported as MISSING_IDENTITY with the fields it lacks, rather than being treated as a mismatch or silently accepted",
+    "the gate could pass vacuously when there are no run directories; fallback is that the gate reports the count it inspected and a test asserts the zero-run case is INCOMPLETE rather than PASS",
+    "the metadata extension could diverge from the registry reader; fallback is that the identity is computed from the registry entry the reader returns, and a test drives a real committed manifest through both",
+    "rollback is a revert of this commit; the module, the gate and the metadata fields are additive and no fixture, seed or scene hash changes"
+  ]
+}
