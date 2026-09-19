@@ -31,8 +31,11 @@ from _paths import ROOT, enable_local_packages
 enable_local_packages()
 
 from scenario_tools import canonical_hash, materialize_scenario, validate_simulation_manifest
+from workbench.kernel.scenario_contract import ContractError
+from workbench.kernel.scenario_registry import ScenarioRegistryError, load_registry
 
 SCENARIO_ROOT = ROOT / "sim" / "scenarios"
+REGISTRY_ROOT = ROOT / "sim" / "registry"
 DEFAULT_OUTPUT_DIR = ROOT / "runs" / "sim"
 MAX_MANIFEST_BYTES = 1 * 1024 * 1024
 MAX_COMMAND_TOKENS = 64
@@ -656,6 +659,71 @@ def _print_json_or_text(payload: Any, as_json: bool) -> None:
             )
 
 
+def _parse_registry_identity(token: str) -> tuple[str, str | None]:
+    """Split ``id@version``. A bare ID leaves the version to the registry."""
+
+    scenario_id, separator, version = token.partition("@")
+    if not scenario_id:
+        raise SimulationInputError(f"invalid scenario identity: {token!r}")
+    if separator and not version:
+        raise SimulationInputError(f"invalid scenario identity: {token!r}")
+    return scenario_id, version or None
+
+
+def _registry_command(args: argparse.Namespace) -> int:
+    """List or describe registry manifests without creating a run.
+
+    A registry failure is reported as NOT_EXECUTED with the stable diagnostic
+    code rather than as a traceback, because an empty or partial catalog is a
+    refusal, not a result.
+    """
+
+    try:
+        registry = load_registry(REGISTRY_ROOT, repo_root=ROOT)
+    except (ScenarioRegistryError, ContractError) as exc:
+        code = getattr(exc, "code", "SCENARIO_REGISTRY_INVALID")
+        print(f"NOT_EXECUTED: {code}: {exc}", file=sys.stderr)
+        return 2
+
+    if args.subcommand == "registry-list":
+        payload = {
+            "contract_version": registry.contract_version,
+            "scenario_count": len(registry),
+            "scenarios": registry.catalog(),
+        }
+        if args.as_json:
+            print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
+            return 0
+        for entry in registry.entries:
+            print(
+                f"{entry.identity} evidence={entry.evidence_status} "
+                f"release_eligible={str(entry.release_eligible).lower()} "
+                f"executable={str(entry.executable).lower()} actions={','.join(entry.semantic_actions)}"
+            )
+        return 0
+
+    scenario_id, version = _parse_registry_identity(args.scenario)
+    try:
+        payload = registry.describe(scenario_id, version)
+    except ScenarioRegistryError as exc:
+        print(f"NOT_EXECUTED: {exc.code}: {exc}", file=sys.stderr)
+        return 2
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
+        return 0
+    print(f"{payload['identity']} ({payload['path']})")
+    print(f"goal: {payload['goal']}")
+    print(f"actions: {', '.join(payload['semantic_actions'])}")
+    print(f"adapters: {', '.join(payload['required_adapters'])}")
+    print(f"verifier: {payload['verifier']}")
+    print(f"evidence_status: {payload['evidence_status']}")
+    print(f"release_eligible: {str(payload['release_eligible']).lower()}")
+    print(f"executable: {str(payload['executable']).lower()}")
+    for notice in payload["notices"]:
+        print(f"notice: {notice}")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run truthful Workbench simulation probes")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -663,6 +731,13 @@ def _parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser("doctor", help="diagnose simulator readiness without launching it")
     doctor_parser.add_argument("--require-gazebo", action="store_true")
     doctor_parser.add_argument("--json", action="store_true", dest="as_json")
+
+    registry_list = subparsers.add_parser("registry-list", help="list registry manifests by stable ID and version")
+    registry_list.add_argument("--json", action="store_true", dest="as_json")
+
+    registry_describe = subparsers.add_parser("describe", help="describe one registered scenario by ID and version")
+    registry_describe.add_argument("scenario", help="scenario_id, or scenario_id@scenario_version")
+    registry_describe.add_argument("--json", action="store_true", dest="as_json")
 
     list_parser = subparsers.add_parser("list", help="list validated scenarios and deterministic scene hashes")
     list_parser.add_argument("--json", action="store_true", dest="as_json")
@@ -690,6 +765,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             report, exit_code = doctor(require_gazebo=args.require_gazebo)
             _print_json_or_text(report, args.as_json)
             return exit_code
+        if args.subcommand in {"registry-list", "describe"}:
+            return _registry_command(args)
         scenarios = load_scenarios()
         if args.subcommand == "list":
             if args.expanded:
@@ -722,6 +799,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     except SimulationInputError as exc:
         print(f"NOT_EXECUTED: {exc}", file=sys.stderr)
+        return 2
+    except (ScenarioRegistryError, ContractError) as exc:
+        code = getattr(exc, "code", "SCENARIO_REGISTRY_INVALID")
+        print(f"NOT_EXECUTED: {code}: {exc}", file=sys.stderr)
         return 2
 
 
