@@ -17,10 +17,10 @@
     {
       "id": "kernel-event-store-sequence-contiguity",
       "boundary": "event ordering",
-      "summary": "A persisted event log whose sequence_no is not contiguous from zero must be refused on read.",
+      "summary": "A persisted single-run event log whose sequence_no is not contiguous from zero must be refused on read.",
       "file": "libs/kernel/workbench/kernel/event_store.py",
-      "literal": "            if type(sequence_no) is not int or sequence_no != index:",
-      "replacement": "            if False:",
+      "literal": "            elif sequence_no != index:",
+      "replacement": "            elif False:",
       "tests": [
         "libs/kernel/tests/test_k1_k10.py",
         "libs/kernel/tests/test_k1_k10_extended.py",

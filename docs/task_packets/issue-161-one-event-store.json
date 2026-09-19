@@ -1,0 +1,104 @@
+{
+  "issue": 161,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the Kernel event store the one SQLite implementation in the runtime path by widening it to multi-run per-run sequencing, and reduce the World Model store to a typed adapter over it, so there is one schema, one transaction path, one checkpoint model and one recovery procedure to maintain.",
+  "decision_supported": "Whether a stored run's events can be appended, checkpointed, replayed and restored through a single SQLite implementation, and whether a multi-run database preserves per-run ordering without imposing global sequence uniqueness.",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/event_store.py",
+    "services/world_model/workbench_world_model/event_store.py",
+    "services/world_model/workbench_world_model/motion_evidence_adapter.py",
+    "services/world_model/workbench_world_model/__init__.py",
+    "tests/unit/test_kernel_event_store.py",
+    "tests/unit/test_world_event_store.py",
+    "tests/unit/test_motion_evidence_adapter.py",
+    "tests/unit/test_correlation_ledger.py",
+    "tests/unit/test_event_evidence_recovery.py",
+    "libs/kernel/tests/test_k1_k10.py",
+    "libs/kernel/tests/test_k1_k10_extended.py",
+    "libs/application/workbench/application/correlation_ledger.py",
+    "tools/scripts/demo_scripted.py",
+    "docs/task_packets/issue-161-one-event-store.json",
+    "tools/qa/mutations-v1.json"
+  ],
+  "read_only_paths": [
+    "libs/contracts/**",
+    "interfaces/**",
+    "sim/**",
+    "docs/architecture/**",
+    "tools/qa/quarantine-v1.json",
+    "tools/qa/governance/**",
+    "tools/qa/scenario-conformance-v1.json",
+    "tools/scripts/quality_gates.py",
+    "tests/conftest.py",
+    "libs/kernel/workbench/kernel/scenario_contract.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "kernel/**",
+    "services/backend/**",
+    "apps/dashboard/**"
+  ],
+  "input_refs": [
+    "libs/kernel/workbench/kernel/event_store.py",
+    "services/world_model/workbench_world_model/event_store.py",
+    "services/world_model/workbench_world_model/motion_evidence_adapter.py",
+    "libs/application/workbench/application/correlation_ledger.py",
+    "tests/unit/test_world_event_store.py",
+    "tests/unit/test_kernel_event_store.py",
+    "tools/scripts/demo_scripted.py"
+  ],
+  "outputs": [
+    "libs/kernel/workbench/kernel/event_store.py",
+    "services/world_model/workbench_world_model/event_store.py",
+    "tests/unit/test_kernel_event_store.py",
+    "tests/unit/test_world_event_store.py",
+    "tools/qa/mutations-v1.json"
+  ],
+  "acceptance": [
+    "runtime callers persist through one SQLite schema and transaction implementation, and the World Model store is an adapter over it rather than a second implementation",
+    "the World Model public call sites keep a small typed WorldEvent append/get/list/replay API",
+    "an exact retry is idempotent while a conflicting event_id or a conflicting per-run sequence_no fails visibly",
+    "one database holds several runs, each with its own contiguous sequence starting at zero, without global sequence uniqueness",
+    "checkpoint replay is defined per run and survives closing and reopening the store",
+    "an existing single-run or legacy World Model database is refused with an actionable recovery instruction rather than silently read as an empty database",
+    "integrity checking, backup and restore, and close and context-manager behaviour keep working on the single implementation",
+    "the duplicated table definition and connection lifecycle are deleted from the World Model module after the adapter's compatibility tests pass"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-161-one-event-store.json",
+    "python3 -m pytest tests/unit/test_kernel_event_store.py tests/unit/test_world_event_store.py -q",
+    "python3 -m pytest tests/unit/test_motion_evidence_adapter.py tests/unit/test_correlation_ledger.py -q",
+    "python3 -m pytest tests/unit/test_event_evidence_recovery.py tests/integration/test_motion_evidence_persistence.py -q",
+    "python3 tools/scripts/demo_scripted.py",
+    "python3 -m pytest -q --deselect tests/unit/test_multi_host_deployment.py",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "pytest transcript for the kernel and world-model store suites with the passed count",
+    "a multi-run database transcript showing two runs whose sequences both start at zero in one file",
+    "a restart transcript showing a per-run checkpoint surviving close and reopen",
+    "a legacy-database transcript showing the migration-required diagnostic and its exit status",
+    "the full-suite transcript, the demo-scripted transcript, and ruff output"
+  ],
+  "stop_conditions": [
+    "the change would require editing robot/control/** or firmware/**, which is AI-write-forbidden",
+    "the change would require a contract amendment to libs/contracts or interfaces/, which needs three human approvals",
+    "the change would require adding a runtime dependency or importing ROS, Gazebo, MoveIt or a hardware SDK",
+    "the change would require changing what a WorldEvent or an event payload means, rather than how it is persisted",
+    "the change would require silently accepting an existing database whose schema cannot be proven compatible",
+    "the change would require reinterpreting an existing stored run directory rather than failing it with an actionable instruction"
+  ],
+  "max_iterations": 16,
+  "data_classification": "public repository source, documentation and test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may widen the Kernel store to multi-run sequencing, write the World Model adapter and update the affected tests; a named human Owner accepts the schema version bump and the legacy-database refusal policy",
+  "risks_and_fallbacks": [
+    "widening the Kernel store from single-run to multi-run changes its validation contract; fallback is that per-run contiguity is still enforced exactly as strictly as the old whole-file contiguity, and a test asserts that an out-of-order per-run sequence is still refused",
+    "an existing Kernel or World Model database would be unreadable under the new schema; fallback is a schema-version refusal that names the old version, the new version and the recovery command, never a silent empty read",
+    "the adapter could drift from the Kernel semantics it delegates to; fallback is that the adapter owns no SQL, and a test drives the same conflict and idempotency cases through both entry points",
+    "a per-run checkpoint could be mistaken for a global one; fallback is that a checkpoint records the run it belongs to and replaying it without that run is refused",
+    "rollback is a revert of this commit; the World Model table is recreated by the previous implementation on first open, and no committed fixture or generated artifact changes"
+  ]
+}
