@@ -1,0 +1,143 @@
+{
+  "contract_version": "scenario-registry-v1",
+  "status": "proposed",
+  "issue": 308,
+  "decision_record": "docs/decisions/ADR-0006-scenario-registry-contract.md",
+  "compatibility": {
+    "version_match": "exact",
+    "implicit_upgrade": false,
+    "unknown_version": "reject",
+    "discovery_order": "lexicographic by scenario_id",
+    "duplicate_scenario_id": "reject"
+  },
+  "required_fields": {
+    "scenario_id": "Stable identity. Lowercase ASCII, dot/dash/underscore separated, no path separators.",
+    "scenario_version": "Exact-match version string, MAJOR.MINOR. Part of run metadata and replay identity.",
+    "goal": "Operator-readable goal statement. Not a controller target.",
+    "semantic_actions": "Non-empty list of semantic ActionType values. Never joint, velocity or torque values.",
+    "required_adapters": "Non-empty list of semantic adapter capability names, for example motion, perception, mcu.",
+    "evidence_policy": "Which observations and ActionResult fields are required before verification.",
+    "verifier": "Repository-relative entry point owned by the World Model verifier layer.",
+    "recovery_policy": "Declared recovery behaviour. Absent means no recovery policy is claimed.",
+    "evidence_status": "One value from evidence_status_vocabulary. Fixtures are never release eligible.",
+    "non_goals": "Explicit statements of what this scenario does not claim."
+  },
+  "optional_fields": {
+    "task_id": "Existing TaskGraph identifier when the scenario migrates an existing task family.",
+    "timeout_s": "Bounded whole-scenario budget in seconds.",
+    "world_version": "Simulation world contract the scenario was authored against.",
+    "owner": "Team accountable for the scenario rule, adapter, evidence and release decision."
+  },
+  "semantic_action_source": "libs/contracts/workbench_contracts/models.py::ActionType",
+  "pending_semantic_actions": [
+    "clean_workspace"
+  ],
+  "scenario_id_pattern": "^[a-z0-9]+(?:[-_.][a-z0-9]+)*$",
+  "scenario_version_pattern": "^[0-9]+\\.[0-9]+$",
+  "evidence_status_vocabulary": [
+    "SCRIPTED_FIXTURE",
+    "GAZEBO",
+    "PHYSICAL",
+    "NOT_EXECUTED",
+    "BLOCKED"
+  ],
+  "non_release_eligible_status": [
+    "SCRIPTED_FIXTURE",
+    "NOT_EXECUTED",
+    "BLOCKED"
+  ],
+  "forbidden_field_names": [
+    "joint_positions",
+    "joint_trajectory",
+    "joint_velocities",
+    "velocity",
+    "velocities",
+    "torque",
+    "torques",
+    "effort",
+    "can_frame",
+    "can_frames",
+    "controller_goal",
+    "controller_goals",
+    "trajectory",
+    "emergency_stop",
+    "estop",
+    "e_stop",
+    "safe_enable",
+    "stop_authority",
+    "motor_command"
+  ],
+  "forbidden_field_substrings": [
+    "joint_",
+    "_torque",
+    "can_",
+    "_estop",
+    "velocity",
+    "velocities",
+    "torque"
+  ],
+  "diagnostic_codes": {
+    "SCENARIO_DUPLICATE_ID": "Two manifests declare the same scenario_id and scenario_version.",
+    "SCENARIO_FORBIDDEN_FIELD": "A field names raw control, trajectory or stop authority.",
+    "SCENARIO_INVALID_ACTION": "semantic_actions contains a value outside the semantic ActionType set.",
+    "SCENARIO_INVALID_ADAPTER": "required_adapters is empty or names an unknown capability.",
+    "SCENARIO_INVALID_EVIDENCE_STATUS": "evidence_status is outside the declared vocabulary.",
+    "SCENARIO_INVALID_ID": "scenario_id does not match the stable identity pattern.",
+    "SCENARIO_INVALID_VERIFIER": "verifier entry point is not a safe repository-relative path.",
+    "SCENARIO_INVALID_VERSION": "scenario_version is not an exact MAJOR.MINOR version.",
+    "SCENARIO_MISSING_FIELD": "A required contract field is absent.",
+    "SCENARIO_OVERSIZED_VALUE": "A string or list exceeds its bounded length.",
+    "SCENARIO_PENDING_ACTION": "semantic_actions names an action declared by a future issue.",
+    "SCENARIO_UNKNOWN_FIELD": "A field is not part of the v1 contract."
+  },
+  "bounds": {
+    "max_manifest_bytes": 65536,
+    "max_list_items": 32,
+    "max_string_length": 512
+  },
+  "allowed_adapters": [
+    "motion",
+    "perception",
+    "mcu",
+    "navigation",
+    "simulation",
+    "backend"
+  ],
+  "ownership": [
+    {
+      "concern": "scenario identity and manifest fields",
+      "owner": "Task / Simulation",
+      "validated_at": "registry load, before Event Store initialization"
+    },
+    {
+      "concern": "semantic action contract",
+      "owner": "Agent Runtime",
+      "validated_at": "policy validator, before action dispatch"
+    },
+    {
+      "concern": "verifier entry point and verification status",
+      "owner": "World Model",
+      "validated_at": "verify() call, at evidence read time"
+    },
+    {
+      "concern": "adapter implementation and ActionResult",
+      "owner": "Motion / Perception / MCU",
+      "validated_at": "adapters return the shared ActionResult contract"
+    },
+    {
+      "concern": "evidence status and release eligibility",
+      "owner": "Release / QA",
+      "validated_at": "release eligibility gate"
+    },
+    {
+      "concern": "run and replay identity",
+      "owner": "Integration",
+      "validated_at": "run record creation, before the first event is written"
+    },
+    {
+      "concern": "read-only projection",
+      "owner": "Dashboard",
+      "validated_at": "HTTP read model, never a writer"
+    }
+  ]
+}

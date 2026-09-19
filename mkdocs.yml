@@ -35,6 +35,9 @@ nav:
   - Branch protection: security/branch-protection.md
   - Reproducible Python lock: security/reproducible-python-lock.md
   - System architecture: architecture/system.md
+  - Decisions:
+      - Multi-scenario registry contract: decisions/ADR-0006-scenario-registry-contract.md
+      - Hardware device runtime: decisions/ADR-0005-hardware-device-runtime.md
   - Observability contract: architecture/observability-contract-v1.md
   - Linux driver architecture: architecture/linux-drivers.md
   - Hardware:
