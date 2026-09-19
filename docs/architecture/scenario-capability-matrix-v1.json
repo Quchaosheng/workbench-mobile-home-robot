@@ -1,0 +1,270 @@
+{
+  "matrix_version": "scenario-capability-matrix-v1",
+  "status": "proposed",
+  "issue": 311,
+  "decision_record": "docs/decisions/ADR-0006-scenario-registry-contract.md",
+  "environment_statuses": [
+    "NOT_EXECUTED",
+    "BLOCKED",
+    "SCRIPTED_FIXTURE",
+    "GAZEBO",
+    "PHYSICAL"
+  ],
+  "rows": [
+    {
+      "scenario_id": "pick-place-red-block",
+      "scenario_version": "1.0",
+      "task_family": "pick_place",
+      "status": "REGISTERED",
+      "environment_status": "SCRIPTED_FIXTURE",
+      "semantic_actions": [
+        "observe",
+        "grasp",
+        "place"
+      ],
+      "required_adapters": [
+        "motion",
+        "perception",
+        "simulation"
+      ],
+      "missing_capabilities": [],
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_object_in_tray",
+      "recovery_policy": [
+        "re_observe",
+        "retry_action",
+        "ask_confirm",
+        "abort"
+      ],
+      "evidence_status": "SCRIPTED_FIXTURE",
+      "scenario_rules_owner": "Task / Simulation",
+      "adapter_owner": "Motion / Perception",
+      "evidence_owner": "World Model",
+      "release_owner": "Release / QA",
+      "manifest": "sim/registry/pick-place-red-block.json",
+      "tests": [
+        "tests/unit/test_scenario_registry.py",
+        "tests/unit/test_world_model.py"
+      ],
+      "evidence_report": "docs/architecture/examples/scenario-pick-place-red-block-v1.json",
+      "notes": "Fractional task families are not merged; the simulation adapter is a fixture, so no Gazebo or physical claim is made."
+    },
+    {
+      "scenario_id": "clean-and-inspect-workspace",
+      "scenario_version": "0.1",
+      "task_family": "cleaning",
+      "status": "NOT_REGISTERED",
+      "environment_status": "NOT_EXECUTED",
+      "semantic_actions": [
+        "observe",
+        "navigate",
+        "clean_workspace"
+      ],
+      "required_adapters": [
+        "motion",
+        "navigation",
+        "perception",
+        "simulation"
+      ],
+      "missing_capabilities": [
+        "not_available",
+        "blocked"
+      ],
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_workspace_clearance",
+      "recovery_policy": [
+        "re_observe",
+        "retry_action",
+        "safe_stop",
+        "abort"
+      ],
+      "evidence_status": "NOT_EXECUTED",
+      "scenario_rules_owner": "Scenario / Simulation",
+      "adapter_owner": "Motion / Navigation",
+      "evidence_owner": "World Model",
+      "release_owner": "Release / QA",
+      "manifest": "docs/architecture/examples/scenario-clean-workspace-v1.json",
+      "tests": [],
+      "evidence_report": "docs/architecture/examples/scenario-clean-workspace-v1.json",
+      "notes": "Published as a non-executable example. clean_workspace is a pending ActionType and no cleaning task family is registered; Issue #306 owns the first registry-native slice."
+    },
+    {
+      "scenario_id": "kit-three-parts",
+      "scenario_version": "0.2",
+      "task_family": "kitting",
+      "status": "PLANNED",
+      "environment_status": "SCRIPTED_FIXTURE",
+      "semantic_actions": [
+        "observe",
+        "grasp",
+        "place"
+      ],
+      "required_adapters": [
+        "motion",
+        "perception",
+        "simulation"
+      ],
+      "missing_capabilities": [
+        "not_available"
+      ],
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_kit_contents",
+      "recovery_policy": [
+        "re_observe",
+        "retry_action",
+        "abort"
+      ],
+      "evidence_status": "SCRIPTED_FIXTURE",
+      "scenario_rules_owner": "Task / Simulation",
+      "adapter_owner": "Motion / Perception",
+      "evidence_owner": "World Model",
+      "release_owner": "Release / QA",
+      "manifest": "sim/scenarios/expanded/multi-object-001.json",
+      "tests": [
+        "tests/unit/test_world_model.py"
+      ],
+      "evidence_report": "docs/evaluation/failure-cases.md",
+      "notes": "The verifier and the scripted evaluator exist, and the family is exercised by the expanded multi_object variant. The registry manifest is not written yet; Issue #301 owns registration and the byte-for-byte equivalence proof."
+    },
+    {
+      "scenario_id": "inspect-workpieces",
+      "scenario_version": "0.2",
+      "task_family": "inspection",
+      "status": "PLANNED",
+      "environment_status": "SCRIPTED_FIXTURE",
+      "semantic_actions": [
+        "observe"
+      ],
+      "required_adapters": [
+        "perception",
+        "simulation"
+      ],
+      "missing_capabilities": [
+        "not_available"
+      ],
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_inspection_evidence",
+      "recovery_policy": [
+        "re_observe",
+        "abort"
+      ],
+      "evidence_status": "SCRIPTED_FIXTURE",
+      "scenario_rules_owner": "Task / Simulation",
+      "adapter_owner": "Perception",
+      "evidence_owner": "World Model",
+      "release_owner": "Release / QA",
+      "manifest": "sim/scenarios/expanded/low-light-001.json",
+      "tests": [
+        "tests/unit/test_world_model.py",
+        "tests/unit/test_observed_attributes.py"
+      ],
+      "evidence_report": "docs/evaluation/failure-cases.md",
+      "notes": "Inspection is observation-only: it issues no grasp or place action. The family is exercised by the expanded low_light variant and is not registered yet; Issue #301 owns that."
+    },
+    {
+      "scenario_id": "clear-workspace",
+      "scenario_version": "0.2",
+      "task_family": "cleaning",
+      "status": "PLANNED",
+      "environment_status": "SCRIPTED_FIXTURE",
+      "semantic_actions": [
+        "observe",
+        "navigate",
+        "grasp",
+        "place"
+      ],
+      "required_adapters": [
+        "motion",
+        "navigation",
+        "perception",
+        "simulation"
+      ],
+      "missing_capabilities": [
+        "not_available"
+      ],
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_workspace_clearance",
+      "recovery_policy": [
+        "re_observe",
+        "retry_action",
+        "abort"
+      ],
+      "evidence_status": "SCRIPTED_FIXTURE",
+      "scenario_rules_owner": "Task / Simulation",
+      "adapter_owner": "Motion / Navigation",
+      "evidence_owner": "World Model",
+      "release_owner": "Release / QA",
+      "manifest": "sim/scenarios/expanded/path-blocked-001.json",
+      "tests": [
+        "tests/unit/test_world_model.py"
+      ],
+      "evidence_report": "docs/evaluation/failure-cases.md",
+      "notes": "The blocking cylinder is cleared by grasp and place, not by a dedicated cleaning action, so this family declares no pending action. The expanded path_blocked variant exercises it and it is not registered yet; Issue #301 owns that."
+    },
+    {
+      "scenario_id": "sort-parcels",
+      "scenario_version": "0.2",
+      "task_family": "parcels",
+      "status": "PLANNED",
+      "environment_status": "SCRIPTED_FIXTURE",
+      "semantic_actions": [
+        "observe",
+        "grasp",
+        "place"
+      ],
+      "required_adapters": [
+        "motion",
+        "perception",
+        "simulation"
+      ],
+      "missing_capabilities": [
+        "not_available"
+      ],
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_parcel_sorting",
+      "recovery_policy": [
+        "re_observe",
+        "retry_action",
+        "abort"
+      ],
+      "evidence_status": "SCRIPTED_FIXTURE",
+      "scenario_rules_owner": "Task / Simulation",
+      "adapter_owner": "Motion / Perception",
+      "evidence_owner": "World Model",
+      "release_owner": "Release / QA",
+      "manifest": "sim/scenarios/expanded/parcel-intake-001.json",
+      "tests": [
+        "tests/unit/test_world_model.py"
+      ],
+      "evidence_report": "docs/evaluation/failure-cases.md",
+      "notes": "Bounded to the tabletop workstation. Requests that need a mobile base fail closed until a navigation contract and hardware are owned, so no navigation adapter is declared."
+    },
+    {
+      "scenario_id": "assemble-two-parts",
+      "scenario_version": "0.3",
+      "task_family": "assembly",
+      "status": "BLOCKED",
+      "environment_status": "BLOCKED",
+      "semantic_actions": [
+        "observe",
+        "grasp",
+        "place"
+      ],
+      "required_adapters": [
+        "motion",
+        "perception"
+      ],
+      "missing_capabilities": [
+        "blocked"
+      ],
+      "recovery_policy": [
+        "re_observe",
+        "safe_stop",
+        "abort"
+      ],
+      "evidence_status": "BLOCKED",
+      "scenario_rules_owner": "Task / Simulation",
+      "adapter_owner": "Motion",
+      "evidence_owner": "World Model",
+      "release_owner": "Release / QA",
+      "manifest": "tasks/assembly/README.md",
+      "tests": [],
+      "evidence_report": "tasks/assembly/README.md",
+      "notes": "Blocked by hardware. Seat confirmation needs force or torque feedback, which cannot be verified by vision alone, and the family is not implemented, so this row deliberately declares no verifier. Claiming one would read as assembly support."
+    }
+  ]
+}

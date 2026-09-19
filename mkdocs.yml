@@ -36,6 +36,8 @@ nav:
   - Reproducible Python lock: security/reproducible-python-lock.md
   - System architecture: architecture/system.md
   - Scenario registry contract: decisions/ADR-0006-scenario-registry-contract.md
+  - Scenario capability matrix: architecture/scenario-capability-matrix.md
+  - Architecture documents: architecture/README.md
   - Decisions:
       - Multi-scenario registry contract: decisions/ADR-0006-scenario-registry-contract.md
       - Hardware device runtime: decisions/ADR-0005-hardware-device-runtime.md

@@ -1,0 +1,119 @@
+{
+  "issue": 311,
+  "human_owner": "Quchaosheng",
+  "objective": "Publish one authoritative, machine-readable scenario capability matrix that names, for every registered scenario identity, its semantic actions, required adapters, evidence status, verifier, recovery policy and owner, and make a registry entry without a matrix row fail a deterministic validation command.",
+  "decision_supported": "Whether a contributor can tell from one committed artifact what each scenario can do, which boundary owns it, and how strong its evidence is, instead of inferring support from a fixture passing.",
+  "allowed_paths": [
+    "docs/architecture/scenario-capability-matrix-v1.json",
+    "docs/architecture/README.md",
+    "docs/architecture/scenario-capability-matrix.md",
+    "libs/kernel/workbench/kernel/scenario_capability.py",
+    "tools/scripts/check_scenario_capabilities.py",
+    "tests/unit/test_scenario_capabilities.py",
+    "mkdocs.yml",
+    "docs/task_packets/issue-311-capability-matrix.json"
+  ],
+  "read_only_paths": [
+    "docs/architecture/scenario-contract-v1.json",
+    "docs/decisions/ADR-0006-scenario-registry-contract.md",
+    "libs/contracts/**",
+    "interfaces/**",
+    "sim/registry/**",
+    "sim/scenarios/**",
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "tools/scripts/sim_cli.py",
+    "services/world_model/**",
+    "tasks/**"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "services/backend/**",
+    "apps/dashboard/**",
+    "services/agent_runtime/**",
+    "sim/worlds/**"
+  ],
+  "input_refs": [
+    "docs/architecture/scenario-contract-v1.json",
+    "docs/decisions/ADR-0006-scenario-registry-contract.md",
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "tools/scripts/sim_cli.py",
+    "sim/registry/README.md",
+    "sim/registry/pick-place-red-block.json",
+    "docs/architecture/examples/scenario-pick-place-red-block-v1.json",
+    "docs/architecture/examples/scenario-clean-workspace-v1.json",
+    "services/world_model/workbench_world_model/verifier.py",
+    "tasks/pick_place/README.md",
+    "tasks/kitting/README.md",
+    "tasks/inspection/README.md",
+    "tasks/assembly/README.md",
+    "tasks/parcels/README.md"
+  ],
+  "outputs": [
+    "docs/architecture/scenario-capability-matrix-v1.json",
+    "docs/architecture/scenario-capability-matrix.md",
+    "docs/architecture/README.md",
+    "libs/kernel/workbench/kernel/scenario_capability.py",
+    "tools/scripts/check_scenario_capabilities.py",
+    "tests/unit/test_scenario_capabilities.py"
+  ],
+  "acceptance": [
+    "the matrix carries one row for every registered scenario identity and for every task family that is planned, blocked or not yet registered, so a missing family is visible rather than silent",
+    "every row declares semantic actions, required adapters, evidence status, verifier, recovery policy, environment status and owner",
+    "the matrix validator fails a registry entry that has no matrix row, and fails a matrix row that names an unregistered identity, so the two artifacts cannot drift",
+    "matrix status distinguishes software, scripted fixture, Gazebo and physical evidence, and no row infers a stronger status than its manifest declares",
+    "a row may not name joint trajectories, controller goals, torque or velocity limits, CAN frames or emergency-stop authority",
+    "the matrix declares ownership for scenario rules, adapter implementation, evidence and release decision by reference to the ADR-0006 ownership table",
+    "the generated markdown table is reproducible from the JSON and is byte-identical across runs",
+    "the validator imports no ROS, Gazebo, MoveIt or hardware module and writes nothing",
+    "an absent, unreadable or unparseable matrix is INCOMPLETE rather than a silent pass"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-311-capability-matrix.json",
+    "python3 -m pytest tests/unit/test_scenario_capabilities.py -q",
+    "python3 tools/scripts/check_scenario_capabilities.py",
+    "python3 tools/scripts/check_scenario_capabilities.py --check-generated",
+    "python3 tools/scripts/check_scenario_capabilities.py --require-registered",
+    "python3 tools/scripts/check_scenario_contract.py",
+    "python3 tools/scripts/sim_cli.py registry-list",
+    "python3 -m pytest tests/unit/test_scenario_registry.py -q",
+    "python3 -m pytest tests/unit/test_scenario_contract.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 -m mkdocs build --strict",
+    "python3 tools/scripts/check_task_packet.py --all --base origin/main",
+    "make scenario-check",
+    "make contract",
+    "make context-check"
+  ],
+  "evidence": [
+    "pytest transcript for tests/unit/test_scenario_capabilities.py with the passed count",
+    "check_scenario_capabilities.py stdout showing the matrix row count, the registered identities covered and exit code 0",
+    "check_scenario_capabilities.py --check-generated output proving the committed markdown table matches the JSON",
+    "the failure transcript showing a registry entry without a row exits 1 with a stable MATRIX_* code",
+    "ruff check and ruff format output",
+    "mkdocs strict build output",
+    "check_task_packet.py --all --base origin/main output",
+    "make scenario-check, make contract and make context-check output"
+  ],
+  "stop_conditions": [
+    "the change would require editing docs/architecture/scenario-contract-v1.json or the frozen public schema, which is a reviewed contract amendment and belongs to a separate Issue",
+    "the change would require registering a new scenario identity, which belongs to Issue #301 or Issue #306",
+    "the change would require extending the shared ActionType vocabulary, which belongs to Issue #306",
+    "the change would require a new runtime dependency or any ROS, Gazebo or hardware import",
+    "a frozen scenario fixture would have to be renamed, re-seeded or re-hashed"
+  ],
+  "max_iterations": 14,
+  "data_classification": "public repository source, documentation and test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may write the matrix, the validator, the generated table and the tests; a named human Owner accepts the ownership map and any row that claims an evidence status",
+  "risks_and_fallbacks": [
+    "the matrix could be read as a claim that a scenario runs; fallback is that every row carries an explicit environment status and the validator refuses a status stronger than the manifest evidence_status",
+    "the matrix could drift from the registry; fallback is that the validator fails a registry identity without a row and a row without a registration, in both directions",
+    "the generated markdown could silently diverge from the JSON; fallback is that --check-generated regenerates and compares byte-for-byte",
+    "a planned family row could be mistaken for a delivered capability; fallback is that planned and blocked statuses are explicit vocabulary values and never release eligible",
+    "rollback is a revert of this commit; the matrix is additive documentation plus a read-only validator and no runtime path imports it"
+  ]
+}
