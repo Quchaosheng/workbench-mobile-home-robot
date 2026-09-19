@@ -1,0 +1,201 @@
+{
+  "corpus_version": "scenario-conformance-v1",
+  "issue": 304,
+  "decision_record": "docs/architecture/scenario-capability-matrix-v1.json",
+  "required_dimensions": [
+    "conflicting_evidence",
+    "deterministic_replay",
+    "missing_provenance",
+    "policy_valid_actions",
+    "release_status_truthful",
+    "stale_evidence",
+    "unsafe_field_rejected"
+  ],
+  "scenarios": {
+    "pick-place-red-block@1.0": [
+      {
+        "dimension": "conflicting_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_pick_place_conflicting_evidence",
+        "detail": "evidence that disagrees with the goal cannot confirm"
+      },
+      {
+        "dimension": "deterministic_replay",
+        "test": "tests/unit/test_scenario_conformance.py::test_pick_place_deterministic_replay",
+        "detail": "two reductions of one event stream produce the same state hash"
+      },
+      {
+        "dimension": "missing_provenance",
+        "test": "tests/unit/test_scenario_conformance.py::test_pick_place_missing_provenance",
+        "detail": "removing provenance references cannot confirm"
+      },
+      {
+        "dimension": "policy_valid_actions",
+        "test": "tests/unit/test_scenario_conformance.py::test_pick_place_policy_valid_actions",
+        "detail": "the confirmed probe state verifies as confirmed through the registry verifier"
+      },
+      {
+        "dimension": "release_status_truthful",
+        "test": "tests/unit/test_scenario_conformance.py::test_pick_place_release_status_truthful",
+        "detail": "a scripted fixture is not release eligible"
+      },
+      {
+        "dimension": "stale_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_pick_place_stale_evidence",
+        "detail": "a lost belief cannot confirm, and the verifier reports stale_observation"
+      },
+      {
+        "dimension": "unsafe_field_rejected",
+        "test": "tests/unit/test_scenario_conformance.py::test_pick_place_unsafe_field_rejected",
+        "detail": "a raw-control or bypass key is refused by the conformance scan"
+      }
+    ],
+    "kit-three-parts@0.2": [
+      {
+        "dimension": "conflicting_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_kitting_conflicting_evidence",
+        "detail": "evidence that disagrees with the goal cannot confirm"
+      },
+      {
+        "dimension": "deterministic_replay",
+        "test": "tests/unit/test_scenario_conformance.py::test_kitting_deterministic_replay",
+        "detail": "two reductions of one event stream produce the same state hash"
+      },
+      {
+        "dimension": "missing_provenance",
+        "test": "tests/unit/test_scenario_conformance.py::test_kitting_missing_provenance",
+        "detail": "removing provenance references cannot confirm"
+      },
+      {
+        "dimension": "policy_valid_actions",
+        "test": "tests/unit/test_scenario_conformance.py::test_kitting_policy_valid_actions",
+        "detail": "the confirmed probe state verifies as confirmed through the registry verifier"
+      },
+      {
+        "dimension": "release_status_truthful",
+        "test": "tests/unit/test_scenario_conformance.py::test_kitting_release_status_truthful",
+        "detail": "a scripted fixture is not release eligible"
+      },
+      {
+        "dimension": "stale_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_kitting_stale_evidence",
+        "detail": "a lost belief cannot confirm, and the verifier reports stale_observation"
+      },
+      {
+        "dimension": "unsafe_field_rejected",
+        "test": "tests/unit/test_scenario_conformance.py::test_kitting_unsafe_field_rejected",
+        "detail": "a raw-control or bypass key is refused by the conformance scan"
+      }
+    ],
+    "inspect-workpieces@0.2": [
+      {
+        "dimension": "conflicting_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_inspection_conflicting_evidence",
+        "detail": "evidence that disagrees with the goal cannot confirm"
+      },
+      {
+        "dimension": "deterministic_replay",
+        "test": "tests/unit/test_scenario_conformance.py::test_inspection_deterministic_replay",
+        "detail": "two reductions of one event stream produce the same state hash"
+      },
+      {
+        "dimension": "missing_provenance",
+        "test": "tests/unit/test_scenario_conformance.py::test_inspection_missing_provenance",
+        "detail": "removing provenance references cannot confirm"
+      },
+      {
+        "dimension": "policy_valid_actions",
+        "test": "tests/unit/test_scenario_conformance.py::test_inspection_policy_valid_actions",
+        "detail": "the confirmed probe state verifies as confirmed through the registry verifier"
+      },
+      {
+        "dimension": "release_status_truthful",
+        "test": "tests/unit/test_scenario_conformance.py::test_inspection_release_status_truthful",
+        "detail": "a scripted fixture is not release eligible"
+      },
+      {
+        "dimension": "stale_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_inspection_stale_evidence",
+        "detail": "a lost belief cannot confirm, and the verifier reports stale_observation"
+      },
+      {
+        "dimension": "unsafe_field_rejected",
+        "test": "tests/unit/test_scenario_conformance.py::test_inspection_unsafe_field_rejected",
+        "detail": "a raw-control or bypass key is refused by the conformance scan"
+      }
+    ],
+    "clear-workspace@0.2": [
+      {
+        "dimension": "conflicting_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_cleaning_conflicting_evidence",
+        "detail": "evidence that disagrees with the goal cannot confirm"
+      },
+      {
+        "dimension": "deterministic_replay",
+        "test": "tests/unit/test_scenario_conformance.py::test_cleaning_deterministic_replay",
+        "detail": "two reductions of one event stream produce the same state hash"
+      },
+      {
+        "dimension": "missing_provenance",
+        "test": "tests/unit/test_scenario_conformance.py::test_cleaning_missing_provenance",
+        "detail": "removing provenance references cannot confirm"
+      },
+      {
+        "dimension": "policy_valid_actions",
+        "test": "tests/unit/test_scenario_conformance.py::test_cleaning_policy_valid_actions",
+        "detail": "the confirmed probe state verifies as confirmed through the registry verifier"
+      },
+      {
+        "dimension": "release_status_truthful",
+        "test": "tests/unit/test_scenario_conformance.py::test_cleaning_release_status_truthful",
+        "detail": "a scripted fixture is not release eligible"
+      },
+      {
+        "dimension": "stale_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_cleaning_stale_evidence",
+        "detail": "a lost belief cannot confirm, and the verifier reports stale_observation"
+      },
+      {
+        "dimension": "unsafe_field_rejected",
+        "test": "tests/unit/test_scenario_conformance.py::test_cleaning_unsafe_field_rejected",
+        "detail": "a raw-control or bypass key is refused by the conformance scan"
+      }
+    ],
+    "sort-parcels@0.2": [
+      {
+        "dimension": "conflicting_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_parcels_conflicting_evidence",
+        "detail": "evidence that disagrees with the goal cannot confirm"
+      },
+      {
+        "dimension": "deterministic_replay",
+        "test": "tests/unit/test_scenario_conformance.py::test_parcels_deterministic_replay",
+        "detail": "two reductions of one event stream produce the same state hash"
+      },
+      {
+        "dimension": "missing_provenance",
+        "test": "tests/unit/test_scenario_conformance.py::test_parcels_missing_provenance",
+        "detail": "removing provenance references cannot confirm"
+      },
+      {
+        "dimension": "policy_valid_actions",
+        "test": "tests/unit/test_scenario_conformance.py::test_parcels_policy_valid_actions",
+        "detail": "the confirmed probe state verifies as confirmed through the registry verifier"
+      },
+      {
+        "dimension": "release_status_truthful",
+        "test": "tests/unit/test_scenario_conformance.py::test_parcels_release_status_truthful",
+        "detail": "a scripted fixture is not release eligible"
+      },
+      {
+        "dimension": "stale_evidence",
+        "test": "tests/unit/test_scenario_conformance.py::test_parcels_stale_evidence",
+        "detail": "a lost belief cannot confirm, and the verifier reports stale_observation"
+      },
+      {
+        "dimension": "unsafe_field_rejected",
+        "test": "tests/unit/test_scenario_conformance.py::test_parcels_unsafe_field_rejected",
+        "detail": "a raw-control or bypass key is refused by the conformance scan"
+      }
+    ]
+  }
+}

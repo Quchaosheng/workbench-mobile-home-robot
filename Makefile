@@ -41,13 +41,18 @@ test:
 	$(PYTHON) -m pytest -v
 
 # Everything CI runs, in one command. Run this before opening a PR.
-check: lint test contract scenario-check golden-check context-check demo-scripted demo-offline
+check: lint test contract scenario-check scenario-conformance golden-check context-check demo-scripted demo-offline
 
 contract:
 	$(PYTHON) tools/scripts/validate_contracts.py
 
 scenario-check:
 	$(PYTHON) tools/scripts/validate_scenarios.py
+
+# Every registered scenario must prove the shared safety, provenance, replay and
+# evidence boundaries with a committed test (Issue #304).
+scenario-conformance:
+	$(PYTHON) tools/scripts/check_scenario_conformance.py
 
 golden-check:
 	$(PYTHON) tools/scripts/validate_golden_set.py
