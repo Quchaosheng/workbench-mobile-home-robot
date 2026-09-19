@@ -1,0 +1,31 @@
+{
+  "ruleset_name": "main-protection",
+  "description": "Required safety matrix for main. This file is the declaration; tools/scripts/check_branch_protection.py compares it against the live configuration and refuses to report a pass it could not observe.",
+  "target_branch": "main",
+  "declared_on": "2026-09-19",
+  "required_status_checks": [
+    "foundation-checks",
+    "bsp-manifests",
+    "container-smoke",
+    "kernel-module",
+    "mcu-qemu",
+    "static-and-cpu-image",
+    "codeql-python",
+    "codeql-c-cpp",
+    "dependency-review"
+  ],
+  "strict_required_status_checks": true,
+  "require_pull_request": true,
+  "required_approving_review_count": 1,
+  "dismiss_stale_reviews_on_push": true,
+  "require_conversation_resolution": true,
+  "administrator_bypass": {
+    "allowed": false,
+    "reason": "Administrator bypass is disabled. Emergency use must be recorded in docs/security/branch-protection.md before it is exercised, and audited afterwards.",
+    "audit_documented_in": "docs/security/branch-protection.md"
+  },
+  "release_refusal": {
+    "tag_reachable_from_protected_branch_required": true,
+    "reason": "A tag whose commit is not reachable from protected main, or whose commit never passed the required checks, must not publish an image."
+  }
+}
