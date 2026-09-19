@@ -7,10 +7,31 @@ E13 的边界是把控制端的只读投影与仿真事件源分开。两台机�
 ```bash
 export WORKBENCH_IMAGE=ghcr.io/quchaosheng/workbench-desk-robot:v0.2.0
 docker compose -f deploy/multi-host/compose.sim.yaml up -d
-curl --fail http://0.0.0.0:8090/readyz
+curl --fail http://127.0.0.1:8090/readyz
 ```
 
-将 `8090` 端口限制在控制机网段，按实际防火墙规则替换示例地址。
+`SIM_BIND_ADDRESS` 默认是 `127.0.0.1`，因此仿真事件源的端口默认只发布到本机回环接口；同机烟测直接使用这个默认值。
+不要把它设置为 `0.0.0.0`、`::`、主机名、公网地址、链路本地地址或组播地址；Backend 会在提供请求前拒绝这些配置，
+Compose 渲染同样会失败。
+
+仿真事件源是**未认证**的只读 API。跨主机访问必须显式设置一个字面私网地址，并同时满足下面两条之一：
+
+```bash
+export SIM_BIND_ADDRESS=10.20.30.40
+export WORKBENCH_SIM_TRUST_MODE=reverse_proxy
+export WORKBENCH_SIM_TRUSTED_SOURCE_ALLOWLIST=10.20.30.50/32
+docker compose -f deploy/multi-host/compose.sim.yaml up -d
+```
+
+- 由宿主机防火墙把 `8090` 限制到控制机的实际网段；或
+- 经过一个终止 TLS、执行用户认证并限制来源网络的反向代理，且把反向代理的实际 TCP 来源写入
+  `WORKBENCH_SIM_TRUSTED_SOURCE_ALLOWLIST`（只接受回环、RFC1918 或 IPv6 ULA 的字面 IP/CIDR）。
+
+`WORKBENCH_SIM_TRUST_MODE` 的取值与 controller 相同：`local`（默认，只允许回环来源）或 `reverse_proxy`
+（必须同时给出 allow-list）。非回环发布配 `local` 会在启动前失败，而不是静默接受所有来源。
+
+示例中的 `10.20.30.40` 应替换为仿真机的实际地址；`curl` 的目标地址必须是实际发布地址，不能用 `0.0.0.0`
+作为客户端目标。
 
 ## 控制机
 

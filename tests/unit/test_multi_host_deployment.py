@@ -11,6 +11,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+import yaml
 from workbench_backend.inbound_http import InboundHttpConfigurationError, InboundHttpPolicy
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +31,74 @@ INBOUND_ENVIRONMENT_VARIABLES = {
     "WORKBENCH_CONTROLLER_TRUST_MODE",
     "WORKBENCH_CONTROLLER_TRUSTED_PROXY_ALLOWLIST",
 }
+
+
+class SimComposePublishedBoundaryTests(unittest.TestCase):
+    """Issue #182: the simulation event source must not default to a wildcard bind.
+
+    These assertions parse the Compose file directly instead of shelling out to
+    ``docker compose config``. Rendering needs a Docker daemon-free CLI, but the
+    exposure regression this guards is a property of the checked-in file, so the
+    guard has to hold in the no-daemon environment the portable test suite runs
+    in as well.
+    """
+
+    def sim_service(self) -> dict[str, object]:
+        document = yaml.safe_load(SIM_COMPOSE.read_text(encoding="utf-8"))
+        return document["services"]["sim"]
+
+    def test_published_port_defaults_to_loopback(self) -> None:
+        service = self.sim_service()
+        published = service["ports"]
+        self.assertEqual(len(published), 1)
+        port = published[0]
+        self.assertEqual(port["target"], 8090)
+        self.assertEqual(port["host_ip"], "${SIM_BIND_ADDRESS:-127.0.0.1}")
+        self.assertIn("${SIM_PORT:-8090}", port["published"])
+
+    def test_no_wildcard_host_publication_is_configured(self) -> None:
+        # Assert on the parsed publication rather than the raw file text: the
+        # service command legitimately passes --host 0.0.0.0 because the
+        # process listens on every interface of its *own* network namespace.
+        # What must never be a wildcard is the host-side publication.
+        for port in self.sim_service()["ports"]:
+            with self.subTest(port=port):
+                self.assertNotIn("0.0.0.0", port["host_ip"])
+                self.assertNotIn("::", port["host_ip"])
+                self.assertTrue(port["host_ip"].startswith("${SIM_BIND_ADDRESS:-"))
+
+    def test_command_receives_the_published_address_and_trust_settings(self) -> None:
+        command = self.sim_service()["command"]
+        for argument in ("--published-host", "--trust-mode", "--trusted-proxy-allowlist"):
+            with self.subTest(argument=argument):
+                self.assertIn(argument, command)
+        self.assertEqual(
+            command[command.index("--published-host") + 1],
+            "${SIM_BIND_ADDRESS:-127.0.0.1}",
+        )
+        self.assertEqual(command[command.index("--trust-mode") + 1], "${WORKBENCH_SIM_TRUST_MODE:-local}")
+
+    def test_container_listen_address_stays_inside_the_namespace(self) -> None:
+        # The container still listens on every interface of its own network
+        # namespace; only the host publication is bounded. Asserting the pair
+        # keeps a future edit from "fixing" one half and silently reverting the
+        # other.
+        command = self.sim_service()["command"]
+        self.assertEqual(command[command.index("--host") + 1], "0.0.0.0")
+
+    def test_read_only_hardening_is_preserved(self) -> None:
+        service = self.sim_service()
+        self.assertTrue(service["read_only"])
+        self.assertEqual(service["cap_drop"], ["ALL"])
+        self.assertEqual(service["security_opt"], ["no-new-privileges:true"])
+        for prohibited in ("cap_add", "devices", "privileged", "volumes"):
+            with self.subTest(prohibited=prohibited):
+                self.assertNotIn(prohibited, service)
+
+    def test_documented_cross_host_example_uses_a_private_address(self) -> None:
+        documentation = DEPLOYMENT_DOC.read_text(encoding="utf-8")
+        self.assertNotIn("curl --fail http://0.0.0.0:8090", documentation)
+        self.assertIn("SIM_BIND_ADDRESS", documentation)
 
 
 class ControllerComposeDeploymentTests(unittest.TestCase):

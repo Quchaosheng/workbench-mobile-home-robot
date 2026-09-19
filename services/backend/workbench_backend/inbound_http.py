@@ -63,6 +63,24 @@ def _parse_allowlist(value: str | None) -> tuple[IpNetwork, ...]:
     return tuple(networks)
 
 
+def validate_published_bind_address(value: str, *, setting: str) -> IpAddress:
+    """Validate the host-side address a deployment publishes a service on.
+
+    A container that listens on ``0.0.0.0`` inside its own network namespace is
+    only reachable through the host publication Docker creates for it, so the
+    security boundary belongs to the published address rather than to the peer
+    the process sees afterwards. Compose accepts a wildcard shorthand for
+    "every host interface", which is exactly the accidental-exposure default
+    this function rejects: a wildcard, public, link-local, multicast or
+    unresolvable value stops the service at startup instead of silently
+    accepting every interface.
+    """
+    address = _parse_address(value, setting=setting)
+    if not _address_is_allowed(address):
+        raise InboundHttpConfigurationError(f"{setting} must be loopback, RFC1918 IPv4, or IPv6 unique-local")
+    return address
+
+
 @dataclass(frozen=True)
 class InboundHttpPolicy:
     """Validated controller publication and reverse-proxy source policy."""
