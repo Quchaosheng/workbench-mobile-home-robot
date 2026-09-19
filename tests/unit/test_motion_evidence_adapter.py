@@ -197,33 +197,58 @@ def test_persistence_failures_propagate_without_reference(tmp_path: Path) -> Non
     assert store.list_run("run-001") == []
 
     class CommitFailingConnection:
+        """A connection whose commit fails after the row is written.
+
+        The failure is injected at the commit rather than at the insert on
+        purpose: it is the case where the row is present inside the transaction
+        and must not survive it, so a rollback that did nothing would be visible
+        as a stored event rather than as an error.
+        """
+
         def __init__(self, connection: sqlite3.Connection) -> None:
-            self.connection = connection
+            self._connection = connection
             self.insert_was_visible = False
 
         def execute(self, statement: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
-            return self.connection.execute(statement, parameters)
+            return self._connection.execute(statement, parameters)
+
+        def executemany(self, statement: str, parameters: object) -> sqlite3.Cursor:
+            return self._connection.executemany(statement, parameters)
 
         def commit(self) -> None:
-            self.insert_was_visible = self.connection.execute("SELECT COUNT(*) FROM world_events").fetchone()[0] == 1
+            self.insert_was_visible = self._connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
             raise sqlite3.OperationalError("injected commit failure")
 
         def rollback(self) -> None:
-            self.connection.rollback()
+            self._connection.rollback()
+
+        def backup(self, target: sqlite3.Connection) -> None:
+            self._connection.backup(target)
 
         @property
         def in_transaction(self) -> bool:
-            return self.connection.in_transaction
+            return self._connection.in_transaction
 
         def close(self) -> None:
-            self.connection.close()
+            self._connection.close()
 
-    failing_connection = CommitFailingConnection(store.connection)
-    store.connection = failing_connection
+    failing_connection = CommitFailingConnection(store._store._connection)
+    store._store._connection = failing_connection
     reference: str | None = None
-    with pytest.raises(sqlite3.OperationalError, match="injected commit failure"):
+    with pytest.raises(EventStoreIntegrityError, match="could not be appended") as failure:
         reference = adapter.append(SerializableEvent(execution_event_data()))
 
+    # The injected failure is still reachable through the cause chain, so an
+    # operator sees the real reason and not only the typed wrapper the adapter
+    # publishes over the Kernel's typed error.
+    causes = []
+    current: BaseException | None = failure.value
+    while current is not None:
+        causes.append(current)
+        current = current.__cause__
+    assert any(
+        isinstance(cause, sqlite3.OperationalError) and "injected commit failure" in str(cause) for cause in causes
+    ), [type(cause).__name__ for cause in causes]
     assert reference is None
     assert failing_connection.insert_was_visible
     assert not failing_connection.in_transaction
@@ -240,6 +265,9 @@ def test_persistence_failures_propagate_without_reference(tmp_path: Path) -> Non
     reopened.close()
 
     class FailingStore:
+        def raw_event_row(self, _: str) -> None:
+            return None
+
         def append_allocated(self, **_: object) -> WorldEvent:
             raise RuntimeError("store unavailable")
 
@@ -249,7 +277,9 @@ def test_persistence_failures_propagate_without_reference(tmp_path: Path) -> Non
     with pytest.raises(RuntimeError, match="store unavailable"):
         MotionEvidenceAdapter(FailingStore()).append(SerializableEvent(execution_event_data()))
 
-    with pytest.raises(sqlite3.ProgrammingError):
+    # A closed store is refused with the adapter's own typed error rather than
+    # leaking the Kernel's error type or a bare sqlite3 ProgrammingError.
+    with pytest.raises(EventStoreIntegrityError, match="no open SQLite connection"):
         adapter.append(SerializableEvent(execution_event_data()))
 
 

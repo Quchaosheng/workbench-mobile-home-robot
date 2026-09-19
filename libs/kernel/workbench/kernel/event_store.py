@@ -18,7 +18,7 @@ import os
 import shutil
 import sqlite3
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -40,9 +40,23 @@ EVENT_TYPES = {
 }
 REQUIRED_EVENT_FIELDS = {"event_id", "run_id", "sequence_no", "event_type", "occurred_at", "payload"}
 SQLITE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
-SCHEMA_VERSION = 1
+# Version 2 scopes sequence uniqueness to a run. Version 1 declared
+# ``sequence_no INTEGER NOT NULL UNIQUE`` globally, so a second run could not
+# start at zero and one database could hold only one run. That is the accidental
+# global uniqueness Issue #161 removes: a log of several runs is now the normal
+# case rather than an unsupported one.
+SCHEMA_VERSION = 2
 SNAPSHOT_FORMAT = "workbench-event-store-snapshot"
 SNAPSHOT_FORMAT_VERSION = 2
+
+# The instruction an operator gets when a database cannot be read under the
+# current schema. It names the recovery rather than only the failure, because a
+# bare "schema mismatch" invites deleting the file, which loses evidence.
+RECOVERY_INSTRUCTION = (
+    "take a backup of the file first, then rebuild the database from its source log with "
+    "kernel.event_store.migrate_jsonl(source, destination), or rebuild it by restoring a verified snapshot with "
+    "EventStore.restore(snapshot, destination); do not delete the file"
+)
 
 
 class EventStoreError(ValueError):
@@ -57,9 +71,21 @@ class EventStore:
     logs can be inspected and migrated without silently changing their meaning.
     """
 
-    def __init__(self, log_file: Path, *, legacy_objects: bool = False, backend: str | None = None):
+    def __init__(
+        self,
+        log_file: Path,
+        *,
+        legacy_objects: bool = False,
+        backend: str | None = None,
+        multi_run: bool = False,
+    ):
         self.log_file = Path(log_file)
         self.legacy_objects = legacy_objects
+        # ``multi_run`` selects the validation contract, not the storage engine:
+        # one database may hold several runs, each keeping its own sequence
+        # numbers. The default stays single-run and contiguous exactly as before,
+        # so every existing caller keeps its guarantee.
+        self.multi_run = multi_run
         self.backend = backend or ("sqlite" if self.log_file.suffix.lower() in SQLITE_SUFFIXES else "jsonl")
         if self.backend not in {"jsonl", "sqlite"}:
             raise ValueError("backend must be 'jsonl' or 'sqlite'")
@@ -68,12 +94,22 @@ class EventStore:
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         self.events: list[dict[str, Any]] = []
         self.checkpoints: list[int] = []
+        # Per-run checkpoints are initialized for both backends. The sqlite branch
+        # below replaces this with what the database already records; the jsonl
+        # branch keeps the empty mapping as the in-memory record. Initializing it
+        # only in the sqlite branch left the jsonl backend raising AttributeError
+        # from a public method, which is a crash rather than a refusal.
+        self._run_checkpoints: dict[str, list[int]] = {}
         self._lock = threading.RLock()
         self._connection: sqlite3.Connection | None = None
         self._events_signature: tuple[int, int, int] | None = None
         if self.backend == "sqlite":
             self._connection = sqlite3.connect(self.log_file)
             self._connection.execute("PRAGMA foreign_keys = ON")
+            # The compatibility check runs before any CREATE TABLE, because a
+            # legacy database is identified by the tables it already has; once
+            # the current tables exist, every layout looks current.
+            self._refuse_incompatible_layout()
             self._connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS event_store_meta (
@@ -87,8 +123,9 @@ class EventStore:
                 CREATE TABLE IF NOT EXISTS events (
                     event_id TEXT PRIMARY KEY,
                     run_id TEXT NOT NULL,
-                    sequence_no INTEGER NOT NULL UNIQUE,
-                    event_json TEXT NOT NULL
+                    sequence_no INTEGER NOT NULL,
+                    event_json TEXT NOT NULL,
+                    UNIQUE(run_id, sequence_no)
                 );
                 """
             )
@@ -97,6 +134,7 @@ class EventStore:
                 CREATE TABLE IF NOT EXISTS checkpoints (
                     checkpoint_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     event_count INTEGER NOT NULL,
+                    run_id TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 """
@@ -106,12 +144,94 @@ class EventStore:
                 (str(SCHEMA_VERSION),),
             )
             self._connection.commit()
-            self.checkpoints = [
+            rows = self._connection.execute(
+                "SELECT event_count, run_id FROM checkpoints ORDER BY checkpoint_id"
+            ).fetchall()
+            self.checkpoints = [row[0] for row in rows if row[1] is None]
+            for event_count, run_id in rows:
+                if run_id is not None:
+                    self._run_checkpoints.setdefault(run_id, []).append(event_count)
+
+    def _refuse_incompatible_layout(self) -> None:
+        """Refuse a database whose stored tables cannot be read under this schema.
+
+        Two layouts are refused by name rather than opened and read as empty:
+
+        * a ``world_events`` table, which is the World Model's own former
+          implementation. Opening it here would show zero events for a file that
+          holds a run, which is the silent-empty-database failure this issue
+          exists to prevent;
+        * an ``events`` table whose ``sequence_no`` is globally unique, which is
+          the pre-#161 layout that cannot hold two runs;
+        * a ``checkpoints`` table with no ``run_id`` column, which cannot record
+          which run a checkpoint belongs to;
+        * a database that records a ``schema_version`` this build does not read.
+
+        Each message names the recovery rather than only the failure. The columns
+        are checked here rather than left to the first query, because a missing
+        column would otherwise surface as a raw ``sqlite3.OperationalError`` from
+        the constructor, which is neither this store's error type nor an
+        instruction the operator can act on.
+        """
+
+        self._require_connection()
+        tables = {
+            row[0] for row in self._connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
+        if "world_events" in tables and "events" not in tables:
+            raise EventStoreError(
+                "this database holds the former World Model 'world_events' table, which this build does not read; "
+                f"{RECOVERY_INSTRUCTION}"
+            )
+        if "event_store_meta" in tables:
+            # The recorded version is checked before any table is created and
+            # before the constructor returns, so an older database is refused
+            # where the operator can see it. Leaving the check to the first read
+            # would let construction succeed and fail later, which reads as a
+            # working store that happens to be empty.
+            recorded = self._connection.execute(
+                "SELECT value FROM event_store_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            if recorded is not None and recorded != (str(SCHEMA_VERSION),):
+                raise EventStoreError(
+                    f"event database schema_version is {recorded[0]!r} but this build reads {SCHEMA_VERSION}; "
+                    f"{RECOVERY_INSTRUCTION}"
+                )
+        if "events" not in tables:
+            return
+        columns = {row[1]: row for row in self._connection.execute("PRAGMA table_info(events)").fetchall()}
+        expected = {"event_id", "run_id", "sequence_no", "event_json"}
+        if not expected <= set(columns):
+            raise EventStoreError(
+                f"the stored 'events' table is missing {sorted(expected - set(columns))}; {RECOVERY_INSTRUCTION}"
+            )
+        globally_unique = False
+        for index in self._connection.execute("PRAGMA index_list(events)").fetchall():
+            if index[2] != 1:
+                continue
+            indexed = [
                 row[0]
                 for row in self._connection.execute(
-                    "SELECT event_count FROM checkpoints ORDER BY checkpoint_id"
+                    "SELECT name FROM pragma_index_info(?) ORDER BY seqno", (index[1],)
                 ).fetchall()
             ]
+            if indexed == ["sequence_no"]:
+                globally_unique = True
+                break
+        if globally_unique:
+            raise EventStoreError(
+                f"the stored 'events' table declares sequence_no globally unique, which cannot hold more than "
+                f"one run; {RECOVERY_INSTRUCTION}"
+            )
+        if "checkpoints" in tables:
+            checkpoint_columns = {
+                row[1] for row in self._connection.execute("PRAGMA table_info(checkpoints)").fetchall()
+            }
+            if "run_id" not in checkpoint_columns:
+                raise EventStoreError(
+                    "the stored 'checkpoints' table has no run_id column, so it cannot record which run a "
+                    f"checkpoint belongs to; {RECOVERY_INSTRUCTION}"
+                )
 
     def _jsonl_signature(self) -> tuple[int, int, int] | None:
         try:
@@ -125,6 +245,7 @@ class EventStore:
             return
         expected_run_id: str | None = None
         event_ids: set[str] = set()
+        per_run_sequences: set[tuple[str, int]] = set()
         for index, event in enumerate(events):
             missing = REQUIRED_EVENT_FIELDS - set(event)
             if missing:
@@ -145,9 +266,31 @@ class EventStore:
                 raise EventStoreError(f"event at index {index} has an invalid run_id")
             if expected_run_id is None:
                 expected_run_id = run_id
-            elif run_id != expected_run_id:
+            elif run_id != expected_run_id and not self.multi_run:
                 raise EventStoreError(f"event log mixes run_id {expected_run_id!r} and {run_id!r}")
-            if type(sequence_no) is not int or sequence_no != index:
+            if type(sequence_no) is not int:
+                raise EventStoreError(f"event at index {index} has a non-integer sequence_no {sequence_no!r}")
+            if self.multi_run:
+                # The multi-run contract is the one the World Model store already
+                # had: an event_id is unique, ``(run_id, sequence_no)`` is unique,
+                # and sequence numbers are per run. Contiguity is deliberately
+                # *not* required here, because a caller that persists an event at
+                # sequence 4 has an event at 4, and forcing it to 0 would rewrite
+                # evidence. The single-run contract below is unchanged and is
+                # still the strict one.
+                #
+                # Uniqueness *is* enforced here rather than only by the SQLite
+                # index, because the JSONL compatibility backend has no index: a
+                # batch that reused one run's sequence number would otherwise be
+                # accepted on JSONL and refused on SQLite, which is two answers to
+                # one question. The declared contract and the enforced contract
+                # are the same on both backends.
+                if (run_id, sequence_no) in per_run_sequences:
+                    raise EventStoreError(
+                        f"run_id {run_id!r} already contains sequence_no {sequence_no!r} at index {index}"
+                    )
+                per_run_sequences.add((run_id, sequence_no))
+            elif sequence_no != index:
                 raise EventStoreError(
                     f"event sequence_no must be contiguous from zero; index {index} has {sequence_no!r}"
                 )
@@ -182,15 +325,19 @@ class EventStore:
         return events
 
     def _read_sqlite(self) -> list[dict[str, Any]]:
-        assert self._connection is not None
+        self._require_connection()
         try:
             version = self._connection.execute(
                 "SELECT value FROM event_store_meta WHERE key = 'schema_version'"
             ).fetchone()
             if version != (str(SCHEMA_VERSION),):
-                raise EventStoreError("event database schema version mismatch")
+                found = version[0] if version else "unset"
+                raise EventStoreError(
+                    f"event database schema_version is {found!r} but this build reads {SCHEMA_VERSION}; "
+                    f"{RECOVERY_INSTRUCTION}"
+                )
             rows = self._connection.execute(
-                "SELECT event_id, run_id, sequence_no, event_json FROM events ORDER BY sequence_no"
+                "SELECT event_id, run_id, sequence_no, event_json FROM events ORDER BY run_id, sequence_no"
             ).fetchall()
             events = []
             for index, (event_id, run_id, sequence_no, encoded) in enumerate(rows):
@@ -244,7 +391,7 @@ class EventStore:
                 except OSError as exc:
                     raise EventStoreError(f"event log could not be appended: {self.log_file}") from exc
             else:
-                assert self._connection is not None
+                self._require_connection()
                 try:
                     self._connection.executemany(
                         "INSERT INTO events(event_id, run_id, sequence_no, event_json) VALUES (?, ?, ?, ?)",
@@ -254,6 +401,9 @@ class EventStore:
                         ],
                     )
                     self._connection.commit()
+                except sqlite3.IntegrityError as exc:
+                    self._connection.rollback()
+                    raise EventStoreError(self._conflict_message(persisted_events)) from exc
                 except sqlite3.DatabaseError as exc:
                     self._connection.rollback()
                     raise EventStoreError(f"event database could not be appended: {self.log_file}") from exc
@@ -261,12 +411,244 @@ class EventStore:
             if self.backend == "jsonl":
                 self._events_signature = self._jsonl_signature()
 
+    def append_allocated(
+        self,
+        run_id: str,
+        build: Callable[[int], dict[str, Any]],
+        *,
+        first: int = 0,
+    ) -> dict[str, Any]:
+        """Atomically allocate the next per-run sequence and append one event.
+
+        ``build`` receives the allocated ``sequence_no`` and returns the complete
+        event, which keeps this method free of any knowledge of what an event
+        means: the caller owns the schema, the store owns the allocation and the
+        transaction. Allocation and insert share one ``BEGIN IMMEDIATE``
+        transaction, so two writers cannot be handed the same sequence number and
+        only one of them can commit it.
+
+        An exact retry is idempotent because the caller can look the event up by
+        ``event_id`` first; a partial retry that reused an event_id with different
+        content is refused by the primary key.
+        """
+
+        if self.backend != "sqlite":
+            raise EventStoreError("append_allocated requires the sqlite backend")
+        self._require_connection()
+        with self._lock:
+            try:
+                # BEGIN IMMEDIATE takes the write lock before the maximum is
+                # read, so a second writer cannot slip an insert between the read
+                # and the append. ``append_many`` commits this same transaction.
+                self._connection.execute("BEGIN IMMEDIATE")
+                sequence_no = self.next_sequence_no(run_id, first=first)
+                event = build(sequence_no)
+                self.append_many([event])
+                return event
+            except sqlite3.DatabaseError as exc:
+                self._connection.rollback()
+                raise EventStoreError(
+                    f"an event could not be appended to run {run_id!r} at the next free sequence; "
+                    "a concurrent writer may hold the same sequence number"
+                ) from exc
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def _conflict_message(self, attempted: list[dict[str, Any]]) -> str:
+        """Name which stored event already claims the identity that was refused.
+
+        The distinction matters to a caller: an exact retry is idempotent and is
+        handled before this point, so reaching here means the content differs.
+        Reporting only "integrity error" would leave the caller unable to tell a
+        duplicate identity from a duplicate sequence number.
+        """
+
+        self._require_connection()
+        for event in attempted:
+            owner = self._connection.execute(
+                "SELECT run_id, sequence_no, event_json FROM events WHERE event_id = ?",
+                (event["event_id"],),
+            ).fetchone()
+            if owner is not None:
+                if owner[2] == json.dumps(event, allow_nan=False, ensure_ascii=False, separators=(",", ":")):
+                    # Byte-identical content reached the insert, so the only way
+                    # to be here is a second row in the same batch.
+                    continue
+                return (
+                    f"event_id {event['event_id']!r} already exists with different canonical event content; "
+                    "an exact retry is idempotent but a changed event is not"
+                )
+            sequence_owner = self._connection.execute(
+                "SELECT event_id FROM events WHERE run_id = ? AND sequence_no = ?",
+                (event["run_id"], event["sequence_no"]),
+            ).fetchone()
+            if sequence_owner is not None:
+                return (
+                    f"run_id {event['run_id']!r} already contains sequence_no {event['sequence_no']} "
+                    f"for event_id {sequence_owner[0]!r}"
+                )
+        return f"event database could not be appended: {self.log_file}"
+
+    def raw_event_row(self, event_id: str) -> tuple[str, int, str] | None:
+        """One stored row as ``(run_id, sequence_no, event_json)``, unparsed.
+
+        An adapter that owns a stricter event contract than this module needs the
+        bytes plus the indexed columns separately, so it can report a contract
+        violation as a contract violation and an index disagreement as an index
+        disagreement. Parsing here would collapse the two into one error and lose
+        which one actually happened.
+        """
+
+        self._require_connection()
+        row = self._connection.execute(
+            "SELECT run_id, sequence_no, event_json FROM events WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        return None if row is None else (row[0], row[1], row[2])
+
+    def raw_run_rows(self, run_id: str) -> list[tuple[str, int, str]]:
+        """One run's stored rows in ``sequence_no`` order, unparsed."""
+
+        self._require_connection()
+        rows = self._connection.execute(
+            "SELECT run_id, sequence_no, event_json FROM events WHERE run_id = ? ORDER BY sequence_no",
+            (run_id,),
+        ).fetchall()
+        return [(row[0], row[1], row[2]) for row in rows]
+
+    def get_event(self, event_id: str) -> dict[str, Any] | None:
+        """Return one stored event by ``event_id``, or ``None``.
+
+        The row's indexed columns are compared against the serialized event, so a
+        row edited underneath the store is refused rather than returned as if it
+        were the event that was written.
+        """
+
+        if self.backend != "sqlite":
+            for event in self._read_events():
+                if event["event_id"] == event_id:
+                    return event
+            return None
+        self._require_connection()
+        row = self._connection.execute(
+            "SELECT run_id, sequence_no, event_json FROM events WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._decode_indexed_row(row, event_id=event_id)
+
+    def list_run(self, run_id: str) -> list[dict[str, Any]]:
+        """Return one run's events in ``sequence_no`` order."""
+
+        if self.backend != "sqlite":
+            events = [event for event in self._read_events() if event["run_id"] == run_id]
+            return sorted(events, key=lambda event: event["sequence_no"])
+        self._require_connection()
+        rows = self._connection.execute(
+            "SELECT run_id, sequence_no, event_json FROM events WHERE run_id = ? ORDER BY sequence_no",
+            (run_id,),
+        ).fetchall()
+        return [self._decode_indexed_row(row, run_id=run_id) for row in rows]
+
+    def _decode_indexed_row(
+        self,
+        row: tuple[Any, ...],
+        *,
+        event_id: str | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        stored_run_id, sequence_no, encoded = row
+        try:
+            event = json.loads(encoded)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise EventStoreError("stored event JSON is unreadable") from exc
+        if not isinstance(event, dict):
+            raise EventStoreError("stored event must be an object")
+        expected_id = event_id if event_id is not None else event.get("event_id")
+        expected_run = run_id if run_id is not None else stored_run_id
+        if (event.get("event_id"), event.get("run_id"), event.get("sequence_no")) != (
+            expected_id,
+            expected_run,
+            sequence_no,
+        ):
+            raise EventStoreError("indexed fields disagree with the stored event")
+        return event
+
+    def next_sequence_no(self, run_id: str, *, first: int = 0) -> int:
+        """The next free per-run sequence number.
+
+        ``first`` is the number an empty run starts at, and it is a parameter
+        because the two callers documented different conventions: this module's own
+        log format counts from zero, while the World Model event contract starts at
+        one. Making the difference a named argument is honest about it; folding one
+        into the other would silently renumber an existing run's first event.
+
+        This only reports a candidate. The unique ``(run_id, sequence_no)`` index
+        is what enforces it, so two writers that read the same maximum cannot both
+        commit the same sequence.
+        """
+
+        self._require_connection()
+        row = self._connection.execute("SELECT MAX(sequence_no) FROM events WHERE run_id = ?", (run_id,)).fetchone()
+        maximum = row[0] if row is not None else None
+        return first if maximum is None else int(maximum) + 1
+
+    def run_ids(self) -> list[str]:
+        """Every run id the database holds, ordered deterministically."""
+
+        if self.backend != "sqlite":
+            return sorted({event["run_id"] for event in self._read_events()})
+        self._require_connection()
+        return [row[0] for row in self._connection.execute("SELECT DISTINCT run_id FROM events ORDER BY run_id")]
+
+    def create_run_checkpoint(self, run_id: str) -> int:
+        """Record the current event count of one run and return it."""
+
+        with self._lock:
+            count = len(self.list_run(run_id))
+            if self.backend == "sqlite":
+                self._require_connection()
+                try:
+                    self._connection.execute(
+                        "INSERT INTO checkpoints(event_count, run_id) VALUES (?, ?)", (count, run_id)
+                    )
+                    self._connection.commit()
+                except sqlite3.DatabaseError as exc:
+                    self._connection.rollback()
+                    raise EventStoreError(f"run checkpoint could not be persisted: {run_id}") from exc
+            self._run_checkpoints.setdefault(run_id, []).append(count)
+            return count
+
+    def run_checkpoints(self, run_id: str) -> list[int]:
+        """The recorded checkpoint positions for one run, oldest first."""
+
+        if self.backend != "sqlite":
+            return list(self._run_checkpoints.get(run_id, []))
+        self._require_connection()
+        return [
+            row[0]
+            for row in self._connection.execute(
+                "SELECT event_count FROM checkpoints WHERE run_id = ? ORDER BY checkpoint_id", (run_id,)
+            ).fetchall()
+        ]
+
+    def replay_run(self, run_id: str, *, from_checkpoint: int | None = None) -> list[dict[str, Any]]:
+        """Replay one run, optionally from a per-run checkpoint position."""
+
+        events = self.list_run(run_id)
+        start_index = 0 if from_checkpoint is None else from_checkpoint
+        if type(start_index) is not int or not 0 <= start_index <= len(events):
+            raise ValueError(f"checkpoint must be between 0 and {len(events)}")
+        return events[start_index:]
+
     def create_checkpoint(self) -> int:
         with self._lock:
             self.events = self._read_events()
             checkpoint = len(self.events)
             if self.backend == "sqlite":
-                assert self._connection is not None
+                self._require_connection()
                 try:
                     self._connection.execute("INSERT INTO checkpoints(event_count) VALUES (?)", (checkpoint,))
                     self._connection.commit()
@@ -295,7 +677,7 @@ class EventStore:
         with self._lock:
             try:
                 if self.backend == "sqlite":
-                    assert self._connection is not None
+                    self._require_connection()
                     result = self._connection.execute("PRAGMA integrity_check").fetchone()
                     if result != ("ok",):
                         return False
@@ -322,7 +704,7 @@ class EventStore:
             temp.unlink()
         with self._lock:
             if self.backend == "sqlite":
-                assert self._connection is not None
+                self._require_connection()
                 self._connection.commit()
                 target = sqlite3.connect(temp)
                 try:
@@ -389,6 +771,24 @@ class EventStore:
         os.replace(temp, destination)
         shutil.copy2(manifest_path, Path(f"{destination}.manifest.json"))
         return cls(destination, backend=backend)
+
+    def _require_connection(self) -> sqlite3.Connection:
+        """The open SQLite connection, or a typed refusal.
+
+        This replaced a bare ``assert self._connection is not None``. An assert
+        is stripped by ``python -O``, so the check that a store is still open
+        disappeared in exactly the interpreter mode where a silent ``AttributeError``
+        on ``None`` is hardest to diagnose. Raising keeps the failure the same in
+        every mode and makes it catchable as the store's own error type.
+
+        The message names both causes, because this store has two: it was closed,
+        or it is using the ``jsonl`` compatibility backend, which has no connection
+        at all.
+        """
+
+        if self._connection is None:
+            raise EventStoreError("no open SQLite connection; this store is either closed or using the jsonl backend")
+        return self._connection
 
     def close(self) -> None:
         if self._connection is not None:

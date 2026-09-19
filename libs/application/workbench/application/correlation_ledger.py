@@ -585,29 +585,27 @@ class CorrelationLedger:
         rebound during the lifetime represented by one SQLiteEventStore.
         """
         bindings: dict[int, tuple[str, str, str, str]] = {}
-        rows = self._store.connection.execute(
-            "SELECT event_json FROM world_events ORDER BY run_id, sequence_no"
-        ).fetchall()
-        for (event_json,) in rows:
-            try:
-                event = WorldEvent.model_validate_json(event_json)
-            except ValidationError as error:
-                raise CorrelationLedgerError("persisted WorldEvent is malformed") from error
-            if not _is_correlation_event(event) or event.payload.get("stage") != "transport":
-                continue
-            try:
-                frame = McuFrame.model_validate(event.payload.get("frame"))
-            except ValidationError as error:
-                raise CorrelationLedgerError("persisted transport frame is malformed") from error
-            value = frame.root
-            if value.frame_kind not in _REQUEST_KINDS:
-                continue
-            action_id = _non_blank(event.payload.get("action_id"), "payload.action_id")
-            candidate = (event.run_id, action_id, value.frame_kind, value.opcode)
-            existing = bindings.get(value.command_id)
-            if existing is not None and existing != candidate:
-                raise CorrelationLedgerError("command_id has conflicting persisted run/action ownership")
-            bindings[value.command_id] = candidate
+        # Every run is read through the store's own typed boundary rather than
+        # through the raw connection the store used to expose. Reading the table
+        # directly bypassed the contract check, so a row edited underneath the
+        # store would have been parsed here as though it were valid evidence.
+        for run_id in self._store.run_ids():
+            for event in self._store.list_run(run_id):
+                if not _is_correlation_event(event) or event.payload.get("stage") != "transport":
+                    continue
+                try:
+                    frame = McuFrame.model_validate(event.payload.get("frame"))
+                except ValidationError as error:
+                    raise CorrelationLedgerError("persisted transport frame is malformed") from error
+                value = frame.root
+                if value.frame_kind not in _REQUEST_KINDS:
+                    continue
+                action_id = _non_blank(event.payload.get("action_id"), "payload.action_id")
+                candidate = (event.run_id, action_id, value.frame_kind, value.opcode)
+                existing = bindings.get(value.command_id)
+                if existing is not None and existing != candidate:
+                    raise CorrelationLedgerError("command_id has conflicting persisted run/action ownership")
+                bindings[value.command_id] = candidate
         return bindings
 
     def _append(

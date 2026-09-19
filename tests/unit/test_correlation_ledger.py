@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -401,10 +402,20 @@ def test_reopen_replays_identical_record(tmp_path: Path) -> None:
 
     reopened = SQLiteEventStore(database)
     assert CorrelationLedger(reopened).get(RUN_ID, ACTION_ID) == original
-    assert reopened.connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall() == [
-        ("world_events",)
-    ]
     reopened.close()
+
+    # Reopening must land on one schema, so the assertion is about the tables the
+    # file actually holds rather than about an object handed out by the store.
+    # The former ``world_events`` table is named explicitly because its absence is
+    # the point of Issue #161: one database, one implementation, not a World Model
+    # table beside a Kernel one. ``sqlite_sequence`` is SQLite's own bookkeeping
+    # for the AUTOINCREMENT checkpoint id, not a table this project defines.
+    connection = sqlite3.connect(database)
+    try:
+        tables = {name for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    finally:
+        connection.close()
+    assert tables == {"events", "event_store_meta", "checkpoints", "sqlite_sequence"}
 
 
 def test_malformed_correlation_fails_before_append_or_reduction(tmp_path: Path) -> None:
