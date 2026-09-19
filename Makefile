@@ -7,7 +7,8 @@ PYTHON ?= python3
 	container-build container-check container-colcon-build container-colcon-test container-image-verify \
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
-	container-project-check property-gate mutation-gate quality-gates ready-gate lock-python lock-python-verify
+	container-project-check property-gate mutation-gate quality-gates ready-gate lock-python lock-python-verify \
+	branch-protection-check release-commit-check
 
 # The root Python environment is installed from the hash-checked lock, not from
 # the ranges in pyproject.toml, so every developer, CI job and container resolves
@@ -230,3 +231,13 @@ container-host-doctor:
 
 task-check:
 	$(PYTHON) tools/scripts/check_task_packet.py $(PACKET)
+
+# The declaration is committed; the live protection is not. Both checks exit
+# 2 when they cannot observe their input, so a missing token is INCOMPLETE and
+# never a pass. Wire them into a release job with GITHUB_REPOSITORY and
+# GITHUB_TOKEN set.
+branch-protection-check:
+	$(PYTHON) tools/scripts/check_branch_protection.py
+
+release-commit-check:
+	$(PYTHON) tools/scripts/check_release_commit.py

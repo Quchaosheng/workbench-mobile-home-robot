@@ -1,0 +1,120 @@
+{
+  "issue": 224,
+  "human_owner": "TH3478",
+  "objective": "Declare the complete main-branch safety matrix in one versioned file, add a checker that compares the declaration against the live repository protection and reports an unobservable configuration as INCOMPLETE rather than a pass, refuse a release whose tag commit is not reachable from protected main or did not pass that matrix, and run the Task Packet and contract gates before a release image is built.",
+  "decision_supported": "Can a tag or a merge publish a release artifact when the container, kernel, MCU, CodeQL or dependency-review checks never succeeded on that exact commit, and is the intended protection indistinguishable from the configured protection?",
+  "allowed_paths": [
+    ".github/rulesets/main-protection.json",
+    ".github/workflows/release-image.yml",
+    "Makefile",
+    "docs/security/branch-protection.md",
+    "docs/task_packets/issue-224-required-safety-checks.json",
+    "mkdocs.yml",
+    "tests/fixtures/issue-224-check-runs.json",
+    "tests/fixtures/issue-224-legacy-protection.json",
+    "tests/unit/test_branch_protection_gate.py",
+    "tools/scripts/check_branch_protection.py",
+    "tools/scripts/check_release_commit.py"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "pyproject.toml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/security.yml",
+    ".github/workflows/container-full-stack.yml",
+    "docs/security/release-provenance.md",
+    "docs/security/supply-chain.md",
+    "tools/scripts/release_manifest.py",
+    "tools/scripts/check_task_packet.py",
+    "tests/unit/test_release_workflow.py",
+    "tests/unit/test_release_provenance.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/security.yml",
+    ".github/workflows/container-full-stack.yml"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    ".github/workflows/ci.yml",
+    ".github/workflows/security.yml",
+    ".github/workflows/container-full-stack.yml",
+    ".github/workflows/release-image.yml",
+    "docs/security/release-provenance.md",
+    "docs/security/supply-chain.md",
+    "tools/scripts/release_manifest.py",
+    "tools/scripts/check_task_packet.py",
+    "Makefile"
+  ],
+  "outputs": [
+    ".github/rulesets/main-protection.json",
+    ".github/workflows/release-image.yml",
+    "Makefile",
+    "docs/security/branch-protection.md",
+    "docs/task_packets/issue-224-required-safety-checks.json",
+    "mkdocs.yml",
+    "tests/fixtures/issue-224-check-runs.json",
+    "tests/fixtures/issue-224-legacy-protection.json",
+    "tests/unit/test_branch_protection_gate.py",
+    "tools/scripts/check_branch_protection.py",
+    "tools/scripts/check_release_commit.py"
+  ],
+  "acceptance": [
+    "The declared safety matrix names foundation-checks, bsp-manifests, container-smoke, kernel-module, mcu-qemu, static-and-cpu-image, codeql-python, codeql-c-cpp and dependency-review, and every named check corresponds to a job that exists in a committed workflow.",
+    "The declaration requires strict up-to-date branches, one approving review, dismissal of stale reviews on push, conversation resolution and disabled administrator bypass.",
+    "check_branch_protection.py reports PASS only when the live protection was observed and matches the declaration; it reports FAIL when the live configuration contradicts it and INCOMPLETE when it could not be observed, and INCOMPLETE is never reported as PASS.",
+    "check_release_commit.py refuses a release when the tag commit is not reachable from the protected branch, and when any required check on that commit has a conclusion other than success, including skipped, neutral, in-progress and missing.",
+    "The release workflow runs the safety-matrix check and the Task Packet, contract, scenario and context gates before the image build step, and retains the provenance verification that precedes attestation and promotion.",
+    "The observability loss of the previous behaviour is covered by tests using the exact legacy payload recorded in the issue, which must be rejected.",
+    "The emergency administrator-bypass procedure and its audit trail are documented, and the documented division of authority grants no merge, release or physical-validation authority."
+  ],
+  "commands": [
+    "make task-check PACKET=docs/task_packets/issue-224-required-safety-checks.json",
+    "python -m pytest tests/unit/test_branch_protection_gate.py -v",
+    "python -m pytest tests/unit/test_release_workflow.py tests/unit/test_release_provenance.py -v",
+    "python tools/scripts/check_branch_protection.py --live tests/fixtures/issue-224-legacy-protection.json",
+    "python tools/scripts/check_release_commit.py --check-runs tests/fixtures/issue-224-check-runs.json --commit 0000000000000000000000000000000000000000",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "python -m mkdocs build --strict",
+    "git diff --check"
+  ],
+  "evidence": [
+    "check_branch_protection.py exit 1 against the exact legacy protection payload quoted in the issue, and exit 0 against a payload matching the declaration.",
+    "check_release_commit.py exit 1 for a commit whose required checks are skipped, failed, in progress or absent, and exit 2 when the matrix cannot be observed.",
+    "Focused unit-test output for the declaration, the comparison, both sets of exit codes and the workflow ordering.",
+    "Strict MkDocs build output for the new security page.",
+    "Task Packet, contract, scenario, context and whitespace-check output."
+  ],
+  "stop_conditions": [
+    "Changing the live repository protection requires a token and administrative authority that the automated run does not hold; record the required settings change and stop rather than claiming the live configuration was verified.",
+    "The declared matrix must be changed, which is itself a reduction or expansion of release coverage requiring human review.",
+    "A workflow job must be renamed, which would break the declaration and its check names.",
+    "A write outside allowed_paths is required, especially to an existing workflow that this change does not own.",
+    "Verifying the live protection or the release commit would require assuming a token, a permission scope or network access that is not available."
+  ],
+  "data_classification": "Repository-local workflow configuration, a public GitHub API response shape and non-secret check names. No credentials are read, stored or logged; the token is taken from the environment and never written to an artifact.",
+  "model_policy": "Deterministic local Python, JSON parsing and unit tests only; no model inference, no training and no external service calls beyond the optional read-only GitHub API used at release time.",
+  "risks_and_fallbacks": [
+    "The declaration and the live repository setting can drift. The checker exists precisely to make that drift visible, and reports INCOMPLETE instead of PASS when it cannot read the live configuration.",
+    "Requiring the full matrix on the tag commit makes a release slower and can block a legitimate release whose earlier commit predates a newly added check; the documented fallback is to land the check on main first and tag a commit that carries it.",
+    "INCOMPLETE exit code 2 is treated as a refusal in the release path. This is deliberate: an unobservable matrix must not publish an image.",
+    "If GitHub policy cannot disable administrator bypass, the documented audit trail applies and the checker continues to report the mismatch rather than ignoring it.",
+    "The change touches a release workflow. If the new gate is itself misconfigured it blocks releases rather than publishing a bad one, which is the intended direction of failure."
+  ]
+}

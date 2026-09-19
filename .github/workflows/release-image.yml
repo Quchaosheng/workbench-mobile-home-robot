@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: read
+  # Reading the required check runs for the tagged commit is what proves the
+  # safety matrix ran on this exact commit before an image may be built.
+  actions: read
   packages: write
   id-token: write
   attestations: write
@@ -27,6 +30,26 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           make check
+
+      # A tag can be pushed onto any commit, including one that never saw a pull
+      # request. Refuse the release unless the tagged commit is reachable from
+      # protected main and every required check succeeded on it. Exit 2 is a
+      # failure here: an unobservable matrix must not publish an image.
+      - name: Verify the tagged commit passed the required safety matrix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python tools/scripts/check_release_commit.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$GITHUB_SHA" \
+            --protected-branch main
+
+      - name: Verify the full Task Packet and contract gate
+        run: |
+          python tools/scripts/check_task_packet.py --all
+          make contract
+          make scenario-check
+          make context-check
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
 

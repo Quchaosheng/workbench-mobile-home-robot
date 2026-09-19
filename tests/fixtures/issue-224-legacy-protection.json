@@ -1,0 +1,10 @@
+{
+  "_comment": "The exact live protection recorded in Issue #224 on 2026-08-22. The gate must reject it.",
+  "required_status_checks": {
+    "strict": false,
+    "contexts": ["foundation-checks"]
+  },
+  "enforce_admins": {
+    "enabled": false
+  }
+}

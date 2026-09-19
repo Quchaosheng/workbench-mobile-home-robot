@@ -1,0 +1,11 @@
+{
+  "_comment": "A release commit that never ran the full safety matrix: skipped, failed, pending and absent required checks. The gate must reject it.",
+  "check_runs": [
+    {"name": "foundation-checks", "status": "completed", "conclusion": "success"},
+    {"name": "bsp-manifests", "status": "completed", "conclusion": "success"},
+    {"name": "container-smoke", "status": "completed", "conclusion": "skipped"},
+    {"name": "kernel-module", "status": "completed", "conclusion": "failure"},
+    {"name": "mcu-qemu", "status": "in_progress", "conclusion": null},
+    {"name": "codeql-python", "status": "completed", "conclusion": "neutral"}
+  ]
+}
