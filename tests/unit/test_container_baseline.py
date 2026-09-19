@@ -65,6 +65,10 @@ def test_image_records_build_inventory_and_uses_system_site_packages() -> None:
     for host in ("archive.ubuntu.com", "security.ubuntu.com", "packages.ros.org"):
         assert f'Acquire::http::Proxy::{host} "DIRECT"' in dockerfile
         assert f'Acquire::https::Proxy::{host} "DIRECT"' in dockerfile
+    # The image runs checks that need a runtime, so the runtime is part of the
+    # image contract: ruby for docker/erb-regression-test.rb, and node for the
+    # dashboard modules that tests/unit/test_dashboard_accessibility.py
+    # evaluates in-image and deliberately does not skip when it is missing.
     packages = (ROOT / "docker/apt-packages.txt").read_text(encoding="utf-8")
     for package in (
         "ros-jazzy-ros-base",
@@ -72,6 +76,8 @@ def test_image_records_build_inventory_and_uses_system_site_packages() -> None:
         "ros-jazzy-gz-ros2-control",
         "ros-jazzy-ros-gz-bridge",
         "liburdfdom-tools",
+        "ruby-full",
+        "nodejs",
     ):
         assert package in packages
     assert "ros-jazzy-desktop" not in packages.splitlines()
