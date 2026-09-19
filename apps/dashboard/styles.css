@@ -444,7 +444,14 @@ svg {
   border-radius: 7px;
   background: var(--surface);
   box-shadow: var(--shadow);
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* The strip grew as runs gained scenario/outcome/evidence facts. Auto-fit keeps
+     every cell readable at any width instead of wrapping the last one onto its own
+     row, and the trailing border is removed per row below. */
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+}
+
+.status-cell:nth-child(4n) {
+  border-right: 0;
 }
 
 .status-cell {
@@ -2284,5 +2291,241 @@ svg {
 
   .monitoring-trend-panel {
     overflow-x: auto;
+  }
+}
+
+/* --- Multi-scenario run identity, bounded filters and the phase timeline --- */
+
+/* A value the projection could not resolve is drawn as unresolved rather than
+   borrowed from a neighbouring state. Colour alone is never the signal: each
+   carry a tag or a border so the reading survives a greyscale render. */
+.run-scenario {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 4px 0 2px;
+}
+
+.run-scenario code {
+  overflow: hidden;
+  color: var(--teal);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-scenario.is-unresolved code {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.scenario-flag {
+  padding: 0 5px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.run-axis {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.axis-key {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.axis-value {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.axis-value.is-incomplete,
+.axis-value.is-unresolved {
+  padding: 0 5px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 4px;
+  color: var(--amber);
+}
+
+/* The facet selects are built from the API facet lists, so an option that would
+   match nothing is not offered. An empty facet list disables its select. */
+.facet-filters {
+  display: grid;
+  gap: 6px;
+  margin: 0 18px 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.facet-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.facet-field span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.facet-field select {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+}
+
+.facet-field select:disabled {
+  background: var(--surface-subtle);
+  color: var(--muted);
+}
+
+.run-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-subtle);
+}
+
+.pagination-copy {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pagination-controls {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.pagination-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.phase-timeline {
+  display: grid;
+  gap: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.phase-item {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+/* Each phase keeps a distinct left rule so the boundary between evidence
+   (execution, observation, verification, recovery) and task context is visible
+   without reading the label. */
+.phase-execution {
+  border-left-color: var(--blue);
+}
+
+.phase-observation {
+  border-left-color: var(--teal);
+}
+
+.phase-verification {
+  border-left-color: var(--green);
+}
+
+.phase-recovery {
+  border-left-color: var(--amber);
+}
+
+.phase-context {
+  border-left-color: var(--line-strong);
+}
+
+.phase-badge {
+  min-width: 44px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.phase-item strong {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase-item small,
+.phase-item time {
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-empty {
+  padding: 28px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+#run-scenario.is-unresolved,
+#task-outcome.is-unresolved,
+#task-evidence.is-incomplete {
+  color: var(--amber);
+}
+
+@media (max-width: 720px) {
+  .status-cell:nth-child(4n) {
+    border-right: 1px solid var(--line);
+  }
+
+  .status-cell:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .facet-filters {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

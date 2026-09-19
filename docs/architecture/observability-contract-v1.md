@@ -109,10 +109,40 @@ untrusted text becomes a file on disk, so a caller that forgot to redact must
 not be able to leak by forgetting. It also refuses to write a record that would
 not parse back, instead of writing a partial one.
 
+## Run projection axes (Issue #303)
+
+The read-only Dashboard backend projects a stored run on two axes that are not
+synonyms, because collapsing them loses exactly the information an operator needs:
+
+| Axis | Field | Values |
+| --- | --- | --- |
+| Verifier verdict | `outcome` | `confirmed`, `refuted`, `insufficient_evidence`, `none`, `running` |
+| Evidence chain | `evidence` | `confirmed`, `refuted`, `insufficient_evidence`, `failed`, `not_executed`, `running` |
+
+`outcome` is what the last `verification` event said; `none` means no verifier ran
+and is not a verdict. `evidence` describes the chain: `failed` is a refutation the
+run ended on without recovering, `not_executed` is a run that ended with no
+verification event at all, and a recovered run stays `refuted` on this axis while
+its `outcome` reports the final `confirmed`. The words match the vocabulary frozen
+in `docs/product/design-partner-scenario-template.md` and
+`docs/product/feedback-record-template.md`; the projection may not invent a
+synonym, because a new word is a new product decision.
+
+The scenario identity is resolved only through the committed legacy `task_id`
+mapping (`libs/kernel/workbench/kernel/scenario_migration.py`). An unmapped
+`task_id` reports `scenario_source: "unresolved"` with a null `scenario_id` rather
+than a guessed identity.
+
+The timeline route tags every event with exactly one phase (`execution`,
+`observation`, `verification`, `recovery`, `context`) in committed `sequence_no`
+order. Context is the default: an event that is not evidence explains the run but
+is never rendered as verification of anything.
+
 ## Verifying locally
 
 ```bash
 python -m pytest tests/unit/test_observability_contract.py -v
+python -m pytest tests/unit/test_dashboard_multiscenario.py -v
 python -m pytest tests/unit -k log -v
 make test
 make context-check

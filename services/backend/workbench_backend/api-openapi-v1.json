@@ -28,8 +28,34 @@
     "/api/v1/runs": {
       "get": {
         "operationId": "listRuns",
+        "summary": "Ordered run summaries with scenario identity, outcome, evidence, bounded filters and pagination.",
+        "description": "Read-only. Each run carries the registry scenario identity resolved through the committed legacy task_id mapping, the verifier outcome, and the evidence chain state. An unmapped task_id reports source unresolved with a null scenario_id rather than a guessed identity. A filter value outside the reported facet list is refused with 400 rather than silently ignored, and unfiltered_count is reported alongside total so a filtered page cannot read as the whole set.",
+        "parameters": [
+          {"$ref": "#/components/parameters/ScenarioId"},
+          {"$ref": "#/components/parameters/ScenarioVersion"},
+          {"$ref": "#/components/parameters/Outcome"},
+          {"$ref": "#/components/parameters/Evidence"},
+          {"$ref": "#/components/parameters/RunPage"},
+          {"$ref": "#/components/parameters/RunPageSize"}
+        ],
         "responses": {
-          "200": {"description": "Ordered run summaries.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunList"}}}},
+          "200": {"description": "Run summaries. With no filter and no page the response is the unbounded RunList envelope; with a filter or a page it is the BoundedRunList envelope carrying total, unfiltered_count, max_page_size and the facet lists.", "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/BoundedRunList"}, {"$ref": "#/components/schemas/RunList"}]}}}},
+          "400": {"description": "A filter value is outside the run set's facet list, or page/page_size is unusable. The value is refused rather than ignored.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "The instance is draining, at its concurrency bound, or the event source is invalid.", "headers": {"Retry-After": {"description": "Seconds to wait before retrying; present when the refusal is transient.", "schema": {"type": "integer", "minimum": 1}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/timeline": {
+      "get": {
+        "operationId": "getRunTimeline",
+        "summary": "Sequence-ordered evidence timeline for one run.",
+        "description": "Read-only. Every item carries exactly one phase from execution, observation, verification, recovery or context, in the committed sequence_no order. Context events are kept but are never presented as verification of anything, and the projection is bounded by the same event ceiling as the event stream.",
+        "parameters": [{"$ref": "#/components/parameters/RunId"}],
+        "responses": {
+          "200": {"description": "Bounded, sequence-ordered timeline.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunTimeline"}}}},
+          "400": {"description": "Invalid run identifier.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "404": {"description": "Run does not exist.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "413": {"description": "Response exceeds 4 MiB.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
           "503": {"description": "The instance is draining, at its concurrency bound, or the event source is invalid.", "headers": {"Retry-After": {"description": "Seconds to wait before retrying; present when the refusal is transient.", "schema": {"type": "integer", "minimum": 1}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
@@ -99,7 +125,49 @@
         "description": "Only report snapshots and cleared alerts at or after this monotonic timestamp (seconds).",
         "schema": {"type": "number", "minimum": 0}
       },
-      "RunId": {
+      "ScenarioId": {
+      "name": "scenario_id",
+      "in": "query",
+      "required": false,
+      "description": "Only report runs whose registry scenario id is this value. A value outside the reported facet list is refused with 400.",
+      "schema": {"type": "string", "maxLength": 128}
+    },
+    "ScenarioVersion": {
+      "name": "scenario_version",
+      "in": "query",
+      "required": false,
+      "description": "Only report runs whose scenario version is this value.",
+      "schema": {"type": "string", "maxLength": 32}
+    },
+    "Outcome": {
+      "name": "outcome",
+      "in": "query",
+      "required": false,
+      "description": "Only report runs whose verifier outcome is this value. none means no verifier ran; it is not a verdict.",
+      "schema": {"enum": ["confirmed", "refuted", "insufficient_evidence", "none", "running"]}
+    },
+    "Evidence": {
+      "name": "evidence",
+      "in": "query",
+      "required": false,
+      "description": "Only report runs whose evidence chain state is this value. failed is a refutation the run ended on; not_executed is a run that ended with no verifier.",
+      "schema": {"enum": ["confirmed", "refuted", "insufficient_evidence", "failed", "not_executed", "running"]}
+    },
+    "RunPage": {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "description": "1-based page of the filtered run list.",
+      "schema": {"type": "integer", "minimum": 1, "default": 1}
+    },
+    "RunPageSize": {
+      "name": "page_size",
+      "in": "query",
+      "required": false,
+      "description": "Runs per page. Bounded so one request cannot ask for an unbounded projection.",
+      "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 200}
+    },
+    "RunId": {
         "name": "run_id",
         "in": "path",
         "required": true,
@@ -146,14 +214,76 @@
           "event_count": {"type": "integer", "minimum": 1},
           "visible_event_count": {"type": "integer", "minimum": 1},
           "evidence_refs": {"type": "array", "items": {"type": "string"}},
+          "task_id": {"type": "string"},
+          "scenario_id": {"type": ["string", "null"], "description": "Null when the legacy task_id has no registry manifest. The projection never guesses an identity."},
+          "scenario_version": {"type": ["string", "null"]},
+          "scenario_label": {"type": ["string", "null"], "description": "The registry identity, for example kit-three-parts@0.2."},
+          "scenario_source": {"enum": ["registry", "unresolved"]},
+          "outcome": {"enum": ["confirmed", "refuted", "insufficient_evidence", "none", "running"], "description": "The verifier's verdict. none means no verifier ran."},
+          "evidence": {"enum": ["confirmed", "refuted", "insufficient_evidence", "failed", "not_executed", "running"], "description": "The evidence chain state, which is a different question from the outcome: a recovered run stays refuted here while its outcome reports confirmed."},
+          "recovery_count": {"type": "integer", "minimum": 0},
           "safety": {"type": "object", "required": ["hardware_estop", "software_control"]}
         },
         "additionalProperties": true
       },
+      "RunFacets": {
+        "type": "object",
+        "required": ["scenario_id", "scenario_version", "outcome", "evidence"],
+        "description": "The bounded, sorted values this run set actually contains. A filter UI builds its options from these, so it cannot offer a value that matches nothing and the response cannot grow with the run count.",
+        "properties": {
+          "scenario_id": {"type": "array", "maxItems": 64, "items": {"type": "string"}},
+          "scenario_version": {"type": "array", "maxItems": 64, "items": {"type": "string"}},
+          "outcome": {"type": "array", "maxItems": 64, "items": {"type": "string"}},
+          "evidence": {"type": "array", "maxItems": 64, "items": {"type": "string"}}
+        }
+      },
+      "TimelineItem": {
+        "type": "object",
+        "required": ["event_id", "sequence_no", "event_type", "phase", "occurred_at", "payload"],
+        "properties": {
+          "event_id": {"type": "string"},
+          "sequence_no": {"type": "integer", "minimum": 0},
+          "event_type": {"type": "string"},
+          "phase": {"enum": ["execution", "observation", "verification", "recovery", "context"], "description": "Exactly one phase per item. Anything that is not evidence is context and is never rendered as verification."},
+          "occurred_at": {"type": "string"},
+          "payload": {"type": "object"},
+          "evidence_refs": {"type": "array", "maxItems": 256, "items": {"type": "string"}}
+        }
+      },
+      "RunTimeline": {
+        "type": "object",
+        "required": ["run_id", "timeline", "max_events_per_run", "read_only"],
+        "properties": {
+          "run_id": {"type": "string"},
+          "timeline": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/components/schemas/TimelineItem"}},
+          "max_events_per_run": {"type": "integer", "minimum": 1},
+          "read_only": {"const": true}
+        }
+      },
       "RunList": {
         "type": "object",
         "required": ["runs", "read_only"],
-        "properties": {"runs": {"type": "array", "items": {"$ref": "#/components/schemas/RunSummary"}}, "read_only": {"const": true}}
+        "description": "The unbounded envelope, returned when the request asks for no filter and no page. It is the shape the split-host controller already reads, so it is kept exact rather than grown.",
+        "properties": {
+          "runs": {"type": "array", "items": {"$ref": "#/components/schemas/RunSummary"}},
+          "read_only": {"const": true}
+        }
+      },
+      "BoundedRunList": {
+        "type": "object",
+        "required": ["runs", "total", "unfiltered_count", "page", "page_size", "max_page_size", "facets", "read_only"],
+        "description": "The bounded envelope, returned when a filter or a page is requested. total and unfiltered_count travel together so a filtered page cannot read as the whole set.",
+        "properties": {
+          "runs": {"type": "array", "maxItems": 200, "items": {"$ref": "#/components/schemas/RunSummary"}},
+          "total": {"type": "integer", "minimum": 0, "description": "Runs matching the filters, before pagination."},
+          "unfiltered_count": {"type": "integer", "minimum": 0, "description": "Every readable run, so a filtered page cannot read as the whole set."},
+          "page": {"type": "integer", "minimum": 1},
+          "page_size": {"type": "integer", "minimum": 1, "maximum": 200},
+          "max_page_size": {"type": "integer", "minimum": 1, "maximum": 200},
+          "facets": {"$ref": "#/components/schemas/RunFacets"},
+          "filters": {"type": "object", "description": "The filters that were applied, echoed so a response is self-describing."},
+          "read_only": {"const": true}
+        }
       },
       "RunDetail": {
         "type": "object",
@@ -320,6 +450,6 @@
     "legacy_alias": "/api",
     "policy": "v1 is additive and read-only; aliases remain until a documented v2 migration."
   },
-  "x-limits": {"max_response_bytes": 4194304, "max_event_log_bytes": 10485760, "max_events_per_run": 10000, "max_health_document_bytes": 1048576, "max_health_snapshots": 256, "max_health_history_entries": 512},
+  "x-limits": {"max_response_bytes": 4194304, "max_event_log_bytes": 10485760, "max_events_per_run": 10000, "max_run_page_size": 200, "max_run_facet_values": 64, "max_health_document_bytes": 1048576, "max_health_snapshots": 256, "max_health_history_entries": 512},
   "x-headers": {"content_type": "application/json; charset=utf-8", "api_version": "X-API-Version"}
 }

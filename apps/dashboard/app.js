@@ -4,9 +4,19 @@ const state = {
   events: [],
   cursor: -1,
   filter: "all",
+  selection: { scenario_id: "", scenario_version: "", outcome: "", evidence: "" },
+  facets: { scenario_id: [], scenario_version: [], outcome: [], evidence: [] },
+  page: 1,
+  pageSize: 20,
+  total: 0,
+  unfilteredCount: 0,
+  maxPageSize: 200,
+  timeline: [],
+  timelineRunId: null,
   playing: false,
   timer: null,
   runRequest: null,
+  listRequest: null,
   requestGeneration: 0,
   toastTimer: null,
   monitoring: null,
@@ -23,6 +33,36 @@ const statusLabels = {
   refuted: "未满足",
   running: "执行中",
 };
+
+const outcomeLabels = {
+  confirmed: "已确认",
+  refuted: "未满足",
+  insufficient_evidence: "证据不足",
+  none: "未验证",
+  running: "执行中",
+};
+
+const evidenceLabels = {
+  confirmed: "已确认",
+  insufficient_evidence: "证据不足",
+  refuted: "未满足",
+  failed: "未达成",
+  not_executed: "未执行",
+  running: "执行中",
+};
+
+const phaseLabels = {
+  execution: "执行",
+  observation: "观测",
+  verification: "验证",
+  recovery: "恢复",
+  context: "上下文",
+};
+
+// An evidence chain the API could not name is rendered as incomplete, never as a
+// success: an unknown string and a missing field both mean "this run did not
+// report evidence", which is not the same as "this run was confirmed".
+const evidenceIncompleteStates = ["insufficient_evidence", "failed", "not_executed"];
 
 const expressionLabels = {
   idle: "待命",
@@ -96,6 +136,112 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+// Filter options are derived from the bounded facet lists the API reports, so
+// the UI can only offer a value the run set actually contains. A facet the API
+// did not report yields an empty list rather than a guessed default.
+function filterOptions(facets) {
+  const source = facets || {};
+  const list = (key) => (Array.isArray(source[key]) ? source[key].map(String) : []);
+  return {
+    scenario_id: list("scenario_id"),
+    scenario_version: list("scenario_version"),
+    outcome: list("outcome"),
+    evidence: list("evidence"),
+  };
+}
+
+function activeSelection(selection) {
+  return Object.entries(selection || {})
+    .filter(([, value]) => value)
+    .map(([key, value]) => [key, String(value)]);
+}
+
+// The request the UI builds from one selection. The order is fixed so two equal
+// selections always produce the same URL, which is what makes the view
+// reproducible from a link.
+function runQuery(selection, page = 1, pageSize = 20) {
+  const params = new URLSearchParams();
+  activeSelection(selection).forEach(([key, value]) => params.set(key, value));
+  params.set("page", String(page));
+  params.set("page_size", String(pageSize));
+  return `?${params.toString()}`;
+}
+
+// Applying the same filters locally keeps the rendered list equal to the
+// requested one even before the next response lands, and it is what the Node
+// tests exercise.
+function filterRunList(runs, selection) {
+  const active = activeSelection(selection);
+  if (!active.length) return runs.slice();
+  return runs.filter((run) => active.every(([key, value]) => String(run[key]) === value));
+}
+
+// A run's evidence reading. `unknown` is reserved for a value outside the
+// documented vocabulary: the API would have refused it as a filter, so seeing it
+// here means the projection is newer than this view.
+function evidenceReading(run) {
+  const state = String(run?.evidence ?? "");
+  if (!Object.prototype.hasOwnProperty.call(evidenceLabels, state)) {
+    return { state: "unknown", label: "未知", incomplete: true };
+  }
+  return {
+    state,
+    label: evidenceLabels[state],
+    incomplete: evidenceIncompleteStates.includes(state),
+  };
+}
+
+function outcomeReading(run) {
+  const outcome = String(run?.outcome ?? "");
+  if (!Object.prototype.hasOwnProperty.call(outcomeLabels, outcome)) {
+    return { outcome: "unknown", label: "未知", unresolved: true };
+  }
+  return { outcome, label: outcomeLabels[outcome], unresolved: outcome === "none" };
+}
+
+function scenarioReading(run) {
+  const label = run?.scenario_label;
+  if (run?.scenario_source === "registry" && label) {
+    return { label: String(label), unresolved: false };
+  }
+  return { label: "未登记场景", unresolved: true };
+}
+
+// Every timeline item carries exactly one phase from the committed vocabulary.
+// An item the API tagged with anything else becomes `context`, because a
+// rendering rule must not promote an unknown event into verified evidence.
+function timelineView(items, phases = Object.keys(phaseLabels)) {
+  return (Array.isArray(items) ? items : []).map((item, index) => {
+    const phase = phases.includes(item?.phase) ? item.phase : "context";
+    return {
+      sequence_no: Number(item?.sequence_no ?? index),
+      event_type: String(item?.event_type ?? "unknown"),
+      phase,
+      phase_label: phaseLabels[phase],
+      occurred_at: item?.occurred_at ?? null,
+      evidence_refs: Array.isArray(item?.evidence_refs) ? item.evidence_refs : [],
+    };
+  });
+}
+
+// The page summary must never let a filtered page look like the whole run set.
+function pageSummary(payload) {
+  const total = Number(payload?.total ?? 0);
+  const unfiltered = Number(payload?.unfiltered_count ?? total);
+  const pageSize = Number(payload?.page_size ?? 0) || 1;
+  const page = Number(payload?.page ?? 1);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  return {
+    total,
+    unfiltered_count: unfiltered,
+    page,
+    page_size: pageSize,
+    page_count: pageCount,
+    filtered: total !== unfiltered,
+    truncated: total > pageSize,
+  };
 }
 
 function refreshIcons() {
@@ -180,15 +326,18 @@ function deriveSummary(events, cursor = events.length - 1) {
 }
 
 function renderRunList() {
-  const runs = state.runs.filter((run) => {
+  const runs = filterRunList(state.runs, state.selection).filter((run) => {
     if (state.filter === "all") return true;
-    if (state.filter === "attention") return ["refuted", "insufficient_evidence"].includes(run.status);
+    if (state.filter === "attention") return evidenceReading(run).incomplete;
     return run.status === state.filter;
   });
   get("run-count").textContent = String(runs.length);
   get("run-list").innerHTML = runs
-    .map(
-      (run) => `
+    .map((run) => {
+      const scenario = scenarioReading(run);
+      const evidence = evidenceReading(run);
+      const outcome = outcomeReading(run);
+      return `
         <button class="run-item ${run.run_id === state.currentRun?.run_id ? "is-active" : ""}"
           type="button" data-run-id="${escapeHtml(run.run_id)}"
           aria-pressed="${run.run_id === state.currentRun?.run_id}">
@@ -197,17 +346,135 @@ function renderRunList() {
             <span class="status-pill status-${escapeHtml(run.status)}">${escapeHtml(run.status_label)}</span>
           </div>
           <p>${escapeHtml(run.goal)}</p>
+          <div class="run-scenario ${scenario.unresolved ? "is-unresolved" : ""}">
+            <code>${escapeHtml(scenario.label)}</code>
+            ${scenario.unresolved ? '<span class="scenario-flag">未登记</span>' : ""}
+          </div>
+          <div class="run-item-bottom">
+            <span class="run-axis">
+              <span class="axis-key">结果</span>
+              <span class="axis-value ${outcome.unresolved ? "is-unresolved" : ""}">${escapeHtml(outcome.label)}</span>
+            </span>
+            <span class="run-axis">
+              <span class="axis-key">证据</span>
+              <span class="axis-value ${evidence.incomplete ? "is-incomplete" : ""}">${escapeHtml(evidence.label)}</span>
+            </span>
+          </div>
           <div class="run-item-bottom">
             <code>${escapeHtml(run.run_id)}</code>
             <time>${escapeHtml(formatTime(run.updated_at, true))}</time>
           </div>
-        </button>`,
-    )
+        </button>`;
+    })
     .join("");
   document.querySelectorAll(".run-item").forEach((button) => {
     button.addEventListener("click", () => selectRun(button.dataset.runId));
   });
   document.querySelector(".run-item.is-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  renderRunPagination();
+  renderScenarioFilters();
+}
+
+// Pagination is reported, not implied: a page of a filtered set states both the
+// matched count and the unfiltered count so it cannot read as the whole set.
+function renderRunPagination() {
+  const target = get("run-pagination");
+  if (!target) return;
+  const summary = pageSummary({
+    total: state.total,
+    unfiltered_count: state.unfilteredCount,
+    page: state.page,
+    page_size: state.pageSize,
+  });
+  const shown = Math.min(summary.total, summary.page * summary.page_size);
+  target.innerHTML = `
+    <span class="pagination-copy" aria-live="polite">
+      ${escapeHtml(`第 ${summary.page} / ${summary.page_count} 页 · 显示 ${shown} / ${summary.total}`)}
+      ${summary.filtered ? escapeHtml(`· 全部 ${summary.unfiltered_count}`) : ""}
+    </span>
+    <span class="pagination-controls">
+      <button type="button" class="icon-button" data-page-step="-1"
+        aria-label="上一页" ${summary.page <= 1 ? "disabled" : ""}><i data-lucide="chevron-left"></i></button>
+      <button type="button" class="icon-button" data-page-step="1"
+        aria-label="下一页" ${summary.page >= summary.page_count ? "disabled" : ""}><i data-lucide="chevron-right"></i></button>
+    </span>`;
+  target.querySelectorAll("button[data-page-step]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = state.page + Number(button.dataset.pageStep);
+      if (next < 1) return;
+      loadRuns(next);
+    });
+  });
+  refreshIcons();
+}
+
+// The select options come from the API facets, so a value that would match
+// nothing cannot be offered. An empty facet list disables that select.
+function renderScenarioFilters() {
+  const target = get("scenario-filters");
+  if (!target) return;
+  const options = filterOptions(state.facets);
+  const fields = [
+    ["scenario_id", "场景"],
+    ["scenario_version", "版本"],
+    ["outcome", "结果"],
+    ["evidence", "证据"],
+  ];
+  target.innerHTML = fields
+    .map(([key, label]) => {
+      const values = options[key];
+      const current = state.selection[key] || "";
+      const rendered = values
+        .map(
+          (value) =>
+            `<option value="${escapeHtml(value)}" ${value === current ? "selected" : ""}>${escapeHtml(
+              key === "outcome" ? outcomeLabels[value] || value : key === "evidence" ? evidenceLabels[value] || value : value,
+            )}</option>`,
+        )
+        .join("");
+      return `<label class="facet-field"><span>${escapeHtml(label)}</span>
+        <select data-facet="${escapeHtml(key)}" ${values.length ? "" : "disabled"}>
+          <option value="">全部</option>${rendered}
+        </select></label>`;
+    })
+    .join("");
+  target.querySelectorAll("select[data-facet]").forEach((select) => {
+    select.addEventListener("change", () => {
+      state.selection[select.dataset.facet] = select.value;
+      loadRuns(1);
+    });
+  });
+}
+
+// The evidence timeline keeps each event's committed phase. Context events are
+// shown, but under a phase that cannot be read as verification.
+function renderEvidenceTimeline() {
+  const target = get("evidence-timeline");
+  if (!target) return;
+  if (state.timelineRunId !== state.currentRun?.run_id) {
+    target.innerHTML = '<div class="timeline-empty">尚未载入该运行的时间线</div>';
+    return;
+  }
+  const items = timelineView(state.timeline);
+  if (!items.length) {
+    target.innerHTML = '<div class="timeline-empty">该运行没有事件</div>';
+    return;
+  }
+  target.innerHTML = items
+    .map(
+      (item) => `
+        <li class="phase-item phase-${escapeHtml(item.phase)}">
+          <span class="phase-badge">${escapeHtml(item.phase_label)}</span>
+          <div>
+            <strong>${escapeHtml(eventLabels[item.event_type] || item.event_type)}</strong>
+            <small>#${String(item.sequence_no).padStart(2, "0")} · ${escapeHtml(
+              String(item.evidence_refs.length),
+            )} 条证据引用</small>
+          </div>
+          <time>${escapeHtml(formatTime(item.occurred_at))}</time>
+        </li>`,
+    )
+    .join("");
 }
 
 function renderAttention(summary) {
@@ -682,6 +949,27 @@ function renderCurrent() {
   get("run-id").textContent = summary.run_id;
   get("run-mode").textContent = summary.mode;
   get("task-status").textContent = summary.status_label;
+  // Scenario, outcome and evidence are run-level facts the API projects, so the
+  // strip reads the run summary rather than the locally replayed one.
+  const runFacts = state.currentRun || summary;
+  const scenario = scenarioReading(runFacts);
+  const outcome = outcomeReading(runFacts);
+  const evidence = evidenceReading(runFacts);
+  const scenarioTarget = get("run-scenario");
+  if (scenarioTarget) {
+    scenarioTarget.textContent = scenario.label;
+    scenarioTarget.classList.toggle("is-unresolved", scenario.unresolved);
+  }
+  const outcomeTarget = get("task-outcome");
+  if (outcomeTarget) {
+    outcomeTarget.textContent = outcome.label;
+    outcomeTarget.classList.toggle("is-unresolved", outcome.unresolved);
+  }
+  const evidenceTarget = get("task-evidence");
+  if (evidenceTarget) {
+    evidenceTarget.textContent = evidence.label;
+    evidenceTarget.classList.toggle("is-incomplete", evidence.incomplete);
+  }
   get("evidence-count").textContent = String(summary.evidence_refs.length);
   get("recovery-count").textContent = String(summary.recovery_count);
   get("task-goal").textContent = summary.goal;
@@ -696,6 +984,7 @@ function renderCurrent() {
   renderEvidence(summary);
   renderTimeline(get("overview-timeline"), state.events, state.events.length - 1);
   renderTimeline(get("replay-timeline"), state.events, state.cursor, true);
+  renderEvidenceTimeline();
   renderReplayEvent();
   refreshIcons();
 }
@@ -1230,6 +1519,24 @@ async function selectRun(runId) {
     state.currentRun = payload.run;
     state.events = payload.events;
     state.cursor = state.events.length - 1;
+    // The timeline is a separate bounded projection; a failure to read it leaves
+    // the time line marked as not loaded rather than reusing the event stream as
+    // if it had been phase-checked.
+    state.timeline = [];
+    state.timelineRunId = null;
+    try {
+      const timelineResponse = await fetch(`/api/runs/${encodeURIComponent(runId)}/timeline`, {
+        signal: controller.signal,
+      });
+      if (timelineResponse.ok) {
+        const timelinePayload = await timelineResponse.json();
+        if (generation !== state.requestGeneration) return;
+        state.timeline = timelinePayload.timeline || [];
+        state.timelineRunId = timelinePayload.run_id ?? runId;
+      }
+    } catch (error) {
+      if (error.name === "AbortError") throw error;
+    }
     renderRunList();
     renderCurrent();
   } catch (error) {
@@ -1312,20 +1619,52 @@ function bindControls() {
   });
 }
 
+// One run-list request. The filters and the page are sent to the API rather than
+// applied only here, so the facet lists and the total the view reports describe
+// the same set the list was sliced from.
+async function loadRuns(page = state.page) {
+  state.listRequest?.abort();
+  const controller = new AbortController();
+  state.listRequest = controller;
+  try {
+    const response = await fetch(`/api/runs${runQuery(state.selection, page, state.pageSize)}`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    state.runs = payload.runs || [];
+    state.facets = filterOptions(payload.facets);
+    state.page = Number(payload.page ?? page);
+    state.pageSize = Number(payload.page_size ?? state.pageSize);
+    state.total = Number(payload.total ?? state.runs.length);
+    state.unfilteredCount = Number(payload.unfiltered_count ?? state.total);
+    state.maxPageSize = Number(payload.max_page_size ?? state.maxPageSize);
+    renderRunList();
+    return state.runs;
+  } catch (error) {
+    if (error.name === "AbortError") return state.runs;
+    showToast(`无法读取运行列表：${error.message}`);
+    return state.runs;
+  } finally {
+    state.listRequest = null;
+  }
+}
+
 async function initialize() {
   bindControls();
   refreshIcons();
   try {
-    const response = await fetch("/api/runs");
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    state.runs = payload.runs;
-    renderRunList();
+    const runs = await loadRuns(1);
     const requestedRun = new URLSearchParams(window.location.search).get("run");
+    const requested = requestedRun && !runs.some((run) => run.run_id === requestedRun) ? requestedRun : null;
     const initial =
-      state.runs.find((run) => run.run_id === requestedRun) ||
-      state.runs.find((run) => run.status === "insufficient_evidence") ||
-      state.runs[0];
+      runs.find((run) => run.run_id === requestedRun) ||
+      runs.find((run) => evidenceReading(run).incomplete) ||
+      runs[0] ||
+      (requested ? { run_id: requested } : null);
     if (initial) await selectRun(initial.run_id);
   } catch (error) {
     showToast(`服务未就绪：${error.message}`);
