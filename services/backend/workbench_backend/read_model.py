@@ -1,6 +1,7 @@
 import json
 import threading
 import urllib.parse
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,33 @@ STATUS_LABELS = {
     "running": "执行中",
 }
 
+# The label of the *run's evidence chain*, which is a different question from the
+# verifier's verdict on the last claim. ``refuted`` is what one verification said;
+# ``failed`` is a run that ended on that refutation without recovering. A run that
+# did recover keeps ``refuted`` because its evidence chain still contains the
+# refutation, while its ``outcome`` reports the final ``confirmed`` verdict.
+EVIDENCE_LABELS = {
+    "confirmed": "已确认",
+    "insufficient_evidence": "证据不足",
+    "refuted": "未满足",
+    "failed": "未达成",
+    "not_executed": "未执行",
+    "running": "执行中",
+}
+EVIDENCE_STATES = frozenset(EVIDENCE_LABELS)
+OUTCOME_LABELS = {
+    "confirmed": "已确认",
+    "refuted": "未满足",
+    "insufficient_evidence": "证据不足",
+    "none": "未验证",
+    "running": "执行中",
+}
+# ``none`` is not a verifier verdict: no verifier ran, so only the evidence axis
+# names that gap. ``unknown`` is not listed because an unrecognised status is
+# never a filter the caller may ask for.
+OUTCOME_FILTERS = frozenset({"confirmed", "refuted", "insufficient_evidence", "none", "running"})
+SCENARIO_SOURCES = frozenset({"registry", "unresolved"})
+
 STEP_LABELS = {
     "action_request": "执行语义动作",
     "action_result": "检查动作结果",
@@ -24,6 +52,8 @@ STEP_LABELS = {
     "verification": "验证任务结果",
 }
 
+# The full committed world-event vocabulary, so a stream that carries recovery or
+# tool-call events is read rather than refused as an unknown event_type.
 EVENT_TYPES = {
     "action_request",
     "action_result",
@@ -31,16 +61,43 @@ EVENT_TYPES = {
     "fault",
     "observation",
     "policy_violation",
+    "recovery_complete",
+    "recovery_started",
     "task_accepted",
     "task_graph",
+    "task_start",
     "task_terminal",
+    "tool_call",
     "verification",
 }
+
+# The four evidence kinds the run timeline separates. Everything else is task
+# context: it explains the run but is not evidence for or against a claim.
+EXECUTION_EVENT_TYPES = frozenset({"action_request", "action_result"})
+OBSERVATION_EVENT_TYPES = frozenset({"observation"})
+VERIFICATION_EVENT_TYPES = frozenset({"verification"})
+RECOVERY_EVENT_TYPES = frozenset({"recovery_started", "recovery_complete"})
+TIMELINE_PHASES = ("execution", "observation", "verification", "recovery", "context")
+
 MAX_EVENT_LOG_BYTES = 10 * 1024 * 1024
 MAX_EVENTS_PER_RUN = 10_000
 MAX_READ_ATTEMPTS = 2
 MAX_EVIDENCE_REFS = 256
 VERIFICATION_STATUSES = {"confirmed", "insufficient_evidence", "refuted"}
+# Filters are bounded so one request cannot ask for an unbounded projection, and
+# the facet lists are bounded so the response cannot grow with the run count.
+MAX_RUN_PAGE_SIZE = 200
+DEFAULT_RUN_PAGE_SIZE = MAX_RUN_PAGE_SIZE
+MAX_RUN_FACET_VALUES = 64
+RUN_FILTER_KEYS = ("scenario_id", "scenario_version", "outcome", "evidence")
+
+
+class RunFilterError(ValueError):
+    """A run-list filter names a value this run set does not contain."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"the {key} filter has no such value in this run set")
+        self.key = key
 
 
 class ReadModelError(ValueError):
@@ -144,6 +201,238 @@ def _validate_event_stream(events: list[Any], source: str) -> list[dict[str, Any
     return events
 
 
+@lru_cache(maxsize=1)
+def _task_id_index() -> dict[str, tuple[str, str, str]]:
+    """Resolve a legacy ``task_id`` to ``(scenario_id, scenario_version, identity)``.
+
+    The migration table is the committed join between the old task-family entry
+    points and the registry identities, so this reads it instead of inventing an
+    identity from a free-text field. The import is optional and cached: a
+    deployment without the kernel package reports every run as unresolved rather
+    than failing to serve the run list at all.
+    """
+    try:
+        from workbench.kernel.scenario_migration import BY_TASK_ID
+    except ImportError:
+        return {}
+    return {
+        task_id: (family.scenario_id, family.scenario_version, family.identity)
+        for task_id, family in BY_TASK_ID.items()
+    }
+
+
+def scenario_identity_for(task_id: object) -> dict[str, Any]:
+    """Project one ``task_id`` into the scenario identity the registry owns.
+
+    An unmapped, missing or non-string ``task_id`` resolves to a null
+    ``scenario_id`` with ``scenario_source`` ``unresolved``. The projection never
+    guesses an identity, because a guessed scenario would attribute a run to a
+    manifest whose verifier never ran against it.
+    """
+    resolved = _task_id_index().get(task_id) if isinstance(task_id, str) else None
+    if resolved is None:
+        return {
+            "scenario_id": None,
+            "scenario_version": None,
+            "scenario_label": None,
+            "scenario_source": "unresolved",
+        }
+    scenario_id, scenario_version, identity = resolved
+    return {
+        "scenario_id": scenario_id,
+        "scenario_version": scenario_version,
+        "scenario_label": identity,
+        "scenario_source": "registry",
+    }
+
+
+def run_outcome(last_verification: dict[str, Any] | None) -> str:
+    """The verifier's verdict on the last claim, or ``none`` when none was made."""
+    if last_verification is None:
+        return "none"
+    status = last_verification.get("payload", {}).get("status")
+    return status if isinstance(status, str) and status in VERIFICATION_STATUSES else "running"
+
+
+def run_evidence_state(events: list[dict[str, Any]], last_verification: dict[str, Any] | None) -> str:
+    """Name the run's *evidence chain*, which is not the same as its outcome.
+
+    ``refuted`` is what one verification said. A run that recovered from that
+    refutation keeps ``refuted`` here, because its evidence chain still contains
+    the refutation, while its outcome reports the final ``confirmed`` verdict.
+    ``failed`` is therefore reserved for a refutation the run ended on without
+    recovering, and ``not_executed`` for a run that ended with no verifier having
+    run at all - the two gaps an operator must be able to tell apart.
+    """
+    terminal = any(event.get("event_type") == "task_terminal" for event in events)
+    if last_verification is None:
+        return "not_executed" if terminal else "running"
+    status = last_verification.get("payload", {}).get("status")
+    if status == "confirmed":
+        recovered = any(
+            event.get("event_type") == "verification" and event.get("payload", {}).get("status") == "refuted"
+            for event in events
+        )
+        return "refuted" if recovered else "confirmed"
+    if status == "insufficient_evidence":
+        return "insufficient_evidence"
+    if status == "refuted":
+        return "failed" if terminal else "refuted"
+    return "running"
+
+
+def timeline_phase(event_type: object) -> str:
+    """Map one event type to exactly one timeline phase.
+
+    Anything that is not evidence is task context: it explains the run but is
+    neither for nor against a claim, so it is never rendered as verification.
+    """
+    if event_type in EXECUTION_EVENT_TYPES:
+        return "execution"
+    if event_type in OBSERVATION_EVENT_TYPES:
+        return "observation"
+    if event_type in VERIFICATION_EVENT_TYPES:
+        return "verification"
+    if event_type in RECOVERY_EVENT_TYPES:
+        return "recovery"
+    return "context"
+
+
+def run_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project a run into a sequence-ordered, phase-tagged timeline.
+
+    The order is the committed ``sequence_no`` order the stream was validated in,
+    so ties and recovery events are never reordered into a narrative the run did
+    not have. The result is bounded by the same event ceiling as the stream.
+    """
+    return [
+        {
+            "event_id": event["event_id"],
+            "sequence_no": event["sequence_no"],
+            "event_type": event["event_type"],
+            "phase": timeline_phase(event["event_type"]),
+            "occurred_at": event["occurred_at"],
+            "payload": event["payload"],
+            "evidence_refs": list(event.get("evidence_refs", [])),
+        }
+        for event in events[:MAX_EVENTS_PER_RUN]
+    ]
+
+
+def project_runs(
+    runs: list[dict[str, Any]],
+    filters: dict[str, str] | None = None,
+    *,
+    page: int = 1,
+    page_size: int = DEFAULT_RUN_PAGE_SIZE,
+) -> dict[str, Any]:
+    """Filter and page a run list, reporting the totals that bound the page.
+
+    ``unfiltered_count`` is reported next to the matched ``total`` so a page of a
+    filtered view can never be mistaken for the whole run set, and the committed
+    sorted order is preserved because the slice is taken last.
+
+    This is a module-level projection rather than a method so a caller that only
+    implements ``list_runs`` - the concurrency, drain and response-size
+    substitutes in the tests - is served without having to grow a new method.
+    """
+    if page < 1:
+        raise ValueError("page must be at least 1")
+    if not 1 <= page_size <= MAX_RUN_PAGE_SIZE:
+        raise ValueError(f"page_size must be between 1 and {MAX_RUN_PAGE_SIZE}")
+    projected = [normalize_run(run) for run in runs]
+    matched = filter_runs(projected, filters or {})
+    offset = (page - 1) * page_size
+    return {
+        "runs": matched[offset : offset + page_size],
+        "total": len(matched),
+        "unfiltered_count": len(projected),
+        "page": page,
+        "page_size": page_size,
+        "max_page_size": MAX_RUN_PAGE_SIZE,
+        "facets": run_facets(projected),
+        "filters": {key: value for key, value in (filters or {}).items()},
+        "read_only": True,
+    }
+
+
+def project_run_list(
+    read_model: Any,
+    filters: dict[str, str] | None = None,
+    *,
+    page: int = 1,
+    page_size: int = DEFAULT_RUN_PAGE_SIZE,
+) -> dict[str, Any]:
+    """Project any read model's run list, preferring its own ``query_runs``."""
+    query = getattr(read_model, "query_runs", None)
+    if callable(query):
+        return query(filters, page=page, page_size=page_size)
+    return project_runs(read_model.list_runs(), filters, page=page, page_size=page_size)
+
+
+def project_run_timeline(read_model: Any, run_id: str) -> list[dict[str, Any]]:
+    """Project one run's timeline, preferring the read model's own method."""
+    timeline = getattr(read_model, "run_timeline", None)
+    if callable(timeline):
+        return timeline(run_id)
+    return run_timeline(read_model.list_events(run_id))
+
+
+def normalize_run(run: dict[str, Any]) -> dict[str, Any]:
+    """Fill the scenario/outcome/evidence fields a projection did not carry.
+
+    A remote peer is a separate trust domain and may predate these fields, so a
+    missing block is reported as unresolved rather than omitted. That keeps the
+    response shape stable for the Dashboard without inventing an identity for a
+    run whose events this host never read.
+    """
+    projected = dict(run)
+    projected.setdefault("scenario_id", None)
+    projected.setdefault("scenario_version", None)
+    projected.setdefault("scenario_label", None)
+    projected.setdefault("scenario_source", "unresolved")
+    projected.setdefault("outcome", "none")
+    projected.setdefault("evidence", "not_executed")
+    return projected
+
+
+def run_facets(runs: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """The bounded, sorted values the run set actually contains.
+
+    The Dashboard builds its filter options from these lists, so it cannot offer
+    a value that would return nothing, and the response cannot grow with the run
+    count.
+    """
+    facets: dict[str, set[str]] = {key: set() for key in RUN_FILTER_KEYS}
+    for run in runs:
+        scenario_id = run.get("scenario_id")
+        scenario_version = run.get("scenario_version")
+        outcome = run.get("outcome")
+        evidence = run.get("evidence")
+        if isinstance(scenario_id, str) and scenario_id:
+            facets["scenario_id"].add(scenario_id)
+        if isinstance(scenario_version, str) and scenario_version:
+            facets["scenario_version"].add(scenario_version)
+        if isinstance(outcome, str) and outcome in OUTCOME_FILTERS:
+            facets["outcome"].add(outcome)
+        if isinstance(evidence, str) and evidence in EVIDENCE_STATES:
+            facets["evidence"].add(evidence)
+    return {key: sorted(values)[:MAX_RUN_FACET_VALUES] for key, values in facets.items()}
+
+
+def filter_runs(runs: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    """Apply validated filters, preserving the committed sorted run order.
+
+    A value outside the bounded vocabulary is refused rather than ignored: a
+    filter that silently returns the whole set looks identical to one that
+    matched everything, which is how a typo becomes a wrong conclusion.
+    """
+    for key, value in filters.items():
+        if value not in run_facets(runs)[key]:
+            raise RunFilterError(key)
+    return [run for run in runs if all(run.get(key) == value for key, value in filters.items())]
+
+
 class DashboardReadModel:
     def __init__(self, data_dir: str | Path) -> None:
         self.data_dir = Path(data_dir)
@@ -214,6 +503,24 @@ class DashboardReadModel:
     def list_runs(self) -> list[dict[str, Any]]:
         return [self.summarize(events) for events in self._runs_by_id().values()]
 
+    def query_runs(
+        self,
+        filters: dict[str, str] | None = None,
+        page: int = 1,
+        page_size: int = DEFAULT_RUN_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        """The bounded, filtered, paged run list with the facets that describe it."""
+        runs = [normalize_run(run) for run in self.list_runs()]
+        return project_runs(runs, filters, page=page, page_size=page_size)
+
+    def run_timeline(self, run_id: str) -> list[dict[str, Any]]:
+        """The sequence-ordered, phase-tagged evidence timeline for one run."""
+        try:
+            events = self.list_events(run_id)
+        except KeyError:
+            raise KeyError(run_id) from None
+        return run_timeline(events)
+
     def summarize(self, events: list[dict[str, Any]], replay_index: int | None = None) -> dict[str, Any]:
         if not events:
             raise ValueError("cannot summarize an empty run")
@@ -242,13 +549,24 @@ class DashboardReadModel:
             for reference in event.get("evidence_refs", []):
                 if reference not in evidence:
                     evidence.append(reference)
+        task_id = accepted.get("payload", {}).get("task_id", "unknown")
+        # The outcome and the evidence state answer different questions: the
+        # outcome is the verifier's verdict, the evidence state describes the
+        # chain that led to it. Both travel so neither can stand in for the other.
+        outcome = run_outcome(final_verification)
+        evidence_state = run_evidence_state(visible, final_verification)
         return {
             "run_id": events[0]["run_id"],
-            "task_id": accepted.get("payload", {}).get("task_id", "unknown"),
+            "task_id": task_id,
             "goal": accepted.get("payload", {}).get("goal", "Place the red block in the tray"),
             "mode": accepted.get("payload", {}).get("mode", "scripted"),
             "status": status,
             "status_label": STATUS_LABELS.get(status, "未知状态"),
+            "outcome": outcome,
+            "outcome_label": OUTCOME_LABELS.get(outcome, "未知状态"),
+            "evidence": evidence_state,
+            "evidence_label": EVIDENCE_LABELS.get(evidence_state, "未知状态"),
+            **scenario_identity_for(task_id),
             "expression": derive_expression(visible).value,
             "current_step": STEP_LABELS.get(current_event.get("event_type"), "等待任务")
             if current_event

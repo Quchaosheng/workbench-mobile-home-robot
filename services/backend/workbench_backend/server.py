@@ -20,11 +20,18 @@ from .health import HealthHistoryError, HealthReadModel
 from .inbound_http import InboundHttpConfigurationError, InboundHttpPolicy
 from .logging import StructuredLogger
 from .read_model import (
+    DEFAULT_RUN_PAGE_SIZE,
+    MAX_EVENTS_PER_RUN,
+    MAX_RUN_PAGE_SIZE,
+    RUN_FILTER_KEYS,
     DashboardReadModel,
     ReadModelError,
     ReadModelResponseTooLarge,
     RemoteDashboardReadModel,
+    RunFilterError,
     UnavailableRemoteDashboardReadModel,
+    project_run_list,
+    project_run_timeline,
 )
 from .remote_http import RemoteHttpError
 
@@ -437,7 +444,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(contract, api_version=api_version)
             return
         if route in {"/api/runs", "/api/v1/runs"}:
-            self._send_json({"runs": self.read_model.list_runs(), "read_only": True}, api_version=api_version)
+            try:
+                query = self._run_query()
+            except ValueError as exc:
+                self._send_json(
+                    {"error": "invalid_filter", "message": str(exc)}, HTTPStatus.BAD_REQUEST, api_version=api_version
+                )
+                return
+            if not query["bounded"]:
+                # The unpaged envelope is a committed contract that the split-host
+                # controller reads, so it keeps its exact shape. Asking for a
+                # filter or a page opts into the bounded projection, which reports
+                # the totals and facets that bound what was returned.
+                self._send_json({"runs": self.read_model.list_runs(), "read_only": True}, api_version=api_version)
+                return
+            try:
+                payload = project_run_list(
+                    self.read_model, query["filters"], page=query["page"], page_size=query["page_size"]
+                )
+            except RunFilterError as exc:
+                # A filter value outside the bounded vocabulary is refused, not
+                # ignored: silently returning the whole set is how a typo becomes
+                # a wrong conclusion about what the runs contain.
+                self._send_json(
+                    {"error": "unknown_filter_value", "filter": exc.key},
+                    HTTPStatus.BAD_REQUEST,
+                    api_version=api_version,
+                )
+                return
+            self._send_json(payload, api_version=api_version)
             return
         if route in {"/api/expression-states", "/api/v1/expression-states"}:
             self._send_json(self.read_model.expression_contract(), api_version=api_version)
@@ -459,7 +494,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if route.startswith(run_prefix):
             suffix = unquote(route.removeprefix(run_prefix))
             include_events = suffix.endswith("/events")
-            run_id = suffix.removesuffix("/events") if include_events else suffix
+            include_timeline = suffix.endswith("/timeline")
+            run_id = suffix
+            for marker in ("/events", "/timeline"):
+                run_id = run_id.removesuffix(marker)
             if not RUN_ID_PATTERN.fullmatch(run_id):
                 self._send_json({"error": "invalid_run_id"}, HTTPStatus.BAD_REQUEST, api_version=api_version)
                 return
@@ -470,6 +508,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"error": "run_not_found", "run_id": run_id}, HTTPStatus.NOT_FOUND, api_version=api_version
                 )
                 return
+            if include_timeline:
+                # Phase-tagged, sequence-ordered evidence: context events are kept
+                # but never presented as verification of anything.
+                self._send_json(
+                    {
+                        "run_id": run_id,
+                        "timeline": project_run_timeline(self.read_model, run_id),
+                        "max_events_per_run": MAX_EVENTS_PER_RUN,
+                        "read_only": True,
+                    },
+                    api_version=api_version,
+                )
+                return
             payload = {"run": self.read_model.summarize(events)}
             if include_events:
                 payload["events"] = events
@@ -477,6 +528,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         static_path = "index.html" if route in {"", "/"} else route.lstrip("/")
         self._send_file(static_path)
+
+    def _run_query(self) -> dict[str, Any]:
+        """Parse the bounded run-list filters and pagination.
+
+        Raises ``ValueError`` when a parameter is present but unusable, so the
+        caller answers 400 instead of silently serving an unfiltered page.
+        """
+        query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+        filters: dict[str, str] = {}
+        for key in RUN_FILTER_KEYS:
+            values = query.get(key)
+            if not values:
+                continue
+            if len(values) != 1 or not values[0]:
+                raise ValueError(f"{key} must appear once with a value")
+            filters[key] = values[0]
+        page = self._positive_int(query, "page", 1)
+        page_size = self._positive_int(query, "page_size", DEFAULT_RUN_PAGE_SIZE)
+        if page_size > MAX_RUN_PAGE_SIZE:
+            raise ValueError(f"page_size must not exceed {MAX_RUN_PAGE_SIZE}")
+        bounded = bool(filters) or "page" in query or "page_size" in query
+        return {"filters": filters, "page": page, "page_size": page_size, "bounded": bounded}
+
+    @staticmethod
+    def _positive_int(query: dict[str, list[str]], key: str, default: int) -> int:
+        values = query.get(key)
+        if not values:
+            return default
+        if len(values) != 1:
+            raise ValueError(f"{key} must appear once")
+        try:
+            value = int(values[0])
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be an integer") from None
+        if value < 1:
+            raise ValueError(f"{key} must be at least 1")
+        return value
 
     def _health_since(self) -> float | None:
         """Parse the optional ``since`` history filter.

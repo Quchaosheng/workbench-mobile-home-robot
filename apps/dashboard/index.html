@@ -41,7 +41,9 @@
           <button class="filter-button" type="button" data-filter="attention" aria-pressed="false">需关注</button>
           <button class="filter-button" type="button" data-filter="confirmed" aria-pressed="false">已确认</button>
         </div>
+        <div id="scenario-filters" class="facet-filters" aria-label="场景筛选"></div>
         <div id="run-list" class="run-list"></div>
+        <div id="run-pagination" class="run-pagination" aria-label="运行分页"></div>
         <div class="sidebar-foot">
           <span><i data-lucide="database"></i>事件源</span>
           <strong>本地 JSONL</strong>
@@ -83,6 +85,18 @@
           <div class="status-cell">
             <span>恢复次数</span>
             <strong id="recovery-count">0</strong>
+          </div>
+          <div class="status-cell">
+            <span>场景身份</span>
+            <strong id="run-scenario">--</strong>
+          </div>
+          <div class="status-cell">
+            <span>验证结果</span>
+            <strong id="task-outcome">--</strong>
+          </div>
+          <div class="status-cell">
+            <span>证据状态</span>
+            <strong id="task-evidence">--</strong>
           </div>
         </section>
 
@@ -132,6 +146,18 @@
                 <span id="event-count" class="quiet-count">0 个事件</span>
               </div>
               <ol id="overview-timeline" class="timeline"></ol>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">证据时间线 · 有界</p>
+                  <h2>执行 / 观测 / 验证 / 恢复</h2>
+                </div>
+                <span class="quiet-count">GET /timeline</span>
+              </div>
+              <p class="panel-note">每一项只属于一个阶段；上下文事件不会被呈现为验证结论。</p>
+              <ol id="evidence-timeline" class="phase-timeline" aria-live="polite"></ol>
             </section>
 
             <div class="side-stack">

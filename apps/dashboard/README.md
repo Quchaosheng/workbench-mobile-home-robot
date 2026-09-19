@@ -23,6 +23,28 @@ observation agrees, and `contradicted` when it disagrees. A claim is judged only
 inside the window between its action result and that entity's next action result,
 so a later placement supersedes an earlier hold instead of contradicting it.
 
+The run list shows each run's **scenario identity**, **verifier outcome** and
+**evidence state** as three separate readings. The scenario label is `未登记场景`
+when the run's legacy `task_id` has no registry manifest, and an outcome of `none`
+reads `未验证` rather than borrowing a neighbouring success state. The two axes are
+not synonyms: a run that recovered from a refutation still shows `未满足` under
+证据 while its 结果 reads `已确认`, so the recovery stays visible.
+
+The **场景/版本/结果/证据** selects are built from the `facets` the API reports, so
+the UI cannot offer a filter value that would match nothing. Changing one reloads
+the list from `/api/runs?<filters>&page=N&page_size=M` and the footer states
+`第 X / Y 页 · 显示 N / M`, plus `全部 N` whenever a filter is active, so a page
+of a filtered view can never read as the whole run set. An unknown filter value is
+refused by the API with `400`; the view surfaces the error instead of silently
+showing everything.
+
+The 证据时间线 panel renders `GET /api/v1/runs/{run_id}/timeline`: every item keeps
+its committed `sequence_no` order and exactly one phase — 执行, 观测, 验证, 恢复 or
+上下文 — with a distinct left rule per phase. Context events are shown but are
+never presented as verification. Until the timeline request succeeds the panel says
+the timeline is not loaded, rather than reusing the event stream as if it had been
+phase-checked.
+
 The **机器人监控** tab renders `GET /api/v1/health` and
 `GET /api/v1/health/history`: an overall status, active alerts sorted by severity
 then age, per-domain freshness cards, and a bounded recent-trend table. It is
