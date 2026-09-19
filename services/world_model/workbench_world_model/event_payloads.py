@@ -34,6 +34,194 @@ from workbench_contracts import (
 _ATTRIBUTE_SCHEMA_VERSION_FIELD = "attributes_schema_version"
 _MISSING = object()
 
+# --------------------------------------------------------------------------- #
+# Recovery payloads (Issue #305)
+# --------------------------------------------------------------------------- #
+
+# The closed action vocabulary. ``workbench_agent_runtime.recovery`` owns the
+# policy that produces these; this module owns the persisted shape, so a
+# recovery event that was never produced by that policy is refused rather than
+# stored and replayed. The two vocabularies are pinned against one shared
+# fixture by tests/unit/test_recovery_policy.py.
+RECOVERY_ACTIONS = frozenset(
+    {
+        "retry_observation",
+        "retry_action",
+        "ask_confirm",
+        "safe_stop",
+        "abort",
+    }
+)
+
+# ``safe_stop`` is executed by the trusted runtime. Scenario code may request it
+# and may never record it as done, so the payload carries which side acted.
+RECOVERY_RUNTIME_OWNED_ACTIONS = frozenset({"safe_stop"})
+RECOVERY_TERMINAL_ACTIONS = frozenset({"safe_stop", "abort"})
+RECOVERY_RUNTIME_AUTHORITY = "trusted-runtime"
+
+MAX_RECOVERY_ATTEMPTS = 10
+MAX_RECOVERY_TICKS = 100
+MAX_RECOVERY_ID_LENGTH = 128
+MAX_RECOVERY_REASON_LENGTH = 512
+MAX_RECOVERY_EVIDENCE_REFS = 32
+
+_RECOVERY_REQUIRED_FIELDS = (
+    "recovery_id",
+    "task_id",
+    "action",
+    "state",
+    "attempt",
+    "max_attempts",
+    "reason_code",
+    "reason",
+)
+
+
+def _recovery_bounded_int(value: object, field_name: str, *, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise WorldEventPayloadValidationError(
+            f"{field_name} must be an integer in {minimum}..{maximum}, got {value!r}"
+        )
+    return value
+
+
+def _recovery_bounded_string(value: object, field_name: str, *, maximum: int) -> str:
+    if type(value) is not str or not value.strip() or len(value) > maximum:
+        raise WorldEventPayloadValidationError(
+            f"{field_name} must be a non-empty string of at most {maximum} characters"
+        )
+    return value
+
+
+def normalize_recovery_payload(
+    payload: object,
+    *,
+    event_run_id: object,
+    event_type: object,
+) -> dict[str, Any]:
+    """Validate and normalize a ``recovery_started``/``recovery_complete`` payload.
+
+    The rule that matters is the last one: a recovery event cannot claim a
+    confirmed completion, so recovery can never be the thing that turns a failed
+    verification into an unearned success. Completion stays a claim the
+    verifier owns.
+    """
+
+    event_name = event_type.value if isinstance(event_type, WorldEventType) else str(event_type)
+    if event_name not in {"recovery_started", "recovery_complete"}:
+        raise WorldEventPayloadValidationError(f"{event_name!r} is not a recovery event type")
+    if type(payload) is not dict:
+        raise WorldEventPayloadValidationError("a recovery payload must be an object")
+
+    for key in _RECOVERY_REQUIRED_FIELDS:
+        if key not in payload:
+            raise WorldEventPayloadValidationError(f"a recovery payload requires {key!r}")
+
+    unknown = (
+        set(payload)
+        - set(_RECOVERY_REQUIRED_FIELDS)
+        - {
+            "ticks",
+            "max_recovery_ticks",
+            "policy_version",
+            "runtime_owned",
+            "outcome",
+            "evidence_refs",
+        }
+    )
+    if unknown:
+        raise WorldEventPayloadValidationError(
+            f"unknown recovery payload key(s): {', '.join(sorted(str(key) for key in unknown))}"
+        )
+
+    recovery_id = _recovery_bounded_string(payload["recovery_id"], "recovery_id", maximum=MAX_RECOVERY_ID_LENGTH)
+    task_id = _recovery_bounded_string(payload["task_id"], "task_id", maximum=MAX_RECOVERY_ID_LENGTH)
+    reason_code = _recovery_bounded_string(payload["reason_code"], "reason_code", maximum=MAX_RECOVERY_ID_LENGTH)
+    reason = _recovery_bounded_string(payload["reason"], "reason", maximum=MAX_RECOVERY_REASON_LENGTH)
+
+    action = payload["action"]
+    if action not in RECOVERY_ACTIONS:
+        raise WorldEventPayloadValidationError(
+            f"recovery action {action!r} is not one of: {', '.join(sorted(RECOVERY_ACTIONS))}"
+        )
+
+    state = _recovery_bounded_string(payload["state"], "state", maximum=MAX_RECOVERY_ID_LENGTH)
+
+    attempt = _recovery_bounded_int(payload["attempt"], "attempt", minimum=0, maximum=MAX_RECOVERY_ATTEMPTS)
+    max_attempts = _recovery_bounded_int(
+        payload["max_attempts"], "max_attempts", minimum=1, maximum=MAX_RECOVERY_ATTEMPTS
+    )
+    if attempt > max_attempts:
+        raise WorldEventPayloadValidationError(f"attempt={attempt} exceeds max_attempts={max_attempts}")
+
+    normalized: dict[str, Any] = {
+        "recovery_id": recovery_id,
+        "task_id": task_id,
+        "action": action,
+        "state": state,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "reason_code": reason_code,
+        "reason": reason,
+    }
+
+    if "ticks" in payload:
+        ticks = _recovery_bounded_int(payload["ticks"], "ticks", minimum=0, maximum=MAX_RECOVERY_TICKS)
+        normalized["ticks"] = ticks
+        if "max_recovery_ticks" in payload:
+            max_ticks = _recovery_bounded_int(
+                payload["max_recovery_ticks"], "max_recovery_ticks", minimum=1, maximum=MAX_RECOVERY_TICKS
+            )
+            if ticks > max_ticks:
+                raise WorldEventPayloadValidationError(f"ticks={ticks} exceeds max_recovery_ticks={max_ticks}")
+            normalized["max_recovery_ticks"] = max_ticks
+    elif "max_recovery_ticks" in payload:
+        normalized["max_recovery_ticks"] = _recovery_bounded_int(
+            payload["max_recovery_ticks"], "max_recovery_ticks", minimum=1, maximum=MAX_RECOVERY_TICKS
+        )
+
+    if "policy_version" in payload:
+        normalized["policy_version"] = _recovery_bounded_string(
+            payload["policy_version"], "policy_version", maximum=MAX_RECOVERY_ID_LENGTH
+        )
+
+    terminal = action in RECOVERY_TERMINAL_ACTIONS
+    runtime_owned = bool(action in RECOVERY_RUNTIME_OWNED_ACTIONS)
+
+    if "runtime_owned" in payload:
+        declared = payload["runtime_owned"]
+        if not isinstance(declared, bool):
+            raise WorldEventPayloadValidationError("runtime_owned must be a boolean")
+        if declared != runtime_owned:
+            raise WorldEventPayloadValidationError(
+                f"runtime_owned={declared} contradicts the {action!r} action, which is "
+                f"{'runtime-owned' if runtime_owned else 'scenario-owned'}"
+            )
+    normalized["runtime_owned"] = runtime_owned
+
+    if event_name == "recovery_complete":
+        if not terminal:
+            raise WorldEventPayloadValidationError(f"a recovery_complete event must be terminal; {action!r} is not")
+        expected_outcome = "stopped" if action == "safe_stop" else "aborted"
+        if payload.get("outcome", expected_outcome) != expected_outcome:
+            raise WorldEventPayloadValidationError(f"outcome for {action!r} must be {expected_outcome!r}")
+        normalized["outcome"] = expected_outcome
+    elif terminal:
+        raise WorldEventPayloadValidationError(f"a terminal action {action!r} cannot be recorded on recovery_started")
+
+    refs = payload.get("evidence_refs")
+    if refs is not None:
+        if not isinstance(refs, list) or len(refs) > MAX_RECOVERY_EVIDENCE_REFS:
+            raise WorldEventPayloadValidationError(
+                f"evidence_refs must be a list of at most {MAX_RECOVERY_EVIDENCE_REFS} entries"
+            )
+        for ref in refs:
+            _recovery_bounded_string(ref, "evidence_refs entry", maximum=MAX_RECOVERY_ID_LENGTH)
+        normalized["evidence_refs"] = list(refs)
+
+    return normalized
+
+
 __all__ = [
     "MAX_ATTRIBUTES_JSON_BYTES",
     "MAX_ATTRIBUTE_COUNT",
@@ -42,9 +230,16 @@ __all__ = [
     "MAX_ATTRIBUTE_KEY_LENGTH",
     "MAX_ATTRIBUTE_METADATA_JSON_BYTES",
     "MAX_ATTRIBUTE_VALUE_LENGTH",
+    "MAX_RECOVERY_ATTEMPTS",
+    "MAX_RECOVERY_REASON_LENGTH",
+    "MAX_RECOVERY_TICKS",
+    "RECOVERY_ACTIONS",
+    "RECOVERY_RUNTIME_OWNED_ACTIONS",
+    "RECOVERY_TERMINAL_ACTIONS",
     "TypedActionResult",
     "WorldEventPayloadValidationError",
     "normalize_action_result_payload",
+    "normalize_recovery_payload",
     "normalize_world_event",
 ]
 
@@ -348,6 +543,12 @@ def normalize_world_event(
             event_evidence_refs=event.evidence_refs,
             expected_action_id=expected_action_id,
         ).model_dump(mode="json")
+    elif event.event_type in {WorldEventType.RECOVERY_STARTED, WorldEventType.RECOVERY_COMPLETE}:
+        payload = normalize_recovery_payload(
+            event.payload,
+            event_run_id=event.run_id,
+            event_type=event.event_type,
+        )
     else:
         return event.model_copy(deep=True)
 

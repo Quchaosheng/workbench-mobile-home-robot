@@ -1,0 +1,82 @@
+{
+  "issue": 305,
+  "human_owner": "Quchaosheng",
+  "objective": "Add bounded, evidence-aware recovery policies shared by every scenario, so retry observation, retry action, ask confirm, safe stop and abort are declared once, enforced with finite deterministic budgets, and recorded as an auditable event per transition.",
+  "decision_supported": "Whether a failed verification can be turned into progress without new valid evidence, and whether recovery budgets can grow without bound.",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/recovery.py",
+    "services/world_model/workbench_world_model/event_payloads.py",
+    "tests/unit/test_recovery_policy.py",
+    "docs/task_packets/issue-305-recovery-policies.json"
+  ],
+  "read_only_paths": [
+    "sim/registry/**",
+    "libs/contracts/**",
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "services/agent_runtime/workbench_agent_runtime/execution_controller.py",
+    "services/world_model/workbench_world_model/verifier.py",
+    "services/world_model/workbench_world_model/aging.py",
+    "tools/qa/**",
+    "Makefile"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "interfaces/**",
+    "apps/dashboard/**",
+    "services/backend/**"
+  ],
+  "input_refs": [
+    "sim/registry/pick-place-red-block.json",
+    "libs/contracts/workbench_contracts/models.py",
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "services/world_model/workbench_world_model/event_payloads.py",
+    "services/agent_runtime/workbench_agent_runtime/execution_controller.py",
+    "docs/algorithms/world-model.md"
+  ],
+  "outputs": [
+    "services/agent_runtime/workbench_agent_runtime/recovery.py",
+    "services/world_model/workbench_world_model/event_payloads.py",
+    "tests/unit/test_recovery_policy.py"
+  ],
+  "acceptance": [
+    "a scenario that declares no recovery policy keeps exactly its previous behaviour, because the disabled policy returns no decision rather than a default action",
+    "the legal transitions among retry_observation, retry_action, ask_confirm, safe_stop and abort are enumerated and an illegal transition is refused with a stable diagnostic",
+    "retry and time budgets are finite and validated: an attempt ceiling outside the permitted range and a non-finite or unbounded deadline both fail before execution",
+    "an evidence-dependent retry is refused unless the evidence is fresh and provenance-valid, so recovery cannot convert a failed verification into success without new valid evidence",
+    "safe_stop is emitted as a trusted-runtime request that scenario code cannot mark executed, and abort and safe_stop are terminal",
+    "every transition carries a deterministic attempt number and reason, so retry counts and budgets are visible in replay",
+    "a malformed policy object fails at parse time with its own diagnostic code and never reaches dispatch"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-305-recovery-policies.json",
+    "python3 -m pytest tests/unit/test_recovery_policy.py -q",
+    "python3 -m pytest tests/unit/test_scenario_contract.py tests/unit/test_scenario_registry.py tests/unit/test_world_model.py tests/unit/test_execution_controller.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "pytest transcript for tests/unit/test_recovery_policy.py with the passed count",
+    "the recovery transition table and the diagnostic code each illegal transition produces",
+    "a showing that a disabled policy and a declared policy differ only where the policy says so",
+    "ruff check and ruff format output"
+  ],
+  "stop_conditions": [
+    "the change would require editing a frozen fixture, a seed or a committed matrix document",
+    "the change would require giving scenario code authority over the safe_stop or stop boundary, which is runtime-owned",
+    "the change would require a new runtime dependency or importing ROS, Gazebo, MoveIt or a hardware SDK",
+    "the change would require a physical or Gazebo claim, which this repository cannot make from a fixture",
+    "the change would require a contract amendment to libs/contracts or interfaces/, which needs three human approvals"
+  ],
+  "max_iterations": 12,
+  "data_classification": "public repository source, documentation and test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may write the recovery policy module, the payload validation, the transition tests and the packet; a named human Owner accepts the action set, the budget bounds and whether safe_stop stays runtime-owned",
+  "risks_and_fallbacks": [
+    "the policy could become an unbounded retry loop; fallback is that the attempt ceiling and the tick budget are both validated against a fixed range and a decision made after the budget is exhausted is terminal",
+    "recovery could launder a failed verification into success; fallback is that a confirmed completion requires a fresh confirmed verification and the ledger refuses the transition otherwise",
+    "the recovery event schema could drift between the writer and the reader; fallback is that the agent-runtime policy emits plain payloads and the world-model validator is tested against the same fixtures",
+    "a scenario could ask for authority it must not have; fallback is that safe_stop is marked runtime-owned and a test asserts scenario code cannot record it as executed",
+    "rollback is a revert of this commit; the module and the validator are additive and no manifest, fixture, seed or scene hash changes"
+  ]
+}
