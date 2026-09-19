@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: bootstrap lint fmt test contract scenario-check run-identity-check golden-check evaluation-check evaluation-scripted \
+.PHONY: bootstrap lint fmt test contract scenario-check run-identity-check run-provenance-check golden-check evaluation-check evaluation-scripted \
 	context-check dashboard-test dashboard demo demo-scripted demo-offline demo-model model-provision \
 	performance-test benchmark-startup benchmark-resources performance-regression-test offline-integration \
 	uart-spi-test irq-test docs task-check check container-smoke pm-test sim sim-doctor sim-list sim-run \
@@ -41,7 +41,7 @@ test:
 	$(PYTHON) -m pytest -v
 
 # Everything CI runs, in one command. Run this before opening a PR.
-check: lint test contract scenario-check scenario-conformance run-identity-check golden-check context-check demo-scripted demo-offline
+check: lint test contract scenario-check scenario-conformance run-identity-check run-provenance-check golden-check context-check demo-scripted demo-offline
 
 contract:
 	$(PYTHON) tools/scripts/validate_contracts.py
@@ -62,6 +62,14 @@ run-identity-check:
 	$(PYTHON) tools/scripts/sim_cli.py run --all --runner scripted \
 		--output-dir runs/identity-check --version ci-identity
 	$(PYTHON) tools/scripts/check_run_identity.py --runs-root runs/identity-check
+
+# Every stored run must declare the seed, clock, ordering, adapter versions and
+# environment class its determinism depends on (Issue #313), and the class must
+# be one the runner that ran could honestly produce.
+run-provenance-check:
+	$(PYTHON) tools/scripts/sim_cli.py run --all --runner scripted \
+		--output-dir runs/provenance-check --version ci-provenance
+	$(PYTHON) tools/scripts/check_run_provenance.py --runs-root runs/provenance-check
 
 golden-check:
 	$(PYTHON) tools/scripts/validate_golden_set.py

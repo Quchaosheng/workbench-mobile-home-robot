@@ -1,0 +1,104 @@
+{
+  "issue": 313,
+  "human_owner": "Quchaosheng",
+  "objective": "Make a run's seed, clock mode, event ordering, adapter versions and environment class explicit, canonical and part of the run identity, so the same bundle replays to identical state, ordering and identity across processes, a bundle missing that provenance is refused, and a scripted, Gazebo or physical bundle can never silently share one identity.",
+  "decision_supported": "Whether a stored run can be replayed and compared to another run, and whether two runs that differ in seed, clock mode, adapter versions or environment class are distinguishable rather than silently identical.",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/run_provenance.py",
+    "docs/architecture/run-provenance-v1.md",
+    "libs/kernel/workbench/kernel/scenario_identity.py",
+    "tools/scripts/check_run_identity.py",
+    "tools/scripts/check_run_provenance.py",
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_run_provenance.py",
+    "tests/unit/test_run_identity.py",
+    "Makefile",
+    ".github/workflows/ci.yml",
+    "docs/task_packets/issue-313-deterministic-provenance.json"
+  ],
+  "read_only_paths": [
+    "sim/registry/**",
+    "sim/scenarios/**",
+    "libs/contracts/**",
+    "interfaces/**",
+    "services/world_model/**",
+    "docs/architecture/scenario-capability-matrix-v1.json",
+    "docs/architecture/scenario-contract-v1.json",
+    "docs/architecture/ADR-0006-scenario-registry-contract.md",
+    "tools/qa/**",
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "libs/kernel/workbench/kernel/scenario_conformance.py",
+    "tools/scripts/run_evaluation.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "kernel/**",
+    "services/backend/**",
+    "apps/dashboard/**"
+  ],
+  "input_refs": [
+    "libs/kernel/workbench/kernel/scenario_identity.py",
+    "tools/scripts/sim_cli.py",
+    "tools/scripts/run_evaluation.py",
+    "libs/contracts/workbench_contracts/models.py",
+    "services/world_model/workbench_world_model/reducer.py",
+    "docs/architecture/scenario-capability-matrix-v1.json",
+    "libs/kernel/workbench/kernel/scenario_conformance.py"
+  ],
+  "outputs": [
+    "libs/kernel/workbench/kernel/run_provenance.py",
+    "docs/architecture/run-provenance-v1.md",
+    "libs/kernel/workbench/kernel/scenario_identity.py",
+    "tools/scripts/check_run_identity.py",
+    "tools/scripts/check_run_provenance.py",
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_run_provenance.py",
+    "tests/unit/test_run_identity.py"
+  ],
+  "acceptance": [
+    "the seed, clock mode, event ordering, adapter versions and environment class of a run are recorded as one canonical field table with a declared order and a named hash algorithm",
+    "the same bundle replays to identical state, verification, event ordering and identity hash across two independent processes",
+    "two runs that differ in seed, clock mode, adapter versions or environment class cannot share one identity, and the difference is reported as the specific field that moved",
+    "a bundle whose provenance is absent, malformed or missing a required field fails closed with a stable diagnostic instead of being replayed against a default",
+    "a scripted fixture bundle and a Gazebo or physical bundle are refused as replay partners of one another, so evidence classes are never merged by hash alone",
+    "the input list change is an explicit version with a migration note, so an artifact written under the previous schema is reported as such rather than silently re-hashed"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-313-deterministic-provenance.json",
+    "python3 -m pytest tests/unit/test_run_provenance.py tests/unit/test_run_identity.py -q",
+    "python3 tools/scripts/check_run_identity.py --runs-root runs/identity-check",
+    "python3 tools/scripts/check_run_provenance.py --runs-root runs/identity-check",
+    "python3 -m pytest tests/unit/test_sim_cli.py tests/unit/test_scenario_conformance.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "pytest transcript for the provenance and identity suites with the passed count",
+    "the replay vector table: success, timeout, stale evidence, conflict and recovery, each with its expected verdict",
+    "check_run_identity.py stdout showing the recorded provenance of each run directory and the process exit code",
+    "the provenance mismatch transcript naming the single field that differs between two runs",
+    "ruff check and ruff format output"
+  ],
+  "stop_conditions": [
+    "the change would require editing a frozen fixture, a seed, a scene hash or a committed registry manifest",
+    "the change would require a contract amendment to libs/contracts or interfaces/, which needs three human approvals",
+    "the change would require adding a runtime dependency or importing ROS, Gazebo, MoveIt or a hardware SDK",
+    "the change would require a physical or Gazebo claim, which this repository cannot make from a fixture",
+    "the change would require reinterpreting an existing stored run directory rather than adding fields to it",
+    "the change would require deciding a wall-clock synchronisation policy for physical hardware, which belongs to the hardware backlog"
+  ],
+  "max_iterations": 14,
+  "data_classification": "public repository source, documentation and test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may write the provenance module, the identity extension, the gate wiring and the tests; a named human Owner accepts the provenance field table, the environment-class separation rule and the identity schema version bump",
+  "risks_and_fallbacks": [
+    "adding an identity input changes every identity hash; fallback is that the change is an explicit schema version bump with a migration note, and a bundle written under the previous schema is reported as a schema mismatch rather than being re-hashed in place",
+    "a declared adapter version does not exist in the registry; fallback is that an unknown adapter version is recorded as the explicit string 'unspecified' rather than a fabricated number, and the field is still part of the identity so a later real version changes it",
+    "the clock mode could be read from two places and disagree; fallback is that the clock mode is declared once per run and a bundle whose recorded clock mode contradicts its runner class is refused, rather than the reader picking a winner",
+    "environment classes could be merged by a shared hash; fallback is that the environment class is one of the five committed statuses and a replay across two different classes is refused by name",
+    "the gate could pass vacuously when there are no run directories; fallback is the Issue #302 INCOMPLETE behaviour, which is retained and re-asserted for the provenance path",
+    "rollback is a revert of this commit; the provenance module and its metadata fields are additive, no fixture, seed, scene hash or registry manifest changes, and the identity schema version returns to v1"
+  ]
+}

@@ -31,6 +31,13 @@ from _paths import ROOT, enable_local_packages
 enable_local_packages()
 
 from scenario_tools import canonical_hash, materialize_scenario, validate_simulation_manifest
+from workbench.kernel.run_provenance import (
+    EVENT_ORDERINGS,
+    RunProvenanceError,
+    environment_class_for_runner,
+    provenance_material,
+    run_provenance,
+)
 from workbench.kernel.scenario_contract import ContractError
 from workbench.kernel.scenario_identity import (
     RunIdentityError,
@@ -48,6 +55,21 @@ from workbench.kernel.scenario_registry import ScenarioRegistryError, load_regis
 SCENARIO_ROOT = ROOT / "sim" / "scenarios"
 REGISTRY_ROOT = ROOT / "sim" / "registry"
 DEFAULT_OUTPUT_DIR = ROOT / "runs" / "sim"
+
+# The determinism inputs every run in this checkout is produced under. They are
+# constants rather than flags because a flag would let two runs of one scenario
+# disagree about their clock without anything recording which was which, which is
+# the failure Issue #313 exists to prevent. Making them configurable belongs to
+# the adapter work, not to this gate.
+CLOCK_MODE = "wall"
+TIME_SOURCE = "fixed_base"
+# The runtime writes sequence_no as the canonical total order, so that is the
+# order a replay must apply. It is asserted against the contract constant
+# rather than spelled twice.
+EVENT_ORDERING = "sequence_no"
+assert EVENT_ORDERING in EVENT_ORDERINGS
+UNSPECIFIED = "unspecified"
+
 MAX_MANIFEST_BYTES = 1 * 1024 * 1024
 MAX_COMMAND_TOKENS = 64
 MAX_RUNNER_LOG_BYTES = 4 * 1024 * 1024
@@ -446,6 +468,36 @@ def _identity_entry(scenario: Scenario) -> dict[str, Any]:
     )
 
 
+def _record_provenance(metadata: dict[str, Any], scenario: Scenario) -> None:
+    """Attach the Issue #313 determinism inputs to a run's metadata.
+
+    The environment class is derived from the runner that actually ran rather
+    than read from the caller, so a scripted fixture cannot label itself GAZEBO.
+    ``adapter_versions`` is built from the adapters the registry entry declares,
+    which are the only adapter identities this checkout has. None of them carries
+    a version number yet, so each is recorded as ``unspecified``: that is a field
+    a reviewer can see is unpopulated, where omitting it would look like a
+    scenario that needs no adapter at all.
+    """
+
+    entry = _identity_entry(scenario)
+    adapters = {str(name): UNSPECIFIED for name in entry.get("required_adapters", ())}
+    material = provenance_material(
+        seed=metadata["seed"],
+        clock_mode=CLOCK_MODE,
+        time_source=TIME_SOURCE,
+        event_ordering=EVENT_ORDERING,
+        adapter_versions=adapters,
+        # Derived from the runner and the final status, so a scripted fixture
+        # cannot claim an executed class and a Gazebo failure stays Gazebo.
+        environment_class=environment_class_for_runner(metadata["runner"], status=metadata["status"]),
+    )
+    provenance = run_provenance(material)
+    metadata["provenance"] = provenance.as_dict()
+    metadata["environment_class"] = material["environment_class"]
+    metadata["provenance_hash"] = provenance.provenance_hash
+
+
 def _record_identity(metadata: dict[str, Any], scenario: Scenario, events_path: Path) -> None:
     """Attach the Issue #302 identity block to a run's metadata."""
 
@@ -456,6 +508,7 @@ def _record_identity(metadata: dict[str, Any], scenario: Scenario, events_path: 
         event_stream_hash_value=stream_hash,
         config_hash=scenario.scene_hash or "none",
         commit=metadata.get("commit") or "unspecified",
+        provenance_hash=str(metadata.get("provenance_hash", "")),
     )
     metadata["identity"] = identity.as_dict()
     metadata["registry_identity"] = identity.identity
@@ -649,6 +702,14 @@ def run_scenario(
                                         }
                                     )
         try:
+            # Provenance first: the identity composes its provenance hash, so
+            # recording the identity first would bind it to a value that does not
+            # exist yet. The status is final by this point, which is what decides
+            # the environment class.
+            _record_provenance(metadata, scenario)
+        except RunProvenanceError as error:
+            raise SimulationInputError(f"run provenance could not be recorded: {error}") from error
+        try:
             _record_identity(metadata, scenario, events_path)
         except RunIdentityError as error:
             raise SimulationInputError(f"run identity could not be recorded: {error}") from error
@@ -660,6 +721,7 @@ def run_scenario(
             "stdout.log",
             "stderr.log",
             "identity.json",
+            "provenance.json",
             "metadata.json",
             "checksums.sha256",
         ]
@@ -667,6 +729,7 @@ def run_scenario(
         metadata["finished_at"] = datetime.now(UTC).isoformat()
         _write_json(staging / "metadata.json", metadata)
         _write_json(staging / "identity.json", metadata["identity"])
+        _write_json(staging / "provenance.json", metadata["provenance"])
         _write_checksums(staging)
         _publish_artifact(staging, final)
         return _result_from_metadata(metadata, final)

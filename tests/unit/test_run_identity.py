@@ -21,14 +21,17 @@ from workbench.kernel.scenario_identity import (
     EMITTED_CODES,
     HASH_ALGORITHM,
     IDENTITY_INPUTS,
+    LEGACY_SCHEMA_VERSIONS,
     REQUIRED_IDENTITY_FIELDS,
     RUN_IDENTITY_EVENT_STREAM_MISMATCH,
     RUN_IDENTITY_EVENTS_UNREADABLE,
     RUN_IDENTITY_MALFORMED,
     RUN_IDENTITY_MISMATCH,
     RUN_IDENTITY_MISSING,
+    RUN_IDENTITY_SCHEMA_UNSUPPORTED,
     RUN_IDENTITY_UNKNOWN_SCENARIO,
     RUN_IDENTITY_UNSAFE_RELEASE_CLAIM,
+    SCHEMA_VERSION_HEADER,
     RunIdentityError,
     canonical_identity_bytes,
     event_stream_hash,
@@ -53,6 +56,7 @@ BASE_MATERIAL = {
     "world_version": "WorkbenchSim-v0",
     "config_hash": "d" * 64,
     "commit": "e" * 40,
+    "provenance_hash": "a" * 64,
 }
 
 
@@ -102,6 +106,7 @@ class TestIdentityInputs:
             "world_version",
             "config_hash",
             "commit",
+            "provenance_hash",
         )
 
     def test_every_required_field_is_declared_in_the_input_list(self) -> None:
@@ -465,6 +470,74 @@ class TestRealRegistryAndRuns:
         assert runs[0].returncode == 0, runs[0].stderr
         assert runs[0].stdout.strip() == runs[1].stdout.strip()
         assert runs[0].stdout.strip() == identity_for().identity_hash
+
+
+class TestIdentitySchemaMigration:
+    """Issue #313 added an input, so the schema version had to move with it."""
+
+    def test_the_current_schema_version_is_the_second_one(self) -> None:
+        assert SCHEMA_VERSION_HEADER == "workbench-run-identity-v2"
+        assert LEGACY_SCHEMA_VERSIONS == ("workbench-run-identity-v1",)
+        assert SCHEMA_VERSION_HEADER not in LEGACY_SCHEMA_VERSIONS
+
+    def test_the_provenance_hash_is_the_added_input(self) -> None:
+        """The input list grew by exactly one composed input."""
+
+        assert "provenance_hash" in IDENTITY_INPUTS
+        assert IDENTITY_INPUTS.count("provenance_hash") == 1
+
+    def test_a_bundle_written_under_the_previous_schema_is_refused_by_version(self, tmp_path: Path) -> None:
+        block = identity_for().as_dict()
+        block["schema_version"] = "workbench-run-identity-v1"
+        block["material"].pop("provenance_hash")
+        bundle(tmp_path, identity=block)
+        verdict = scan_run_root(ROOT, runs_root=tmp_path, registry=REGISTRY)[0]
+        assert verdict.ok is False
+        assert verdict.findings[0].code == RUN_IDENTITY_SCHEMA_UNSUPPORTED
+        assert "workbench-run-identity-v1" in verdict.findings[0].detail
+
+    def test_the_version_refusal_names_the_rerun_rather_than_a_missing_field(self, tmp_path: Path) -> None:
+        """A v1 bundle lacks provenance_hash by construction; say so honestly."""
+
+        block = identity_for().as_dict()
+        block["schema_version"] = "workbench-run-identity-v1"
+        block["material"].pop("provenance_hash")
+        bundle(tmp_path, identity=block)
+        verdict = scan_run_root(ROOT, runs_root=tmp_path, registry=REGISTRY)[0]
+        assert RUN_IDENTITY_MISSING not in {finding.code for finding in verdict.findings}
+        assert SCHEMA_VERSION_HEADER in verdict.findings[0].detail
+
+    def test_an_unknown_schema_version_is_refused(self, tmp_path: Path) -> None:
+        block = identity_for().as_dict()
+        block["schema_version"] = "workbench-run-identity-v99"
+        bundle(tmp_path, identity=block)
+        verdict = scan_run_root(ROOT, runs_root=tmp_path, registry=REGISTRY)[0]
+        assert verdict.ok is False
+        assert verdict.findings[0].code == RUN_IDENTITY_SCHEMA_UNSUPPORTED
+
+    def test_the_gate_exits_one_for_a_previous_schema_bundle(self, tmp_path: Path) -> None:
+        from check_run_identity import main
+
+        block = identity_for().as_dict()
+        block["schema_version"] = "workbench-run-identity-v1"
+        bundle(tmp_path, identity=block)
+        assert main(["--runs-root", str(tmp_path)]) == 1
+
+    def test_the_provenance_input_changes_the_identity_hash(self) -> None:
+        """Two runs of one scenario with different provenance are different runs."""
+
+        entry = REGISTRY["pick-place-red-block@1.0"]
+        one = identity_from_entry(entry, event_stream_hash_value="f" * 64, provenance_hash="a" * 64)
+        two = identity_from_entry(entry, event_stream_hash_value="f" * 64, provenance_hash="b" * 64)
+        assert one.identity_hash != two.identity_hash
+        assert one.differing_inputs(two) == ("provenance_hash",)
+
+    def test_the_absent_provenance_input_differs_from_a_present_one(self) -> None:
+        entry = REGISTRY["pick-place-red-block@1.0"]
+        absent = identity_from_entry(entry, event_stream_hash_value="f" * 64)
+        present = identity_from_entry(entry, event_stream_hash_value="f" * 64, provenance_hash="a" * 64)
+        assert absent.material["provenance_hash"] == "unspecified"
+        assert absent.differing_inputs(present) == ("provenance_hash",)
 
 
 class TestDiagnostics:
