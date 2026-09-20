@@ -21,6 +21,10 @@ VORA 是面向用户的产品品牌；Workbench 继续作为工程仓库和证�
 
 [English](README.md) · [可旋转的 3D 产品视图](docs/assets/premium-product-render.html)
 
+**当前软件版本：** [v2.0.0](https://github.com/Quchaosheng/workbench-desk-robot/releases/tag/v2.0.0)，
+覆盖多场景注册表、统一的内核事件存储、生成的发布与就绪门禁，以及 Revision D 移动双臂描述。
+它仍是纯软件基线。
+
 ## 为什么做 Workbench？
 
 很多机器人 Demo 把“命令已接受”当成“任务已完成”。Workbench 把证据放回主链路：

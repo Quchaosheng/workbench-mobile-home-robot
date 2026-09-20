@@ -24,6 +24,11 @@ to stay distinctive without binding the identity to one robot use case.
 
 [简体中文](README.zh-CN.md) · [Interactive 3D view](docs/assets/premium-product-render.html)
 
+**Current software release:** [v2.0.0](https://github.com/Quchaosheng/workbench-desk-robot/releases/tag/v2.0.0),
+covering the multi-scenario registry, the consolidated kernel event store,
+generated release and readiness gates, and the Revision D mobile bimanual
+description. It remains a software-only baseline.
+
 ## Why Workbench?
 
 Robot demos often treat “command accepted” as “task complete”. Workbench keeps

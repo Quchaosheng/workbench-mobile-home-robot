@@ -422,7 +422,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         route = urlparse(self.path).path
         api_version = API_VERSION if route.startswith("/api/v1/") else None
         if route == "/healthz":
-            self._send_json({"status": "ok", "service": "workbench-backend", "version": "0.2.0"})
+            self._send_json({"status": "ok", "service": "workbench-backend", "version": "2.0.0"})
             return
         if route == "/readyz":
             # Readiness flips to NOT_READY as soon as shutdown begins, so a load

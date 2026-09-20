@@ -16,6 +16,19 @@ refused by `python3 tools/scripts/check_phase_gates.py`.
   waiting on, and the neighbouring phases are unaffected.
 - Human sign-off is listed per phase and is never implied by a passing gate.
 
+## v2.0.0
+
+Software-only major release. It reports the multi-scenario registry, the single
+SQLite kernel event store, the generated readiness and phase-gate surfaces, and
+the Revision D mobile bimanual description, all as merged on `main`.
+
+- Every distributable package and the backend `/healthz` endpoint report `2.0.0`.
+- The release states no Gazebo, physical, procurement, certification or hardware
+  readiness. Hardware bring-up remains `PHYSICAL_BRINGUP_BLOCKED` in `bsp/readiness.yaml`.
+- No phase below is release eligible: every registered scenario reaches
+  `SCRIPTED_FIXTURE`, and only `gazebo` or `physical` evidence can change that.
+- Human sign-off is still outstanding per phase and is not implied by this release.
+
 <!-- BEGIN GENERATED: phase-status -->
 
 ### Multi-scenario phase status
