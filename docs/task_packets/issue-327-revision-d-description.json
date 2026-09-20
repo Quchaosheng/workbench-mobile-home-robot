@@ -8,6 +8,7 @@
     "tests/unit/test_revision_d_description.py",
     "tests/unit/test_revision_d_gazebo.py",
     "Makefile",
+    "docs/architecture/revision-d-robot-description.md",
     "mkdocs.yml",
     "docs/task_packets/issue-327-revision-d-description.json"
   ],
@@ -59,7 +60,8 @@
     "tests/unit/test_revision_d_description.py",
     "tests/unit/test_revision_d_gazebo.py",
     "Makefile",
-    "mkdocs.yml"
+    "mkdocs.yml",
+    "docs/architecture/revision-d-robot-description.md"
   ],
   "acceptance": [
     "the model declares explicit links, inertials, collisions and frames for the base, the four steer-drive modules, the lift, the torso, the head/neck, the tool dock, the sensors and both arms, and validate_description.py asserts each of those frames exists",
