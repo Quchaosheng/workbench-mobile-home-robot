@@ -8,7 +8,7 @@ PYTHON ?= python3
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
 	container-project-check property-gate mutation-gate quality-gates ready-gate lock-python lock-python-verify \
-	branch-protection-check release-commit-check
+	branch-protection-check release-commit-check readiness-report-check
 
 # The root Python environment is installed from the hash-checked lock, not from
 # the ranges in pyproject.toml, so every developer, CI job and container resolves
@@ -41,7 +41,7 @@ test:
 	$(PYTHON) -m pytest -v
 
 # Everything CI runs, in one command. Run this before opening a PR.
-check: lint test contract scenario-check scenario-conformance run-identity-check run-provenance-check golden-check context-check demo-scripted demo-offline
+check: lint test contract scenario-check scenario-conformance run-identity-check run-provenance-check golden-check readiness-report-check context-check demo-scripted demo-offline
 
 contract:
 	$(PYTHON) tools/scripts/validate_contracts.py
@@ -53,6 +53,14 @@ scenario-check:
 # evidence boundaries with a committed test (Issue #304).
 scenario-conformance:
 	$(PYTHON) tools/scripts/check_scenario_conformance.py
+
+# Every registered scenario is reported with the evidence class it actually has
+# (Issue #307). The report is generated, and the gate regenerates it and compares,
+# so a stale, edited or strengthened row fails rather than being rendered as a
+# pass. It grants no release approval and is not physical evidence.
+readiness-report-check:
+	$(PYTHON) tools/scripts/readiness_report.py --output docs/evaluation/readiness-report-v1.json
+	$(PYTHON) tools/scripts/check_readiness_report.py
 
 # Every stored run must resolve to the scenario definition it was produced from
 # (Issue #302). A run that cannot be attributed cannot be replayed or verified.

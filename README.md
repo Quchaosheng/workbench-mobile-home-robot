@@ -120,6 +120,22 @@ not yet release claims. See [`docs/architecture/`](docs/architecture/) and
 - [Deployment](docs/deployment/multi-host.md)
 - [Security policy](SECURITY.md)
 
+<!-- BEGIN GENERATED: scenario-readiness -->
+
+### Scenario readiness
+
+Generated from [`docs/evaluation/readiness-report-v1.json`](docs/evaluation/readiness-report-v1.json) by `tools/scripts/readiness_report.py`. It states what the committed software is ready for; it grants no release approval and is not physical or Gazebo evidence. See [multi-scenario readiness](docs/evaluation/multi-scenario-readiness.md).
+
+| Scenario | Evidence class | Release eligible | Execution status |
+| --- | --- | --- | --- |
+| `clear-workspace@0.2` | software, scripted_fixture | no | SCRIPTED_FIXTURE |
+| `inspect-workpieces@0.2` | software, scripted_fixture | no | SCRIPTED_FIXTURE |
+| `kit-three-parts@0.2` | software, scripted_fixture | no | SCRIPTED_FIXTURE |
+| `pick-place-red-block@1.0` | software, scripted_fixture | no | SCRIPTED_FIXTURE |
+| `sort-parcels@0.2` | software, scripted_fixture | no | SCRIPTED_FIXTURE |
+
+<!-- END GENERATED: scenario-readiness -->
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
