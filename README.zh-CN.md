@@ -125,3 +125,18 @@ answer = client.ask("Which calibration notes mention the gripper?")
 ## 许可证
 
 Apache-2.0，详见 [LICENSE](LICENSE)。
+
+<!-- BEGIN GENERATED: phase-status -->
+
+### 阶段门禁状态
+
+由 `tools/scripts/phase_gates.py` 依据 [`docs/releases/phase-status-v1.json`](docs/releases/phase-status-v1.json) 生成。它说明当前提交对每个多场景交付阶段证明了什么。它不代表发布批准。它也不是物理或 Gazebo 证据。详见 [阶段门禁](docs/releases/phase-gates.md)。
+
+| 阶段 | 门禁状态 | 已完成 | 证据类别 | 可否发布 |
+| --- | --- | --- | --- | --- |
+| Phase 1 | COMPLETE | 是 | scripted_fixture | 否 |
+| Phase 2 | COMPLETE | 是 | scripted_fixture | 否 |
+| Phase 3 | BLOCKED | 否 | none | 否 |
+| Phase 4 | COMPLETE | 是 | scripted_fixture | 否 |
+
+<!-- END GENERATED: phase-status -->

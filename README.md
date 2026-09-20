@@ -139,3 +139,18 @@ Generated from [`docs/evaluation/readiness-report-v1.json`](docs/evaluation/read
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+<!-- BEGIN GENERATED: phase-status -->
+
+### Phase gate status
+
+Generated from [`docs/releases/phase-status-v1.json`](docs/releases/phase-status-v1.json) by `tools/scripts/phase_gates.py`. It states which multi-scenario delivery phase proves itself; it grants no release approval and is not physical or Gazebo evidence. See [phase gates](docs/releases/phase-gates.md).
+
+| Phase | Gate status | Completed | Evidence class | Release eligible |
+| --- | --- | --- | --- | --- |
+| Phase 1 | COMPLETE | yes | scripted_fixture | no |
+| Phase 2 | COMPLETE | yes | scripted_fixture | no |
+| Phase 3 | BLOCKED | no | none | no |
+| Phase 4 | COMPLETE | yes | scripted_fixture | no |
+
+<!-- END GENERATED: phase-status -->
