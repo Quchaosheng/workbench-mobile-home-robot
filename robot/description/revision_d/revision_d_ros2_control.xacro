@@ -1,0 +1,99 @@
+<?xml version="1.0"?>
+<!--
+  ros2_control declaration for the Revision D model (Issue #327).
+
+  This file lives beside the description rather than in robot/control/, because
+  robot/control/ is a separate owner's module (AGENTS.md) and the tabletop arm
+  stack there already owns the composed UR5e interface. Keeping the Revision D
+  declaration here means the mobile robot's command interfaces cannot be
+  introduced by editing the arm bringup.
+
+  Every declared joint is position-commanded with velocity feedback. The lift is
+  the only joint that receives a bare position target without a trajectory
+  controller, and it is what carries the shoulder height, so an unguarded path
+  to it would move the whole upper body. It is therefore exposed only through
+  the joint_trajectory_controller entries in revision_d_controllers.yaml.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="rd_manipulator_interface" params="side">
+    <xacro:property name="arm" value="arm_${side}"/>
+    <joint name="${arm}_joint_1_base_yaw">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="${arm}_joint_2_shoulder_pitch">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="${arm}_joint_3_shoulder_roll">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="${arm}_joint_4_elbow_pitch">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="${arm}_joint_5_forearm_roll">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="${arm}_joint_6_wrist_pitch">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="${arm}_joint_7_tool_roll">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="rd_steer_drive_interface" params="name">
+    <joint name="${name}_steering_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="${name}_drive_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="revision_d_ros2_control" params="controllers_yaml">
+    <ros2_control name="revision_d_system" type="system">
+      <hardware>
+        <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+      </hardware>
+
+      <joint name="lift_joint">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+
+      <xacro:rd_manipulator_interface side="left"/>
+      <xacro:rd_manipulator_interface side="right"/>
+
+      <xacro:rd_steer_drive_interface name="drive_module_front_left"/>
+      <xacro:rd_steer_drive_interface name="drive_module_front_right"/>
+      <xacro:rd_steer_drive_interface name="drive_module_rear_left"/>
+      <xacro:rd_steer_drive_interface name="drive_module_rear_right"/>
+    </ros2_control>
+
+    <gazebo>
+      <plugin filename="gz_ros2_control-system"
+              name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>${controllers_yaml}</parameters>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+</robot>

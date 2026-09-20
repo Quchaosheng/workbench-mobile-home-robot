@@ -44,6 +44,7 @@ nav:
       - Learning-data plane and policy boundary: decisions/ADR-0008-learning-data-plane.md
       - Hardware device runtime: decisions/ADR-0005-hardware-device-runtime.md
       - Run resources and lifecycle: decisions/ADR-0009-run-resource-lifecycle-boundaries.md
+  - Revision D robot description: architecture/revision-d-robot-description.md
   - Observability contract: architecture/observability-contract-v1.md
   - Linux driver architecture: architecture/linux-drivers.md
   - Hardware:
