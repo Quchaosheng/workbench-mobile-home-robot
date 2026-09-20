@@ -1,0 +1,90 @@
+{
+  "issue": 312,
+  "human_owner": "Quchaosheng",
+  "objective": "Write the decision record for Issue #312: add an ADR that fixes, before any orchestration code exists, whether the first release permits one active run per robot or bounded concurrency, what a resource claim covers (robot, arm, camera, workspace, MCU channel, run identity, worker slot), the fixed acquisition order and finite lease rules, the release-on-failure and restart-recovery rules, the four separate timeout budgets (scenario, semantic action, adapter, recovery), the cancellation/preemption/safe-stop/resume semantics at the trusted runtime boundary, and the lifecycle transitions recorded in the shared Event Store for deterministic replay, with the Motion/MCU emergency-stop authority left unchanged and an owner approval register that keeps the record proposed.",
+  "decision_supported": "Whether the runtime may admit more than one active scenario against a shared robot, and what a later implementation slice must satisfy: the ADR fixes one-active-run-per-robot and disjoint-claim concurrency as the first-release boundary, names the resource classes and lease rules, and states the timeout and safe-stop semantics so a later implementer cannot invent unbounded queueing, implicit takeover or an implicit retry while still claiming the runtime is bounded.",
+  "allowed_paths": [
+    "docs/decisions/ADR-0009-run-resource-lifecycle-boundaries.md",
+    "mkdocs.yml",
+    "docs/task_packets/issue-312-resource-lifecycle-adr.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "docs/AI-NATIVE-PLAYBOOK.md",
+    "docs/decisions/ADR-0005-hardware-device-runtime.md",
+    "docs/decisions/ADR-0006-scenario-registry-contract.md",
+    "docs/decisions/ADR-0008-learning-data-plane.md",
+    "docs/architecture/**",
+    "libs/contracts/**",
+    "interfaces/**",
+    "services/**",
+    "robot/control/**",
+    "firmware/**",
+    "tools/scripts/**"
+  ],
+  "forbidden": [
+    "integrations/**",
+    "services/agent_runtime/**",
+    "libs/kernel/**",
+    "services/world_model/**",
+    "tests/integration/**",
+    "sim/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "docs/decisions/ADR-0006-scenario-registry-contract.md",
+    "docs/decisions/ADR-0008-learning-data-plane.md",
+    "docs/architecture/scenario-contract-v1.json",
+    "docs/architecture/run-provenance-v1.md",
+    "mkdocs.yml"
+  ],
+  "outputs": [
+    "docs/decisions/ADR-0009-run-resource-lifecycle-boundaries.md",
+    "mkdocs.yml"
+  ],
+  "acceptance": [
+    "an ADR named ADR-0009 states that the first release permits one active run per robot, admits concurrency only between runs whose resource claims are disjoint, and refuses a second run that claims a resource already held by an active run before its first action is dispatched",
+    "the ADR names the resource classes a claim covers (robot/base, arm, camera, workspace/cell, MCU or bus channel, run identity and event store, runtime worker slot), requires a fixed and total acquisition order, requires finite leases, requires release as part of the terminal transition on failure, cancellation, timeout or preemption, and forbids implicit resource takeover",
+    "the ADR states that process restart treats a claim whose owning run is no longer live as reclaimable and records the recovery as a lifecycle event rather than assuming the resource is free",
+    "the ADR separates scenario timeout, semantic action timeout, adapter timeout and recovery budget as four finite budgets, states that a per-adapter retry not charged against the recovery budget is a defect, and requires the run to end in an explicit failure state when the recovery budget is exhausted",
+    "the ADR states that scenario code declares a resource requirement and a semantic action only, that cancellation is distinct from safe-stop, that preemption is a runtime decision only where the displaced run reaches a defined safe state first, that safe-stop is requested as safe_stop by orchestration and implemented by Motion/MCU, and that resume is permitted only for a run whose world state can be re-observed",
+    "the ADR requires every lifecycle transition (claim requested, claim granted, claim refused, run started, action dispatched, action completed, cancellation requested, safe-stop requested, safe-stop observed, claim released, run terminated) to be recorded in the shared event store under the run identity as bounded metadata for deterministic replay",
+    "the ADR states that Motion and the MCU retain controller and emergency-stop authority, that orchestration can request safe_stop but cannot implement it, and that no unbounded queue, unbounded retry loop or implicit resource takeover is allowed",
+    "the ADR is recorded as proposed with a named owner approval register covering Runtime, Motion and Safety, and grants no scope, concurrency, lease, safety or release authority until each owner records approved",
+    "the ADR lists explicit non-goals (no scheduler or lease-store implementation, no bounded concurrency across a shared robot in the first release, no change to event schema or shared contracts, no claim that concurrency is validated) and is linked from the mkdocs Decisions navigation so the docs build stays strict-clean"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-312-resource-lifecycle-adr.json",
+    "python3 -m mkdocs build --strict",
+    "python3 -m pytest -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "the committed ADR-0009 showing the one-active-run decision, the resource-claim table, the lease and restart-recovery rules, the four timeout budgets, the cancellation/preemption/safe-stop/resume semantics, the recorded lifecycle transitions and the owner approval register",
+    "mkdocs build --strict output proving the new decision page renders and every nav entry resolves",
+    "full-suite pytest output with passed and skipped counts, ruff check and ruff format output, make context-check output and git diff --check output"
+  ],
+  "stop_conditions": [
+    "the change would require editing interfaces/, libs/contracts/ or another path that needs three human approvals",
+    "the change would require a new runtime dependency, a schema amendment, an event-store change or a Pydantic model change",
+    "the change would require implementing the scheduler, the lease store or the lifecycle state machine",
+    "the change would require admitting bounded concurrency across a shared robot",
+    "the change would require a physical, Gazebo or HIL claim, or any executed run",
+    "a required modification falls outside allowed_paths"
+  ],
+  "max_iterations": 8,
+  "data_classification": "public repository source and documentation only; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may write the decision record from the committed registry contract, the run-provenance document and the existing architecture docs; a named human Owner accepts the concurrency boundary, the lease and timeout semantics and the release decisions the record informs",
+  "risks_and_fallbacks": [
+    "the ADR could be read as approval to run several scenarios concurrently on one robot; fallback is that the first release is one active run per robot, concurrency needs disjoint claims, and bounded concurrency is a later separately approved decision",
+    "a lease or timeout value could be read as a product-level guarantee; fallback is that the ADR fixes the vocabulary and the finiteness rule, not the values, and the values remain an owner-reviewed implementation decision",
+    "the record could be mistaken for a safety case; fallback is that Motion and the MCU keep controller and emergency-stop authority, safe_stop is requested by orchestration and implemented elsewhere, and the approval register keeps the record proposed",
+    "the lifecycle events could drift into an unbounded event payload; fallback is that transitions stay bounded metadata under the run identity, consistent with the event-store boundary in ADR-0008",
+    "rollback is a revert of this commit; the ADR and nav entry are additive documentation and change no runtime, interface, fixture or dependency"
+  ]
+}
