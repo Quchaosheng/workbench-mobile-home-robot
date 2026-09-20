@@ -16,7 +16,7 @@
 | Qwen2.5 0.5B weights | `qwen2.5:0.5b` (397 MB pulled locally) | pending model-card review | Runtime + Product | remove model profile and use template runner |
 | Lucide icons | 0.468.0 | ISC (`apps/dashboard/vendor/LUCIDE-LICENSE.txt`) | Interaction | replace with text labels |
 | MonoSim | invited access; version pending | use invitation recorded; license and redistribution terms pending | Simulation + Integration | keep behind an external adapter; remove from release if terms do not permit distribution |
-| RLSOK | invited access; version pending | use invitation recorded; license and redistribution terms pending | Simulation + Integration | keep behind an external adapter; remove from release if terms do not permit distribution |
+| RLSOK | version pending; no release agreed | no written terms recorded; maintainer contacted us by email 2026-09-03 | Simulation + Integration | keep behind an external adapter; remove from release if terms do not permit distribution |
 | LeRobot | `huggingface/lerobot` (`main`) | **Apache-2.0 (code) — OK**; model weights, datasets and checkpoints reviewed separately | Evaluation + Integration | keep behind an adapter; use an optional extra; never a mandatory core dependency (see [ADR-0008](docs/decisions/ADR-0008-learning-data-plane.md)) |
 | StarVLA | `starVLA/starVLA` (`master`) | **MIT (code) — OK**; model weights, datasets and checkpoints reviewed separately | Evaluation + Safety | prefer a process/HTTP policy boundary over vendoring; drop the adapter when ML dependencies are absent |
 | RLSOK public repository | `realitywarden/rlsok` (`main`) | Apache-2.0 (public repository) | Safety + Integration | verify release version and hosted-service terms before deployment |
@@ -25,7 +25,7 @@ LeRobot and StarVLA code licenses were checked on 2026-09-20 (Apache-2.0 and MIT
 
 Model weights, CAD, mesh, images, audio and code are reviewed separately.
 
-MonoSim and RLSOK are recorded as invited third-party integrations, not as
+MonoSim and RLSOK are unaffiliated third-party tools, not
 co-created project assets. Do not vendor their source, models or datasets, or
 claim joint development, until the maintainers confirm the applicable license,
 publication and redistribution terms in writing.
