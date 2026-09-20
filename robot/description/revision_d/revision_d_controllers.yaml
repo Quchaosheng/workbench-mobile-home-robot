@@ -1,0 +1,80 @@
+# Controller set for the Revision D simulation (Issue #327).
+#
+# Deliberately narrow. The lift carries the shoulders, the torso, the head and
+# both arms, so it is reachable only through a trajectory controller that a
+# caller must name explicitly. There is no joint-group "move everything" entry
+# and no unguarded passthrough, so a scenario cannot move the upper body by
+# publishing to a generic topic.
+#
+# This is a simulation wiring description. It grants no execution authority, and
+# the STOP / safe-stop boundary stays with Motion and the safety controller.
+controller_manager:
+  ros__parameters:
+    update_rate: 250
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    lift_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    left_arm_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    right_arm_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+lift_trajectory_controller:
+  ros__parameters:
+    joints:
+      - lift_joint
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    # The lift's own speed limit when raised is bounded in the hardware spec;
+    # the controller is configured to the same order rather than to the servo's
+    # maximum, so a trajectory a human writes here cannot outrun the modelled
+    # drive_speed_limit_when_raised_mps.
+    constraints:
+      stopped_velocity_tolerance: 0.01
+      goal_time: 2.0
+
+left_arm_trajectory_controller:
+  ros__parameters:
+    joints:
+      - arm_left_joint_1_base_yaw
+      - arm_left_joint_2_shoulder_pitch
+      - arm_left_joint_3_shoulder_roll
+      - arm_left_joint_4_elbow_pitch
+      - arm_left_joint_5_forearm_roll
+      - arm_left_joint_6_wrist_pitch
+      - arm_left_joint_7_tool_roll
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    constraints:
+      stopped_velocity_tolerance: 0.01
+      goal_time: 2.0
+
+right_arm_trajectory_controller:
+  ros__parameters:
+    joints:
+      - arm_right_joint_1_base_yaw
+      - arm_right_joint_2_shoulder_pitch
+      - arm_right_joint_3_shoulder_roll
+      - arm_right_joint_4_elbow_pitch
+      - arm_right_joint_5_forearm_roll
+      - arm_right_joint_6_wrist_pitch
+      - arm_right_joint_7_tool_roll
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    constraints:
+      stopped_velocity_tolerance: 0.01
+      goal_time: 2.0

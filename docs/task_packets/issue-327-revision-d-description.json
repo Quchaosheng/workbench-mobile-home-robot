@@ -1,0 +1,122 @@
+{
+  "issue": 327,
+  "human_owner": "Quchaosheng",
+  "objective": "Add the Revision D mobile bimanual robot description called for by Issue #327 as a separate model under robot/description/revision_d/: base, four steer-drive modules, braked lift, torso, head/neck, tool dock, sensors and two seven-axis arms, with exactly 14 named revolute manipulator joints, collision geometry on every solid body, a deterministic single-rooted TF tree, a fail-closed ros2_control declaration behind sim_gz:=true, a Gazebo spawn launch, checkers that compare the model against hardware/mechanical/design-spec.json, a generated frame artifact, frame/joint documentation and a migration note, while leaving robot/description/workbench.urdf.xacro byte-for-byte unchanged.",
+  "decision_supported": "Whether the repository has a truthful, machine-checked Gazebo/ROS description for the Revision D product configuration, without inventing physical evidence, without altering the frozen tabletop fixture, and without duplicating ownership of the arm, navigation, camera-collision or device-runtime boundaries owned by #260, #152, #261 and #230.",
+  "allowed_paths": [
+    "robot/description/revision_d/**",
+    "tests/unit/test_revision_d_description.py",
+    "tests/unit/test_revision_d_gazebo.py",
+    "Makefile",
+    "docs/architecture/revision-d-robot-description.md",
+    "mkdocs.yml",
+    "docs/task_packets/issue-327-revision-d-description.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "hardware/mechanical/design-spec.json",
+    "hardware/mechanical/revision-d-architecture.md",
+    "robot/description/workbench.urdf.xacro",
+    "robot/description/FRAMES.md",
+    "robot/control/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "tools/schemas/task-packet-v1.schema.json"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/mechanical/design-spec.json",
+    "sim/scenarios/**",
+    "sim/registry/**",
+    "services/**",
+    "libs/**",
+    "interfaces/**",
+    "kernel/**",
+    "bsp/**"
+  ],
+  "input_refs": [
+    "hardware/mechanical/design-spec.json",
+    "hardware/mechanical/revision-d-architecture.md",
+    "robot/description/workbench.urdf.xacro",
+    "robot/description/FRAMES.md",
+    "robot/control/workbench_motion/config/arm_on_workbench.urdf.xacro",
+    "robot/control/workbench_motion/launch/sim_control.launch.py",
+    "tools/schemas/task-packet-v1.schema.json"
+  ],
+  "outputs": [
+    "robot/description/revision_d/revision_d.urdf.xacro",
+    "robot/description/revision_d/revision_d_ros2_control.xacro",
+    "robot/description/revision_d/revision_d_controllers.yaml",
+    "robot/description/revision_d/launch/revision_d.launch.py",
+    "robot/description/revision_d/tools/validate_description.py",
+    "robot/description/revision_d/tools/generate_frames.py",
+    "robot/description/revision_d/tools/gazebo_acceptance.py",
+    "robot/description/revision_d/generated/revision-d-frames.json",
+    "robot/description/revision_d/README.md",
+    "robot/description/revision_d/FRAMES.md",
+    "robot/description/revision_d/MIGRATION.md",
+    "tests/unit/test_revision_d_description.py",
+    "tests/unit/test_revision_d_gazebo.py",
+    "Makefile",
+    "mkdocs.yml",
+    "docs/architecture/revision-d-robot-description.md"
+  ],
+  "acceptance": [
+    "the model declares explicit links, inertials, collisions and frames for the base, the four steer-drive modules, the lift, the torso, the head/neck, the tool dock, the sensors and both arms, and validate_description.py asserts each of those frames exists",
+    "the model contains exactly 14 named revolute manipulator joints with limits taken from design-spec.json#/manipulator/joints, and the wheel steering, wheel drive, neck and lift joints are modelled separately by type so they cannot be counted as manipulator axes",
+    "the chassis width, depth, wheelbase, track, wheel diameter, ground clearance, base-top height, stowed torso bottom, minimum and maximum shoulder height, stowed head top, shoulder spacing, arm link lengths and joint limits are sourced from hardware/mechanical/design-spec.json, and any divergence fails validation unless it is listed with a reason in known_divergences",
+    "the TF tree is deterministic and complete with exactly one root (map) covering odom/base_link, lift, torso, head, both arm chains, the tool frames and the sensor optical frames, with the REP-103 optical convention and the base axis convention documented in FRAMES.md",
+    "every solid body carries exactly one collision primitive matching its visual primitive, convention frames carry none, and validation fails on a visual-only primitive or on a link that would read as free space to the planner",
+    "ros2_control is opt-in behind sim_gz:=true, declares named controllers only, exposes no whole-body joint group or unguarded trajectory path to the lift, and the Gazebo launch refuses to start without a simulator instead of half-starting",
+    "the Gazebo acceptance cases required by the issue (spawn, joint-limit rejection, self/forbidden-volume collision, lift states, stabilizer states, clean shutdown and restart) are enumerated and report NOT_EXECUTED, with exit code 2, when no simulator is present, so an unrun case is never rendered as a pass",
+    "the deployed stabilizer pad centre lands on the documented stabilized support polygon from design-spec.json#/stability_analysis, and the pads occupy four distinct corners rather than collapsing onto one axis",
+    "the tabletop fixture robot/description/workbench.urdf.xacro is unchanged, keeps its world root and its camera_body collision, and no frozen scenario, registry entry, shared contract or Pydantic model is modified",
+    "make description-check expands the model, validates it against the mechanical spec and regenerates and diffs the generated frame artifact so a stale or hand-edited artifact fails, and the artifact is byte-identical across two generations of one commit",
+    "README.md, FRAMES.md and MIGRATION.md record the hardware and HIL status as NOT_EXECUTED, the physical validation status, the self_collide modelling boundary, and the integration boundary against #260, #152, #261 and #230, without claiming navigation, stability, torque validation or execution authority"
+  ],
+  "commands": [
+    "python3 robot/description/revision_d/tools/validate_description.py",
+    "python3 robot/description/revision_d/tools/generate_frames.py --check",
+    "python3 robot/description/revision_d/tools/gazebo_acceptance.py",
+    "make description-check",
+    "python3 -m pytest tests/unit/test_revision_d_description.py tests/unit/test_revision_d_gazebo.py -q",
+    "python3 -m pytest -q --deselect tests/unit/test_multi_host_deployment.py",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-327-revision-d-description.json",
+    "python3 -m mkdocs build --strict",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "the committed Revision D xacro, control declaration, controller set and launch file in robot/description/revision_d/",
+    "validate_description.py output showing every assertion passes against the expanded model and naming the design-spec pointer for each anchored value",
+    "generated/revision-d-frames.json plus a --check run proving the artifact is current and byte-identical across two generations of one commit",
+    "gazebo_acceptance.py output showing the required cases as NOT_EXECUTED with exit code 2 when no simulator is present",
+    "the focused pytest run for tests/unit/test_revision_d_description.py and tests/unit/test_revision_d_gazebo.py, including the mutation test that a diverged lift travel fails validation",
+    "full-suite pytest output with passed and skipped counts, ruff check and ruff format output, mkdocs build --strict output, make context-check output and git diff --check output"
+  ],
+  "stop_conditions": [
+    "the change would require editing robot/description/workbench.urdf.xacro or any frozen scenario, registry entry, golden set or shared contract",
+    "the change would require writing robot/control/, firmware/, hardware/, kernel/ or bsp/",
+    "the change would require a two-way coupling with navigation (#152), the MoveIt bridge (#260), the device runtime (#230) or camera collision #261 instead of a documented boundary",
+    "the change would require amending interfaces/ or libs/contracts/, which needs three independent human approvals",
+    "the change would require a Gazebo, HIL or physical run to be reported as passing, or any NOT_EXECUTED case to be converted into a pass",
+    "the change would require claiming navigation, localization, stability or validated arm torque from the model",
+    "a required modification falls outside allowed_paths"
+  ],
+  "max_iterations": 10,
+  "data_classification": "public repository source and documentation only; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may write the description, the local checkers, the generated frame artifact and the tests from the committed mechanical spec and the existing tabletop fixture; a named human Motion Owner accepts the model, the frame conventions, the joint limits and the integration boundaries it fixes, and no AI output in this packet constitutes a physical or safety result",
+  "risks_and_fallbacks": [
+    "the model could be read as a claim that the Revision D robot has been built or validated; fallback is that hardware and HIL status are NOT_EXECUTED, validation_status stays CONCEPT_PHYSICAL_VALIDATION_REQUIRED, and README.md states the boundary explicitly",
+    "the stabilizer mechanism could be read as a stability result; fallback is that stability_gates.analytical_screen_only is true, the required physical tests are listed as unrun, and drive_tip_angle_is_not_manipulation_release still holds",
+    "a derived residual such as the neck standoff or the stabilizer stroke could drift from the documented value it preserves; fallback is that validate_description.py asserts the documented end value, not the residual, and the divergence list fails on anything unexplained",
+    "self_collide being false could be read as a safety statement; fallback is that FRAMES.md and README.md record it as a modelling limitation owned by the forbidden-volume and contact tests",
+    "the Revision D controllers could be read as an execution path for the lift; fallback is that the lift is reachable only through a named trajectory controller, no whole-body joint group exists, and STOP/safe-stop authority stays with Motion and the safety controller",
+    "the generated artifact could be edited by hand or go stale; fallback is that make description-check regenerates and diffs it, and the unit test compares it against a fresh in-process generation",
+    "rollback is a revert of this commit; the change is additive and touches no runtime, fixture, contract, dependency or protected module"
+  ]
+}

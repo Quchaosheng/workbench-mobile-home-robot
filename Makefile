@@ -8,7 +8,7 @@ PYTHON ?= python3
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
 	container-project-check property-gate mutation-gate quality-gates ready-gate lock-python lock-python-verify \
-	branch-protection-check release-commit-check readiness-report-check phase-gates-check
+	branch-protection-check release-commit-check readiness-report-check phase-gates-check description-check
 
 # The root Python environment is installed from the hash-checked lock, not from
 # the ranges in pyproject.toml, so every developer, CI job and container resolves
@@ -267,6 +267,15 @@ container-gpu-matrix-check:
 
 container-host-doctor:
 	python3 docker/host_doctor.py
+
+# Expand, validate against hardware/mechanical/design-spec.json, and confirm the
+# generated frame artifact is current (Issue #327). The generator both writes and
+# verifies, so a stale or hand-edited artifact fails here instead of being read
+# as authoritative.
+description-check:
+	$(PYTHON) robot/description/revision_d/tools/validate_description.py
+	$(PYTHON) robot/description/revision_d/tools/generate_frames.py
+	$(PYTHON) robot/description/revision_d/tools/generate_frames.py --check
 
 task-check:
 	$(PYTHON) tools/scripts/check_task_packet.py $(PACKET)

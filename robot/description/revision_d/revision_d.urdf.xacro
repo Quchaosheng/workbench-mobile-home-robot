@@ -1,0 +1,684 @@
+<?xml version="1.0"?>
+<!--
+  Revision D mobile bimanual robot description (Issue #327).
+
+  This file is a SEPARATE model. It does not replace, include or modify
+  robot/description/workbench.urdf.xacro, which stays the frozen tabletop
+  fixture for existing scenarios. See MIGRATION.md for the boundary.
+
+  Every frame height, chassis dimension and joint limit below is anchored to
+  hardware/mechanical/design-spec.json. tools/generate_frames.py reads that file
+  and regenerates generated/revision-d-frames.json from the expanded model, and
+  tests/unit/test_revision_d_description.py fails if a documented value and the
+  model disagree. KNOWN_DIVERGENCES in that test lists the values that are
+  deliberately not copied, with the reason. An unexplained divergence is a test
+  failure, not a judgement call.
+
+  Primitives only, no meshes, for the same reason the tabletop fixture uses
+  them: analytic inertia and predictable contact. Collision geometry here is a
+  planning obstacle, not continuous collision safety, and authorizes no
+  execution. Hardware and HIL status stay NOT_EXECUTED.
+
+  Units in this file are SI (metres, radians, kilograms); design-spec.json is in
+  millimetres. The conversion is explicit at each anchor and checked by
+  generated/revision-d-frames.json.
+
+  Validate:
+    xacro robot/description/revision_d/revision_d.urdf.xacro > /tmp/revision_d.urdf
+    python3 robot/description/revision_d/tools/validate_description.py /tmp/revision_d.urdf
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="workbench_revision_d">
+
+  <!-- ====================================================== swap-surface args -->
+  <!-- Deterministic generation: no timestamp, no host path and no random name
+       may enter the expanded XML, so two expansions of one commit are byte
+       identical. tests/unit/test_revision_d_description.py enforces this. -->
+  <xacro:arg name="sim_gz" default="false"/>
+  <!-- No `$(find ...)` in a default: xacro evaluates arg defaults eagerly, so a
+       substitution-args default makes the model unexpandable without a sourced
+       ROS workspace. The launcher passes the installed absolute path; the
+       default is the bare file name the config package installs. -->
+  <xacro:arg name="controllers_yaml" default="revision_d_controllers.yaml"/>
+  <xacro:arg name="stabilizers_deployed" default="false"/>
+  <xacro:arg name="lift_extension" default="0.0"/>
+  <xacro:arg name="ros2_control_xacro" default="revision_d_ros2_control.xacro"/>
+
+  <!-- Args are referenced as $(arg ...) and are not in scope as bare names, so
+       the boolean the conditional needs is bound once here. -->
+  <xacro:property name="sim_gz" value="$(arg sim_gz)"/>
+
+  <!-- ============================================== design-spec.json anchors -->
+  <!-- hardware/mechanical/design-spec.json, converted mm -> m. The comment on
+       each line is the JSON pointer the number comes from. -->
+
+  <!-- chassis {width, depth, thickness}, ground_clearance -->
+  <xacro:property name="chassis_x"        value="0.540"/>
+  <xacro:property name="chassis_y"        value="0.520"/>
+  <xacro:property name="chassis_plate"    value="0.006"/>
+  <xacro:property name="ground_clearance" value="0.028"/>
+  <!-- coordinate_system.base_top_z_mm = 140 -->
+  <xacro:property name="base_top_z"       value="0.140"/>
+
+  <!-- chassis {wheelbase, track, wheel_diameter_mm, wheel_width_mm, drive_module_count} -->
+  <xacro:property name="wheelbase"        value="0.390"/>
+  <xacro:property name="track"            value="0.460"/>
+  <xacro:property name="wheel_radius"     value="0.070"/>
+  <xacro:property name="wheel_width"      value="0.042"/>
+  <!-- Four steer-drive modules, so the four corners are the module positions. -->
+  <xacro:property name="module_x"         value="${track / 2.0}"/>
+  <xacro:property name="module_y"         value="${wheelbase / 2.0}"/>
+  <!-- The mount drops the steering axis to the wheel axle. Derived so the wheel
+       centre lands exactly at wheel_radius above the ground and the tread
+       touches z = 0, rather than hand-placed and silently wrong. -->
+  <xacro:property name="steer_drop"       value="0.020"/>
+  <xacro:property name="wheel_drop"       value="0.005"/>
+  <xacro:property name="module_mount_z"
+                value="${wheel_radius - ground_clearance + steer_drop + wheel_drop}"/>
+
+  <!-- stability_analysis.support_polygons.stabilized.vertices_mm = +/-410 -->
+  <xacro:property name="stabilized_half"  value="0.410"/>
+  <!-- Derived stroke from the corner mount to the documented vertex. One number
+       instead of four so the deployed pad lands on the documented polygon. -->
+  <xacro:property name="stabilizer_reach_x" value="${stabilized_half - module_x}"/>
+  <xacro:property name="stabilizer_reach_y" value="${stabilized_half - module_y}"/>
+  <xacro:property name="stabilizer_stroke"
+                value="${(stabilizer_reach_x**2 + stabilizer_reach_y**2) ** 0.5}"/>
+  <xacro:property name="stabilizer_pad"   value="0.090"/>
+
+  <!-- lifting_platform {travel, minimum_shoulder_height, maximum_shoulder_height} -->
+  <xacro:property name="lift_travel"      value="0.350"/>
+  <xacro:property name="shoulder_min_z"   value="0.780"/>
+  <xacro:property name="shoulder_max_z"   value="1.130"/>
+
+  <!-- coordinate_system.torso_bottom_stowed_z_mm = 500 -->
+  <xacro:property name="torso_bottom_z"   value="0.500"/>
+  <!-- torso {width, depth, height} -->
+  <xacro:property name="torso_x"          value="0.420"/>
+  <xacro:property name="torso_y"          value="0.330"/>
+  <xacro:property name="torso_z"          value="0.430"/>
+
+  <!-- Derived, not copied: the neck standoff is whatever is left between the
+       torso top and the head bottom once the documented stowed head top is
+       held. design-spec.json head.neck_mount.pedestal_height_mm (72 mm) does
+       not fit this chain; it is listed in KNOWN_DIVERGENCES. -->
+  <!-- coordinate_system.head_top_stowed_z_mm = 1100 -->
+  <xacro:property name="head_top_stowed_z" value="1.100"/>
+  <!-- head {height} -->
+  <xacro:property name="head_z"            value="0.128"/>
+  <xacro:property name="head_x"            value="0.260"/>
+  <xacro:property name="head_y"            value="0.105"/>
+  <xacro:property name="neck_standoff"
+                value="${head_top_stowed_z - head_z - (torso_bottom_z + torso_z)}"/>
+  <!-- head {pan_deg, tilt_deg} -->
+  <xacro:property name="neck_pan_limit"    value="${radians(80.0)}"/>
+  <xacro:property name="neck_tilt_limit"   value="${radians(3.0)}"/>
+
+  <!-- shoulder_mounts.center_spacing_mm = 352 -->
+  <xacro:property name="shoulder_spacing" value="0.352"/>
+
+  <!-- manipulator {reach_mm, links_mm, joints} -->
+  <xacro:property name="arm_reach"        value="0.720"/>
+  <xacro:property name="upper_arm_length" value="0.275"/>
+  <xacro:property name="forearm_length"   value="0.245"/>
+  <xacro:property name="wrist_stack"      value="0.115"/>
+  <xacro:property name="shoulder_yoke"    value="0.110"/>
+  <xacro:property name="elbow_block"      value="0.090"/>
+
+  <!-- torso.tool_dock_slots = 3 -->
+  <xacro:property name="tool_dock_slots"  value="3"/>
+  <xacro:property name="tool_dock_pitch"  value="0.090"/>
+
+  <!-- ============================================================== materials -->
+  <material name="rd_shell">  <color rgba="0.90 0.91 0.93 1.0"/></material>
+  <material name="rd_graphite"><color rgba="0.24 0.25 0.27 1.0"/></material>
+  <material name="rd_dark">   <color rgba="0.10 0.10 0.12 1.0"/></material>
+  <material name="rd_glass">  <color rgba="0.06 0.08 0.12 1.0"/></material>
+
+  <!-- =============================================================== macros -->
+  <!-- Inertia for a solid box about its centre, written out rather than
+       approximated: a wrong tensor makes contact behaviour subtly wrong and
+       then tuning chases the wrong parameter. -->
+  <xacro:macro name="rd_box_inertia" params="m x y z">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia
+        ixx="${m * (y*y + z*z) / 12.0}" ixy="0.0" ixz="0.0"
+        iyy="${m * (x*x + z*z) / 12.0}" iyz="0.0"
+        izz="${m * (x*x + y*y) / 12.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Solid cylinder whose axis is the link's local Z. -->
+  <xacro:macro name="rd_cylinder_inertia" params="m r h">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia
+        ixx="${m * (3.0*r*r + h*h) / 12.0}" ixy="0.0" ixz="0.0"
+        iyy="${m * (3.0*r*r + h*h) / 12.0}" iyz="0.0"
+        izz="${m * r*r / 2.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- A rigid body that must be an obstacle for planning carries BOTH a visual
+       and a collision element of the same size. A visual-only primitive reads
+       as a solid in RViz and as free space to the planner. -->
+  <xacro:macro name="rd_box_link" params="name x y z mat mass">
+    <link name="${name}">
+      <visual>
+        <geometry><box size="${x} ${y} ${z}"/></geometry>
+        <material name="${mat}"/>
+      </visual>
+      <collision>
+        <geometry><box size="${x} ${y} ${z}"/></geometry>
+      </collision>
+      <xacro:rd_box_inertia m="${mass}" x="${x}" y="${y}" z="${z}"/>
+    </link>
+  </xacro:macro>
+
+  <!-- Visual + collision cylinder, axis along the link's local Z. -->
+  <xacro:macro name="rd_cylinder_link" params="name r h mat mass">
+    <link name="${name}">
+      <visual>
+        <geometry><cylinder radius="${r}" length="${h}"/></geometry>
+        <material name="${mat}"/>
+      </visual>
+      <collision>
+        <geometry><cylinder radius="${r}" length="${h}"/></geometry>
+      </collision>
+      <xacro:rd_cylinder_inertia m="${mass}" r="${r}" h="${h}"/>
+    </link>
+  </xacro:macro>
+
+  <!-- REP-103 optical convention: z forward, x right, y down. Publishing from a
+       body frame instead gives a silent 90 degree error that still renders. -->
+  <xacro:macro name="rd_optical_frame" params="parent name">
+    <link name="${name}"/>
+    <joint name="${parent}_to_${name}" type="fixed">
+      <parent link="${parent}"/>
+      <child  link="${name}"/>
+      <origin xyz="0 0 0" rpy="${radians(-90.0)} 0 ${radians(-90.0)}"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- A sensor is a solid housing plus a convention frame. The housing is a
+       planning obstacle; the optical frame has no collision, because a
+       zero-size convention frame treated as solid is a phantom obstacle. -->
+  <xacro:macro name="rd_camera" params="parent name xyz rpy">
+    <xacro:rd_box_link name="${name}_body" x="0.028" y="0.028" z="0.022"
+                       mat="rd_dark" mass="0.040"/>
+    <joint name="${parent}_to_${name}_body" type="fixed">
+      <parent link="${parent}"/>
+      <child  link="${name}_body"/>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+    </joint>
+    <xacro:rd_optical_frame parent="${name}_body" name="${name}_optical"/>
+  </xacro:macro>
+
+  <!-- One seven-axis arm. `sign` is +1 for the right arm and -1 for the left, so
+       the two arms are the same mechanism mirrored in placement. Both use the
+       single joint set in design-spec.json#manipulator.joints. -->
+  <xacro:macro name="rd_seven_axis_arm" params="side sign">
+    <xacro:property name="arm" value="arm_${side}"/>
+
+    <!-- The yoke bolts into the upper torso side wall and into the
+         lift-supported spine, never the cosmetic shell. -->
+    <xacro:rd_box_link name="${arm}_shoulder_yoke" x="${shoulder_yoke}" y="${shoulder_yoke}"
+                       z="${shoulder_yoke}" mat="rd_graphite" mass="2.20"/>
+    <joint name="${arm}_mount" type="fixed">
+      <parent link="lift_carriage"/>
+      <child  link="${arm}_shoulder_yoke"/>
+      <origin xyz="${sign * shoulder_spacing / 2.0} 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <!-- J1 base_yaw, axis Z, limits_deg [-170, 170] -->
+    <xacro:rd_box_link name="${arm}_link_1_base_yaw" x="0.100" y="0.100" z="0.086"
+                       mat="rd_graphite" mass="2.60"/>
+    <joint name="${arm}_joint_1_base_yaw" type="revolute">
+      <parent link="${arm}_shoulder_yoke"/>
+      <child  link="${arm}_link_1_base_yaw"/>
+      <axis xyz="0 0 1"/>
+      <!-- effort is the documented peak torque; the continuous rating is in README.md -->
+      <limit effort="90.0" velocity="2.10" lower="${radians(-170.0)}" upper="${radians(170.0)}"/>
+    </joint>
+
+    <!-- J2 shoulder_pitch, axis Y, limits_deg [-90, 120] -->
+    <xacro:rd_box_link name="${arm}_link_2_shoulder_pitch" x="0.078" y="0.078" z="0.070"
+                       mat="rd_shell" mass="2.10"/>
+    <joint name="${arm}_joint_2_shoulder_pitch" type="revolute">
+      <parent link="${arm}_link_1_base_yaw"/>
+      <child  link="${arm}_link_2_shoulder_pitch"/>
+      <axis xyz="0 1 0"/>
+      <origin xyz="0 0 0.058" rpy="0 0 0"/>
+      <limit effort="130.0" velocity="2.10" lower="${radians(-90.0)}" upper="${radians(120.0)}"/>
+    </joint>
+
+    <!-- J3 shoulder_roll, axis X, limits_deg [-95, 95] -->
+    <xacro:rd_box_link name="${arm}_link_3_shoulder_roll" x="0.072" y="0.090" z="0.072"
+                       mat="rd_shell" mass="1.70"/>
+    <joint name="${arm}_joint_3_shoulder_roll" type="revolute">
+      <parent link="${arm}_link_2_shoulder_pitch"/>
+      <child  link="${arm}_link_3_shoulder_roll"/>
+      <axis xyz="1 0 0"/>
+      <origin xyz="0 0 0.052" rpy="0 0 0"/>
+      <limit effort="85.0" velocity="2.10" lower="${radians(-95.0)}" upper="${radians(95.0)}"/>
+    </joint>
+
+    <!-- J4 elbow_pitch, axis Y, limits_deg [-135, 10]. links_mm.upper_arm = 275
+         is the distance this joint sits from the shoulder roll axis. -->
+    <link name="${arm}_link_4_upper_arm">
+      <visual>
+        <origin xyz="0 0 ${upper_arm_length / 2.0}" rpy="0 0 0"/>
+        <geometry><box size="0.086 0.074 ${upper_arm_length}"/></geometry>
+        <material name="rd_shell"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${upper_arm_length / 2.0}" rpy="0 0 0"/>
+        <geometry><box size="0.086 0.074 ${upper_arm_length}"/></geometry>
+      </collision>
+      <xacro:rd_box_inertia m="1.90" x="0.086" y="0.074" z="${upper_arm_length}"/>
+    </link>
+    <joint name="${arm}_joint_4_elbow_pitch" type="revolute">
+      <parent link="${arm}_link_3_shoulder_roll"/>
+      <child  link="${arm}_link_4_upper_arm"/>
+      <axis xyz="0 1 0"/>
+      <origin xyz="0 0 0.050" rpy="0 0 0"/>
+      <limit effort="70.0" velocity="2.60" lower="${radians(-135.0)}" upper="${radians(10.0)}"/>
+    </joint>
+
+    <!-- J5 forearm_roll, axis X. links_mm.forearm = 245 hangs off this joint. -->
+    <link name="${arm}_link_5_elbow">
+      <visual>
+        <geometry><box size="${elbow_block} ${elbow_block} ${elbow_block}"/></geometry>
+        <material name="rd_graphite"/>
+      </visual>
+      <collision>
+        <geometry><box size="${elbow_block} ${elbow_block} ${elbow_block}"/></geometry>
+      </collision>
+      <xacro:rd_box_inertia m="1.10" x="${elbow_block}" y="${elbow_block}" z="${elbow_block}"/>
+    </link>
+    <joint name="${arm}_joint_5_forearm_roll" type="revolute">
+      <parent link="${arm}_link_4_upper_arm"/>
+      <child  link="${arm}_link_5_elbow"/>
+      <axis xyz="1 0 0"/>
+      <origin xyz="0 0 ${upper_arm_length}" rpy="0 0 0"/>
+      <limit effort="30.0" velocity="3.20" lower="${radians(-180.0)}" upper="${radians(180.0)}"/>
+    </joint>
+
+    <!-- links_mm.forearm = 245 is the roll cuff to the wrist pitch axis. -->
+    <link name="${arm}_link_6_forearm">
+      <visual>
+        <origin xyz="0 0 ${forearm_length / 2.0}" rpy="0 0 0"/>
+        <geometry><box size="0.070 0.062 ${forearm_length}"/></geometry>
+        <material name="rd_shell"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${forearm_length / 2.0}" rpy="0 0 0"/>
+        <geometry><box size="0.070 0.062 ${forearm_length}"/></geometry>
+      </collision>
+      <xacro:rd_box_inertia m="1.30" x="0.070" y="0.062" z="${forearm_length}"/>
+    </link>
+    <joint name="${arm}_joint_6_wrist_pitch" type="revolute">
+      <parent link="${arm}_link_5_elbow"/>
+      <child  link="${arm}_link_6_forearm"/>
+      <axis xyz="0 1 0"/>
+      <origin xyz="0 0 ${elbow_block / 2.0}" rpy="0 0 0"/>
+      <limit effort="24.0" velocity="3.20" lower="${radians(-110.0)}" upper="${radians(110.0)}"/>
+    </joint>
+
+    <!-- J7 tool_roll, axis X. links_mm.wrist_stack = 115 is the compact
+         pitch/tool-roll assembly between the forearm and the tool flange. -->
+    <xacro:rd_box_link name="${arm}_link_7_wrist" x="0.066" y="0.060" z="${wrist_stack}"
+                       mat="rd_graphite" mass="0.85"/>
+    <joint name="${arm}_joint_7_tool_roll" type="revolute">
+      <parent link="${arm}_link_6_forearm"/>
+      <child  link="${arm}_link_7_wrist"/>
+      <axis xyz="1 0 0"/>
+      <origin xyz="0 0 ${forearm_length}" rpy="0 0 0"/>
+      <limit effort="16.0" velocity="3.90" lower="${radians(-180.0)}" upper="${radians(180.0)}"/>
+    </joint>
+
+    <!-- Kinematic quick-change flange. tool0 is the frame a tool and a TCP
+         offset hang from; it is not a grasp claim. -->
+    <link name="${arm}_tool0"/>
+    <joint name="${arm}_tool_flange" type="fixed">
+      <parent link="${arm}_link_7_wrist"/>
+      <child  link="${arm}_tool0"/>
+      <origin xyz="0 0 ${wrist_stack}" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Wrist camera: also the sensor whose optical frame an eye-in-hand
+         detector publishes in. -->
+    <xacro:rd_camera parent="${arm}_link_6_forearm" name="${arm}_wrist_camera"
+                     xyz="0 0.045 ${forearm_length - 0.060}"
+                     rpy="0 0 ${radians(-90.0)}"/>
+  </xacro:macro>
+
+  <!-- ============================================================== the tree -->
+
+  <!-- map, odom and base_footprint are identity frames in the description. The
+       live system publishes map->odom from localization and odom->base_footprint
+       from wheel odometry; the description fixes only the convention and the
+       root, so the tree is deterministic with a single root. -->
+  <link name="map"/>
+  <link name="odom"/>
+  <joint name="map_to_odom" type="fixed">
+    <parent link="map"/>
+    <child  link="odom"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_footprint"/>
+  <joint name="odom_to_base_footprint" type="fixed">
+    <parent link="odom"/>
+    <child  link="base_footprint"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- base_link sits on the chassis plate. Its top lands on
+       coordinate_system.base_top_z_mm = 140. -->
+  <xacro:property name="base_housing_z" value="${base_top_z - ground_clearance}"/>
+  <xacro:rd_box_link name="base_link" x="${chassis_x}" y="${chassis_y}"
+                     z="${base_housing_z}" mat="rd_shell" mass="16.00"/>
+  <!-- base_link's origin sits on the ground-clearance plane at the bottom of the
+       base housing, which is the usual ROS convention and what odom chains
+       assume. The housing top therefore lands on coordinate_system.base_top_z;
+       validate_description.py asserts that sum. -->
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child  link="base_link"/>
+    <origin xyz="0 0 ${ground_clearance}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Bumper ring: the impact absorber, also the lowest obstacle a contact test
+       sees. impact.bumper_thickness = 10 mm. -->
+  <xacro:rd_box_link name="bumper_front" x="${chassis_x}" y="0.010" z="0.070"
+                     mat="rd_dark" mass="0.60"/>
+  <joint name="base_link_to_bumper_front" type="fixed">
+    <parent link="base_link"/>
+    <child  link="bumper_front"/>
+    <origin xyz="0 ${-chassis_y/2.0 - 0.005} 0.040" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Base front camera for docking and floor-facing coverage. -->
+  <xacro:rd_camera parent="base_link" name="base_camera"
+                   xyz="0 ${-chassis_y/2.0 + 0.010} 0.052" rpy="${radians(90.0)} 0 0"/>
+
+  <!-- Four independent steer-drive modules. Each is a steering revolute about Z
+       plus a drive revolute about Y, so the base is holonomic without casters.
+       Steering is continuous: chassis.steering_range_deg says
+       continuous_360_with_through_bore_slip_ring. -->
+  <xacro:macro name="rd_steer_drive_module" params="name sx sy">
+    <xacro:rd_box_link name="${name}_steer_mount" x="0.110" y="0.110" z="0.030"
+                       mat="rd_graphite" mass="1.40"/>
+    <joint name="base_link_to_${name}_steer_mount" type="fixed">
+      <parent link="base_link"/>
+      <child  link="${name}_steer_mount"/>
+      <origin xyz="${sx * module_x} ${sy * module_y} ${module_mount_z}" rpy="0 0 0"/>
+    </joint>
+
+    <xacro:rd_box_link name="${name}_steer" x="0.080" y="0.080" z="0.045"
+                       mat="rd_graphite" mass="1.10"/>
+    <joint name="${name}_steering_joint" type="revolute">
+      <parent link="${name}_steer_mount"/>
+      <child  link="${name}_steer"/>
+      <axis xyz="0 0 1"/>
+      <origin xyz="0 0 ${-steer_drop}" rpy="0 0 0"/>
+      <limit effort="40.0" velocity="3.00" lower="${radians(-180.0)}" upper="${radians(180.0)}"/>
+    </joint>
+
+    <!-- The wheel cylinder's local Z is its spin axis, so it is rotated onto the
+         link's local Y by the joint origin. Wheel brakes are
+         normally-closed per module (chassis.wheel_brakes), which is a modelled
+         state, not a claim that the brake has been tested. -->
+    <xacro:rd_cylinder_link name="${name}_wheel" r="${wheel_radius}" h="${wheel_width}"
+                            mat="rd_dark" mass="1.60"/>
+    <joint name="${name}_drive_joint" type="revolute">
+      <parent link="${name}_steer"/>
+      <child  link="${name}_wheel"/>
+      <axis xyz="0 1 0"/>
+      <origin xyz="0 0 ${-wheel_drop}" rpy="${radians(90.0)} 0 0"/>
+      <limit effort="220.0" velocity="17.14" lower="-1.7976891295541595e308" upper="1.7976891295541595e308"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:rd_steer_drive_module name="drive_module_front_left" sx="-1" sy="-1"/>
+  <xacro:rd_steer_drive_module name="drive_module_front_right" sx="1" sy="-1"/>
+  <xacro:rd_steer_drive_module name="drive_module_rear_left" sx="-1" sy="1"/>
+  <xacro:rd_steer_drive_module name="drive_module_rear_right" sx="1" sy="1"/>
+
+  <!-- Four stabilizers. Retracted they sit inside the drive footprint; deployed
+       their pads land on the documented stabilized support polygon at +/-410 mm.
+       deployment is a modelled state, and stability_gates says the analytical
+       screen is not a manipulation release. -->
+  <!-- Each stabilizer swings out of the wheel-module corner it stows beside.
+       The deploy direction is derived from the corner signs and the two reach
+       components, so the pad centre lands on the documented polygon vertex
+       (module corner + reach) by construction instead of by a hand-picked yaw.
+       The arm sits in the ground-clearance band so it can swing under the base
+       enclosure rather than through it. -->
+  <xacro:macro name="rd_stabilizer" params="name sx sy">
+    <xacro:property name="deploy_yaw"
+                     value="${atan2(sy * stabilizer_reach_y, sx * stabilizer_reach_x)}"
+                     scope="local"/>
+    <xacro:rd_box_link name="${name}_arm" x="0.070" y="0.070" z="0.030"
+                       mat="rd_graphite" mass="0.50"/>
+    <joint name="base_link_to_${name}_arm" type="fixed">
+      <parent link="base_link"/>
+      <child  link="${name}_arm"/>
+      <origin xyz="${sx * module_x} ${sy * module_y} ${-0.008}" rpy="0 0 ${deploy_yaw}"/>
+    </joint>
+
+    <xacro:rd_box_link name="${name}_pad" x="${stabilizer_pad}" y="0.060" z="0.024"
+                       mat="rd_dark" mass="0.30"/>
+    <joint name="${name}_deploy_joint" type="prismatic">
+      <parent link="${name}_arm"/>
+      <child  link="${name}_pad"/>
+      <axis xyz="1 0 0"/>
+      <origin xyz="${stabilizer_stroke} 0 0" rpy="0 0 0"/>
+      <limit effort="900.0" velocity="0.20" lower="${-stabilizer_stroke}" upper="0.0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Corner signs follow design-spec's robot_base convention: x = robot right,
+       y = robot rear. Front is -Y, left is -X. -->
+  <xacro:rd_stabilizer name="stabilizer_front_left"  sx="-1" sy="-1"/>
+  <xacro:rd_stabilizer name="stabilizer_front_right" sx="1"  sy="-1"/>
+  <xacro:rd_stabilizer name="stabilizer_rear_left"   sx="-1" sy="1"/>
+  <xacro:rd_stabilizer name="stabilizer_rear_right"  sx="1"  sy="1"/>
+
+  <!-- ================================================================= lift -->
+  <!-- four_guide_dual_screw_synchronized_lift, travel 350 mm. Normally-closed
+       brakes and mechanical lock pins are modeled as the joint's finite range
+       plus the state the controller must hold; neither is tested here. -->
+  <!-- The column is the fixed guide stack the carriage rides on. It spans the
+       base top to the stowed torso bottom, so it is exposed as the lift raises
+       and it never intersects the torso it carries. -->
+  <xacro:property name="lift_column" value="0.140"/>
+  <xacro:property name="lift_column_h" value="${torso_bottom_z - base_top_z}"/>
+  <xacro:rd_box_link name="lift_column" x="${lift_column}" y="${lift_column}" z="${lift_column_h}"
+                     mat="rd_graphite" mass="3.20"/>
+  <joint name="base_link_to_lift_column" type="fixed">
+    <parent link="base_link"/>
+    <child  link="lift_column"/>
+    <origin xyz="0 0 ${base_top_z - ground_clearance + lift_column_h/2.0}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- The carriage is the frame the shoulders, torso, head and tool dock hang
+       from, so one joint moves the whole upper body. -->
+  <xacro:rd_box_link name="lift_carriage" x="0.300" y="0.240" z="0.060"
+                     mat="rd_graphite" mass="7.50"/>
+  <joint name="lift_joint" type="prismatic">
+    <parent link="base_link"/>
+    <child  link="lift_carriage"/>
+    <axis xyz="0 0 1"/>
+    <origin xyz="0 0 ${shoulder_min_z - ground_clearance}" rpy="0 0 0"/>
+    <limit effort="3000.0" velocity="0.25" lower="0.0" upper="${lift_travel}"/>
+  </joint>
+
+  <!-- ================================================================ torso -->
+  <!-- The torso is bolted to the carriage partway up the spine, which is why the
+       torso origin is below the carriage: torso_bottom_stowed_z = 500 while
+       minimum_shoulder_height = 780. -->
+  <xacro:rd_box_link name="torso" x="${torso_x}" y="${torso_y}" z="${torso_z}"
+                     mat="rd_shell" mass="5.00"/>
+  <joint name="lift_carriage_to_torso" type="fixed">
+    <parent link="lift_carriage"/>
+    <child  link="torso"/>
+    <origin xyz="0 0 ${torso_bottom_z + torso_z/2.0 - shoulder_min_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- The parcel bay is an opening in the torso front, not a robot arm's
+       workspace. torso.parcel_bay_payload_kg = 5. -->
+  <link name="parcel_bay"/>
+  <joint name="torso_to_parcel_bay" type="fixed">
+    <parent link="torso"/>
+    <child  link="parcel_bay"/>
+    <origin xyz="0 ${-torso_y/2.0} ${0.020}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Tool dock: three keyed slots. The dock is a place to park a tool, and the
+       interface it exposes is kinematic_quick_change_with_mechanical_lock. -->
+  <xacro:rd_box_link name="tool_dock" x="0.300" y="0.040" z="0.130"
+                     mat="rd_graphite" mass="1.80"/>
+  <joint name="torso_to_tool_dock" type="fixed">
+    <parent link="torso"/>
+    <child  link="tool_dock"/>
+    <origin xyz="0 ${torso_y/2.0 + 0.020} ${-torso_z/2.0 + 0.090}" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:macro name="rd_tool_dock_slot" params="index">
+    <link name="tool_dock_slot_${index}"/>
+    <joint name="tool_dock_to_slot_${index}" type="fixed">
+      <parent link="tool_dock"/>
+      <child  link="tool_dock_slot_${index}"/>
+      <origin xyz="${(index - (tool_dock_slots + 1) / 2.0) * tool_dock_pitch} 0 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:rd_tool_dock_slot index="1"/>
+  <xacro:rd_tool_dock_slot index="2"/>
+  <xacro:rd_tool_dock_slot index="3"/>
+
+  <!-- =========================================================== neck / head -->
+  <!-- The head hangs off the torso, never off an arm, and can be lifted
+       vertically off its keyed register during service. -->
+  <!-- neck_standoff is the whole torso-top to head-bottom gap, so the pedestal
+       is that gap minus the pan plate it carries. The head top then lands on
+       coordinate_system.head_top_stowed_z_mm by construction instead of by two
+       literals happening to agree. -->
+  <xacro:property name="neck_plate_z" value="0.024"/>
+  <xacro:property name="neck_pedestal_h" value="${neck_standoff - neck_plate_z}"/>
+  <xacro:rd_box_link name="neck_pedestal" x="0.132" y="0.086" z="${neck_pedestal_h}"
+                     mat="rd_graphite" mass="0.90"/>
+  <joint name="torso_to_neck_pedestal" type="fixed">
+    <parent link="torso"/>
+    <child  link="neck_pedestal"/>
+    <origin xyz="0 0 ${torso_z/2.0 + neck_pedestal_h/2.0}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- neck_yaw: head.pan_deg = 160 total, so +/-80. -->
+  <xacro:rd_box_link name="neck_yaw" x="0.120" y="0.078" z="${neck_plate_z}"
+                     mat="rd_graphite" mass="0.60"/>
+  <joint name="neck_pan_joint" type="revolute">
+    <parent link="neck_pedestal"/>
+    <child  link="neck_yaw"/>
+    <axis xyz="0 0 1"/>
+    <origin xyz="0 0 ${neck_pedestal_h/2.0 + neck_plate_z/2.0}" rpy="0 0 0"/>
+    <limit effort="18.0" velocity="1.60" lower="${-neck_pan_limit}" upper="${neck_pan_limit}"/>
+  </joint>
+
+  <!-- neck_pitch: head.tilt_deg = 6 total, so +/-3. -->
+  <xacro:rd_box_link name="head_display" x="${head_x}" y="${head_y}" z="${head_z}"
+                     mat="rd_shell" mass="1.50"/>
+  <joint name="neck_tilt_joint" type="revolute">
+    <parent link="neck_yaw"/>
+    <child  link="head_display"/>
+    <axis xyz="0 1 0"/>
+    <origin xyz="0 0 ${neck_plate_z/2.0 + head_z/2.0}" rpy="0 0 0"/>
+    <limit effort="12.0" velocity="1.60" lower="${-neck_tilt_limit}" upper="${neck_tilt_limit}"/>
+  </joint>
+
+  <!-- The smoked-glass expression window. A visual, not an obstacle: the head
+       display box already carries the collision volume. -->
+  <link name="head_window">
+    <visual>
+      <geometry><box size="0.228 0.092 0.002"/></geometry>
+      <material name="rd_glass"/>
+    </visual>
+  </link>
+  <joint name="head_display_to_window" type="fixed">
+    <parent link="head_display"/>
+    <child  link="head_window"/>
+    <origin xyz="0 ${-head_y/2.0 - 0.001} 0.008" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:rd_camera parent="head_display" name="head_camera"
+                   xyz="0 ${-head_y/2.0 - 0.014} 0.008" rpy="${radians(90.0)} 0 0"/>
+
+  <!-- ================================================================= arms -->
+  <xacro:rd_seven_axis_arm side="left"  sign="-1"/>
+  <xacro:rd_seven_axis_arm side="right" sign="1"/>
+
+  <!-- ======================================================= gazebo / ros2_control -->
+  <!-- Friction and contact parameters are the numbers physics tuning moves. They
+       start plausible and are expected to change. -->
+  <gazebo reference="base_link">
+    <mu1>0.7</mu1>
+    <mu2>0.7</mu2>
+  </gazebo>
+
+  <gazebo reference="drive_module_front_left_wheel">
+    <mu1>1.1</mu1>
+    <mu2>1.1</mu2>
+    <kp>1e6</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <gazebo reference="drive_module_front_right_wheel">
+    <mu1>1.1</mu1>
+    <mu2>1.1</mu2>
+    <kp>1e6</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <gazebo reference="drive_module_rear_left_wheel">
+    <mu1>1.1</mu1>
+    <mu2>1.1</mu2>
+    <kp>1e6</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <gazebo reference="drive_module_rear_right_wheel">
+    <mu1>1.1</mu1>
+    <mu2>1.1</mu2>
+    <kp>1e6</kp>
+    <kd>1.0</kd>
+  </gazebo>
+
+  <!-- The wheel tread is non-marking high-grip polyurethane, which is a real
+       material choice and a real friction uncertainty. -->
+  <gazebo reference="stabilizer_front_left_pad"><mu1>0.9</mu1><mu2>0.9</mu2></gazebo>
+  <gazebo reference="stabilizer_front_right_pad"><mu1>0.9</mu1><mu2>0.9</mu2></gazebo>
+  <gazebo reference="stabilizer_rear_left_pad"><mu1>0.9</mu1><mu2>0.9</mu2></gazebo>
+  <gazebo reference="stabilizer_rear_right_pad"><mu1>0.9</mu1><mu2>0.9</mu2></gazebo>
+
+  <!-- Simulation-only body. The hardware and HIL columns of any evidence table
+       stay NOT_EXECUTED until real bench evidence exists.
+
+       self_collide is false, deliberately. The base enclosure is a 540 x 520
+       box and the four wheel bogies sit inside its footprint; a box cannot
+       express a wheel well, so those two collision volumes intersect. Enabling
+       self-collision would turn that modelling artefact into simulated internal
+       contact. The forbidden-volume and contact tests own the exclusion set, and
+       README.md records this as a known boundary rather than a safety claim. -->
+  <gazebo>
+    <self_collide>false</self_collide>
+  </gazebo>
+
+  <!-- ros2_control is opt-in through sim_gz:=true, exactly as the tabletop
+       composition does it, and it is the only place a command interface is
+       declared. The controller list is a separate file so an unguarded
+       trajectory path cannot be introduced by editing this model. -->
+  <xacro:if value="${sim_gz}">
+    <xacro:include filename="${ros2_control_xacro}"/>
+    <xacro:revision_d_ros2_control controllers_yaml="${controllers_yaml}"/>
+  </xacro:if>
+
+</robot>
