@@ -8,7 +8,7 @@ PYTHON ?= python3
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
 	container-project-check property-gate mutation-gate quality-gates ready-gate lock-python lock-python-verify \
-	branch-protection-check release-commit-check readiness-report-check
+	branch-protection-check release-commit-check readiness-report-check phase-gates-check
 
 # The root Python environment is installed from the hash-checked lock, not from
 # the ranges in pyproject.toml, so every developer, CI job and container resolves
@@ -41,7 +41,7 @@ test:
 	$(PYTHON) -m pytest -v
 
 # Everything CI runs, in one command. Run this before opening a PR.
-check: lint test contract scenario-check scenario-conformance run-identity-check run-provenance-check golden-check readiness-report-check context-check demo-scripted demo-offline
+check: lint test contract scenario-check scenario-conformance run-identity-check run-provenance-check golden-check readiness-report-check phase-gates-check context-check demo-scripted demo-offline
 
 contract:
 	$(PYTHON) tools/scripts/validate_contracts.py
@@ -61,6 +61,15 @@ scenario-conformance:
 readiness-report-check:
 	$(PYTHON) tools/scripts/readiness_report.py --output docs/evaluation/readiness-report-v1.json
 	$(PYTHON) tools/scripts/check_readiness_report.py
+
+# Each multi-scenario delivery phase must prove itself before release notes may
+# call it complete (Issue #314). The status is generated, and the gate
+# regenerates it and compares, so a stale, edited or overclaimed phase table
+# fails rather than being rendered as a finished phase. It grants no release
+# approval, no physical capability and no human sign-off.
+phase-gates-check:
+	$(PYTHON) tools/scripts/phase_gates.py --output docs/releases/phase-status-v1.json
+	$(PYTHON) tools/scripts/check_phase_gates.py
 
 # Every stored run must resolve to the scenario definition it was produced from
 # (Issue #302). A run that cannot be attributed cannot be replayed or verified.

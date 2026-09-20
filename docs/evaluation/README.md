@@ -12,6 +12,10 @@ separate rather than one report that guesses:
 | [`cold-start-test.md`](cold-start-test.md) | How external cold start is measured and recorded | Product Owner |
 | [`status-understanding-test.md`](status-understanding-test.md) | Whether an operator can tell confirmed from insufficient evidence | Product Owner |
 
+Delivery phases are tracked separately, in [`docs/releases/`](../releases/README.md):
+`phase-gates.md` states which phase proves itself today and what evidence class it
+reaches, while this directory states what the committed software is ready for.
+
 ## Multi-scenario readiness
 
 The readiness report is generated, never typed:

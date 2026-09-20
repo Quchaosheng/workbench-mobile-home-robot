@@ -1,0 +1,325 @@
+{
+  "status_version": "multi-scenario-phase-status-v1",
+  "generated_by": "tools/scripts/phase_gates.py",
+  "issue": 314,
+  "epic": 309,
+  "edit_policy": "This file is generated. Do not hand-edit a gate_status, a completed flag, an evidence_class or release_eligible: regenerate it with `python3 tools/scripts/phase_gates.py` and let the gate compare the result. Only generated_at and source_commit change without a change of inputs.",
+  "authority": {
+    "grants": [
+      "a machine-generated statement of which multi-scenario phase proves itself today",
+      "the evidence class each phase reaches and the sign-off it still needs"
+    ],
+    "does_not_grant": [
+      "release approval",
+      "physical or Gazebo validation",
+      "a completed human sign-off",
+      "authority to waive a required check or human approval"
+    ]
+  },
+  "generated_at": "2026-09-20T02:59:38.731320+00:00",
+  "source_commit": "19f6943e035162508eb4320406c4920081d02c58",
+  "configuration_hash": "b5cf50457d285f026b0fbc498b69622b81ab44192c3fc47232ec89dbd9ea488f",
+  "evidence_class_vocabulary": {
+    "classes": [
+      "software",
+      "scripted_fixture",
+      "gazebo",
+      "physical"
+    ],
+    "release_eligible_classes": [
+      "gazebo",
+      "physical"
+    ],
+    "rule": "evidence_class is copied from the readiness report; software means the phase's gates pass over contract-valid, registered and conformance-proven definitions, and only gazebo and physical can make a phase release eligible, so a completed phase can still be a software-only phase"
+  },
+  "generated_fields": [
+    "generated_at",
+    "source_commit",
+    "configuration_hash",
+    "phases[].probes[].gate_status",
+    "phases[].probes[].detail",
+    "phases[].gate_status",
+    "phases[].completed",
+    "phases[].evidence_class",
+    "phases[].release_eligible",
+    "summary",
+    "phases[].blocked_on",
+    "phases[].sign_off_outstanding"
+  ],
+  "readiness": {
+    "available": true,
+    "path": "docs/evaluation/readiness-report-v1.json",
+    "registered_count": 5,
+    "classes": {
+      "software": true,
+      "scripted_fixture": true,
+      "gazebo": false,
+      "physical": false
+    },
+    "release_eligible": false
+  },
+  "summary": {
+    "phase_count": 4,
+    "complete_count": 3,
+    "incomplete_count": 0,
+    "failed_count": 0,
+    "blocked_count": 1,
+    "release_eligible_count": 0,
+    "sign_off_outstanding_count": 9
+  },
+  "limitations": [
+    "every reachable evidence class is software or scripted_fixture: no Gazebo or physical run backs any phase",
+    "a phase is complete only in the sense that its declared gates pass; it is not release eligible",
+    "each phase records the owner sign-off it still needs, and no gate here can observe a human decision",
+    "this status grants no release approval and replaces no required check or human approval"
+  ],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "contract and registry",
+      "issues": [
+        308,
+        300
+      ],
+      "entry_criteria": [
+        "the four-phase split is agreed and the parent epic (#309) is open",
+        "no scenario manifest is authoritative until the registry contract is frozen"
+      ],
+      "exit_criteria": [
+        "the registry contract is frozen as a reviewed decision record (#308)",
+        "the registry loads every committed manifest fail-closed (#300)",
+        "a scenario registered without a row in the conformance corpus is refused"
+      ],
+      "required_evidence": [
+        "contract-valid manifests",
+        "a fail-closed registry load",
+        "generated conformance cases"
+      ],
+      "probes": [
+        {
+          "probe": "scenario_contract",
+          "reference": "tools/scripts/check_scenario_contract.py",
+          "gate_status": "PASS",
+          "detail": "scenario contract scenario-registry-v1 is frozen and loadable"
+        },
+        {
+          "probe": "scenario_registry",
+          "reference": "tools/scripts/check_scenario_contract.py",
+          "gate_status": "PASS",
+          "detail": "the registry loaded 5 fail-closed manifest(s)"
+        }
+      ],
+      "gate_status": "COMPLETE",
+      "completed": true,
+      "evidence_class": "scripted_fixture",
+      "release_eligible": false,
+      "rollback": "revert this phase's commit; no later phase depends on a fixture that changes",
+      "blocked_on": [],
+      "sign_off": [
+        {
+          "role": "Architecture owner",
+          "status": "outstanding",
+          "detail": "the registry contract is a reviewed ADR"
+        },
+        {
+          "role": "Release owner",
+          "status": "outstanding",
+          "detail": "the phase is recorded in the release notes"
+        }
+      ],
+      "sign_off_outstanding": [
+        "Architecture owner",
+        "Release owner"
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "task migration, evidence identity and recovery",
+      "issues": [
+        301,
+        302,
+        305
+      ],
+      "entry_criteria": [
+        "phase 1 is software complete",
+        "the shared safety, provenance, replay and evidence boundaries are written down"
+      ],
+      "exit_criteria": [
+        "every legacy task family resolves to a registered identity with a pinned corpus (#301)",
+        "a stored run resolves to the scenario definition it was produced from (#302)",
+        "recovery is bounded, evidence-aware and shared across scenarios (#305)"
+      ],
+      "required_evidence": [
+        "a pinned migration digest",
+        "run identity bindings",
+        "bounded recovery decisions"
+      ],
+      "probes": [
+        {
+          "probe": "scenario_migration",
+          "reference": "tools/scripts/check_scenario_migration.py",
+          "gate_status": "PASS",
+          "detail": "5 legacy task famil(ies) resolve to a registered identity"
+        },
+        {
+          "probe": "run_identity",
+          "reference": "tools/scripts/check_run_identity.py",
+          "gate_status": "PASS",
+          "detail": "the run identity binds scenario, evidence and stream, and refuses a missing version"
+        },
+        {
+          "probe": "recovery_policy",
+          "reference": "services/agent_runtime/workbench_agent_runtime/recovery.py",
+          "gate_status": "PASS",
+          "detail": "a declared policy is bounded, an unknown action and a terminal stop are refused"
+        }
+      ],
+      "gate_status": "COMPLETE",
+      "completed": true,
+      "evidence_class": "scripted_fixture",
+      "release_eligible": false,
+      "rollback": "revert this phase's commit; the legacy entry points keep working until v0.4",
+      "blocked_on": [],
+      "sign_off": [
+        {
+          "role": "World Model owner",
+          "status": "outstanding",
+          "detail": "run identity and evidence policy"
+        },
+        {
+          "role": "Agent Runtime owner",
+          "status": "outstanding",
+          "detail": "the bounded recovery policy"
+        },
+        {
+          "role": "Release owner",
+          "status": "outstanding",
+          "detail": "the phase is recorded in the release notes"
+        }
+      ],
+      "sign_off_outstanding": [
+        "World Model owner",
+        "Agent Runtime owner",
+        "Release owner"
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "first registry-native scenario",
+      "issues": [
+        306
+      ],
+      "entry_criteria": [
+        "phase 2 is software complete",
+        "a new scenario can be added without a legacy task_id or a second implementation"
+      ],
+      "exit_criteria": [
+        "cleaning-and-inspection is registered through the shared contract, not a side path (#306)",
+        "the scenario passes the same conformance corpus as every migrated family"
+      ],
+      "required_evidence": [
+        "a registry-native manifest",
+        "a conformance case set",
+        "a reconciled capability matrix row"
+      ],
+      "probes": [
+        {
+          "probe": "registry_native_scenario",
+          "reference": "sim/registry/*.json",
+          "gate_status": "NOT_DELIVERED",
+          "detail": "no registry-native scenario is registered yet (issue #306 is not delivered)"
+        },
+        {
+          "probe": "scenario_conformance",
+          "reference": "tools/scripts/check_scenario_conformance.py",
+          "gate_status": "PASS",
+          "detail": "5 registered scenario(s) prove all 7 dimension(s)"
+        }
+      ],
+      "gate_status": "BLOCKED",
+      "completed": false,
+      "evidence_class": "none",
+      "release_eligible": false,
+      "rollback": "hold the phase; the registry keeps the migrated families and the declared scenario stays unregistered",
+      "blocked_on": [
+        "#306 is not delivered: promoting clean_workspace into the shared semantic ActionType touches libs/contracts and interfaces/json_schema, which AGENTS.md gates behind three human approvals",
+        "the conformance corpus has no case set for a registry-native identity yet"
+      ],
+      "sign_off": [
+        {
+          "role": "Scenario owner",
+          "status": "outstanding",
+          "detail": "the new manifest and its verifier"
+        },
+        {
+          "role": "Release owner",
+          "status": "outstanding",
+          "detail": "the hold is recorded in the release notes"
+        }
+      ],
+      "sign_off_outstanding": [
+        "Scenario owner",
+        "Release owner"
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "dashboard, quality gates and readiness report",
+      "issues": [
+        303,
+        304,
+        307
+      ],
+      "entry_criteria": [
+        "phases 1 to 3 are software complete",
+        "every registered scenario has a scenario identity the surfaces can read"
+      ],
+      "exit_criteria": [
+        "a run and its evidence timeline can be inspected without hand-reading a bundle (#303)",
+        "every registered scenario is gated on the shared boundaries (#304)",
+        "one generated readiness report states what the software is ready for (#307)"
+      ],
+      "required_evidence": [
+        "a bounded run projection",
+        "a conformance corpus over every registered identity",
+        "a reproducible readiness artifact"
+      ],
+      "probes": [
+        {
+          "probe": "scenario_conformance",
+          "reference": "tools/scripts/check_scenario_conformance.py",
+          "gate_status": "PASS",
+          "detail": "5 registered scenario(s) prove all 7 dimension(s)"
+        },
+        {
+          "probe": "readiness_report",
+          "reference": "tools/scripts/check_readiness_report.py",
+          "gate_status": "PASS",
+          "detail": "the readiness report covers 5 identity(ies)"
+        }
+      ],
+      "gate_status": "COMPLETE",
+      "completed": true,
+      "evidence_class": "scripted_fixture",
+      "release_eligible": false,
+      "rollback": "revert this phase's commit; the readiness page and the dashboard are additive surfaces",
+      "blocked_on": [],
+      "sign_off": [
+        {
+          "role": "Release / QA owner",
+          "status": "outstanding",
+          "detail": "the readiness report and the phase table"
+        },
+        {
+          "role": "Project Owner",
+          "status": "outstanding",
+          "detail": "the release decision the notes describe"
+        }
+      ],
+      "sign_off_outstanding": [
+        "Release / QA owner",
+        "Project Owner"
+      ]
+    }
+  ]
+}

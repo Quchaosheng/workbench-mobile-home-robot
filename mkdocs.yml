@@ -51,6 +51,9 @@ nav:
   - Event evidence recovery: deployment/event-evidence-recovery.md
   - Data governance: deployment/data-governance.md
   - Multi-scenario readiness: evaluation/multi-scenario-readiness.md
+  - Phase gates: releases/phase-gates.md
+  - Release notes: releases/release-notes.md
+  - Releases: releases/README.md
   - Release eligibility: evaluation/release-eligibility.md
   - Property and mutation gates: qa/property-and-mutation-gates.md
   - API reference: api.md
