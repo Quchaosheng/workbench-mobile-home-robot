@@ -41,6 +41,7 @@ nav:
   - Decisions:
       - Multi-scenario registry contract: decisions/ADR-0006-scenario-registry-contract.md
       - Household MVP baseline: decisions/ADR-0007-household-mvp-baseline.md
+      - Learning-data plane and policy boundary: decisions/ADR-0008-learning-data-plane.md
       - Hardware device runtime: decisions/ADR-0005-hardware-device-runtime.md
   - Observability contract: architecture/observability-contract-v1.md
   - Linux driver architecture: architecture/linux-drivers.md
