@@ -72,11 +72,17 @@ def test_the_harness_can_be_invoked_as_a_command() -> None:
     assert "NOT_EXECUTED" in result.stdout
 
 
-@pytest.mark.skipif(
-    shutil.which("gz") is None and shutil.which("ign") is None,
-    reason="no Gazebo on PATH; the #327 Gazebo cases stay NOT_EXECUTED",
-)
-def test_gazebo_cases_run_when_a_simulator_is_present() -> None:
+def test_a_present_simulator_still_cannot_produce_a_fabricated_pass() -> None:
+    """With a simulator present the harness must still refuse a pass until implemented.
+
+    This runs everywhere, including the container image, which does ship Gazebo.
+    The point is not that the cases pass: the bodies for spawn, joint-limit
+    rejection, collision, lift, stabilizer and shutdown are not written yet, so
+    the harness must fail loudly rather than emit success. Asserting the failure
+    keeps the earlier NOT_EXECUTED test honest -- if this branch silently
+    returned 0 after a skip was turned into an "available" run, the suite would
+    report seven unrun cases as green.
+    """
     result = subprocess.run(
         [sys.executable, str(HARNESS), "--simulator-available", "true"],
         capture_output=True,
@@ -84,7 +90,30 @@ def test_gazebo_cases_run_when_a_simulator_is_present() -> None:
         cwd=ROOT,
         check=False,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode != 0, "the harness reported success for cases it has not implemented: " + result.stdout
+    combined = result.stdout + result.stderr
+    assert "not implemented" in combined, combined
+    assert "refusing to report" in combined, combined
+    for case in GAZEBO_CASES:
+        assert f"{case}: EXECUTED" not in combined
+        assert f"{case}: PASS" not in combined
+
+
+@pytest.mark.skipif(
+    shutil.which("gz") is None and shutil.which("ign") is None,
+    reason="no Gazebo on PATH; the #327 Gazebo cases stay NOT_EXECUTED",
+)
+def test_gazebo_acceptance_reports_not_executed_only_without_a_simulator() -> None:
+    """Detection, not the override, is what decides NOT_EXECUTED."""
+    result = subprocess.run(
+        [sys.executable, str(HARNESS)],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+    # A simulator is on PATH here, so the harness must not claim a pass either.
+    assert result.returncode != 0, result.stdout + result.stderr
 
 
 def test_launch_exposes_no_unguarded_trajectory_path() -> None:
