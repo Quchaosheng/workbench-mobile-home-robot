@@ -17,7 +17,11 @@
 | Lucide icons | 0.468.0 | ISC (`apps/dashboard/vendor/LUCIDE-LICENSE.txt`) | Interaction | replace with text labels |
 | MonoSim | invited access; version pending | use invitation recorded; license and redistribution terms pending | Simulation + Integration | keep behind an external adapter; remove from release if terms do not permit distribution |
 | RLSOK | invited access; version pending | use invitation recorded; license and redistribution terms pending | Simulation + Integration | keep behind an external adapter; remove from release if terms do not permit distribution |
+| LeRobot | `huggingface/lerobot` (`main`) | **Apache-2.0 (code) — OK**; model weights, datasets and checkpoints reviewed separately | Evaluation + Integration | keep behind an adapter; use an optional extra; never a mandatory core dependency (see [ADR-0008](docs/decisions/ADR-0008-learning-data-plane.md)) |
+| StarVLA | `starVLA/starVLA` (`master`) | **MIT (code) — OK**; model weights, datasets and checkpoints reviewed separately | Evaluation + Safety | prefer a process/HTTP policy boundary over vendoring; drop the adapter when ML dependencies are absent |
 | RLSOK public repository | `realitywarden/rlsok` (`main`) | Apache-2.0 (public repository) | Safety + Integration | verify release version and hosted-service terms before deployment |
+
+LeRobot and StarVLA code licenses were checked on 2026-09-20 (Apache-2.0 and MIT respectively). Those are code licenses only. Model weights, datasets and checkpoints carry their own terms, are not covered by the code license, and must be reviewed separately before adoption. Do not vendor either project's source, weights or datasets; keep the integration behind an adapter or process boundary, and keep the deterministic scripted runner and existing verifier usable when the ML dependencies are absent. See [ADR-0008](docs/decisions/ADR-0008-learning-data-plane.md).
 
 Model weights, CAD, mesh, images, audio and code are reviewed separately.
 

@@ -1,0 +1,90 @@
+{
+  "issue": 345,
+  "human_owner": "Quchaosheng",
+  "objective": "Deliver Milestone 0 of Epic #345 as a decision record and license review only: add an ADR that defines the learning-data plane, the policy-proposal boundary, the evidence links back into world events, and the shutdown/fail-closed behavior of an optional learned-policy provider, and record LeRobot and StarVLA in THIRD_PARTY_REVIEW.md with code, model-weight, dataset and checkpoint licenses reviewed separately plus an exit path that keeps the deterministic scripted runner and existing verifier fully usable when ML dependencies are absent.",
+  "decision_supported": "Whether the repository may begin Milestone 1 (LeRobot-compatible episode export) and later milestones: the ADR fixes the boundary before any learning-plane code exists, and the third-party register states the license and vendoring position for LeRobot (Apache-2.0 code) and StarVLA (MIT code) so a later implementer does not vendor models, datasets or checkpoints whose terms were never reviewed.",
+  "allowed_paths": [
+    "docs/decisions/ADR-0008-learning-data-plane.md",
+    "THIRD_PARTY_REVIEW.md",
+    "mkdocs.yml",
+    "docs/task_packets/issue-345-learning-plane-adr.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "docs/AI-NATIVE-PLAYBOOK.md",
+    "docs/decisions/ADR-0005-hardware-device-runtime.md",
+    "docs/decisions/ADR-0006-scenario-registry-contract.md",
+    "libs/contracts/**",
+    "interfaces/**",
+    "services/**",
+    "robot/control/**",
+    "firmware/**",
+    "docs/architecture/**",
+    "tools/scripts/**"
+  ],
+  "forbidden": [
+    "integrations/**",
+    "services/policy_runtime/**",
+    "evaluation/policy/**",
+    "tests/integration/**",
+    "sim/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "docs/decisions/ADR-0006-scenario-registry-contract.md",
+    "docs/decisions/ADR-0005-hardware-device-runtime.md",
+    "THIRD_PARTY_REVIEW.md",
+    "mkdocs.yml"
+  ],
+  "outputs": [
+    "docs/decisions/ADR-0008-learning-data-plane.md",
+    "THIRD_PARTY_REVIEW.md",
+    "mkdocs.yml"
+  ],
+  "acceptance": [
+    "an ADR named ADR-0008 states that high-rate images, robot states and actions live in a separate learning-data plane and must not be embedded in the SQLite WorldEvent store, while world events retain only bounded metadata, hashes, time ranges, provenance and evidence references that point at learning artifacts",
+    "the ADR records the policy-proposal boundary: a learned policy is a proposal source or bounded skill implementation and is never the verifier, safety authority, emergency-stop authority or source of physical completion truth, and no policy response may reach raw joint, velocity, firmware, safe-enable or completion authority through the Agent Runtime",
+    "the ADR requires proposed, safety-adjusted and actually executed actions to be recorded separately so a training target never silently uses an unexecuted proposal, and requires that only a Workbench verifier may declare task success",
+    "the ADR requires exact camera order, state/action layout, units, frame IDs, calibration revision, normalization statistics, model digest, dataset digest, code revision, control rate and action horizon to be versioned and checked fail-closed before inference",
+    "the ADR defines a shutdown and exit path in which the deterministic scripted runner and the existing verifier remain fully usable when LeRobot, StarVLA, PyTorch, CUDA, Transformers or any ML dependency is absent, and states that physical learned-policy execution is out of scope until a separate owner-approved Motion/Safety task exists",
+    "the ADR is recorded as proposed with a named owner approval register and grants no scope, license, safety or release authority until each owner records approved",
+    "THIRD_PARTY_REVIEW.md lists LeRobot with its Apache-2.0 code license checked and StarVLA with its MIT code license checked, each with an owner and an exit path, and records that model weights, datasets and checkpoints are reviewed separately and are not covered by the code license",
+    "the register states that LeRobot and StarVLA source, weights and datasets must not be vendored and that the integration must prefer an adapter or process boundary over copied code",
+    "the ADR is linked from the mkdocs Decisions navigation so the docs build stays strict-clean"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-345-learning-plane-adr.json",
+    "python3 -m mkdocs build --strict",
+    "python3 -m pytest -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "the committed ADR-0008 showing the learning-data plane boundary, the policy-proposal boundary, the fail-closed metadata list, the owner approval register and the dependency-absent exit path",
+    "the THIRD_PARTY_REVIEW.md rows for LeRobot and StarVLA with their checked code licenses, owners and exit paths, plus the separate model-weight, dataset and checkpoint review statement",
+    "mkdocs build --strict output proving the new decision page renders and every nav entry resolves",
+    "full-suite pytest output with passed and skipped counts, ruff check and ruff format output, make context-check output and git diff --check output"
+  ],
+  "stop_conditions": [
+    "the change would require editing interfaces/, libs/contracts/ or another path that needs three human approvals",
+    "the change would require a new runtime dependency, a schema amendment or a Pydantic model change",
+    "the change would require implementing any Milestone 1 through 4 code, vendoring LeRobot or StarVLA source, or adding model weights or datasets",
+    "the change would require a physical, Gazebo or HIL claim, or any executed learning run",
+    "the change would require editing a frozen scenario, a seed, a scene hash or a registry manifest",
+    "a required modification falls outside allowed_paths"
+  ],
+  "max_iterations": 8,
+  "data_classification": "public repository source and documentation only; no secrets, personal data, credentials, model weights, datasets or physical measurement data",
+  "model_policy": "AI may write the ADR and the third-party register rows from the public upstream license texts; a named human Owner accepts the learning-plane boundary, the license position and the release decisions the record informs",
+  "risks_and_fallbacks": [
+    "the ADR could be read as approval to run learned policies on hardware; fallback is that it is proposed, out of scope for physical execution, and grants no Motion/Safety authority until a separate owner-approved task exists",
+    "an upstream code license could be mistaken for a dataset or checkpoint license; fallback is that the register reviews code, model weights, datasets and checkpoints separately and forbids vendoring unreviewed artifacts",
+    "the learning plane could drift into the SQLite event store; fallback is that the ADR states the separation as a boundary rule and the world events keep only bounded references and hashes",
+    "ML dependencies could become mandatory and break the offline demo; fallback is that the ADR requires the scripted runner and verifier to stay usable when every ML dependency is absent",
+    "rollback is a revert of this commit; the ADR and register rows are additive documentation and change no runtime, interface, fixture or dependency"
+  ]
+}
