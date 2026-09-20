@@ -106,6 +106,22 @@ answer = client.ask("Which calibration notes mention the gripper?")
 - [多主机部署](docs/deployment/multi-host.md)
 - [安全策略](SECURITY.md)
 
+<!-- BEGIN GENERATED: scenario-readiness -->
+
+### 场景就绪状态
+
+由 `tools/scripts/readiness_report.py` 依据 [`docs/evaluation/readiness-report-v1.json`](docs/evaluation/readiness-report-v1.json) 生成。它说明当前提交的软件对每个场景做到什么程度。它不代表发布批准。它也不是物理或 Gazebo 证据。详见 [多场景就绪报告](docs/evaluation/multi-scenario-readiness.md)。
+
+| 场景 | 证据类别 | 可否发布 | 执行状态 |
+| --- | --- | --- | --- |
+| `clear-workspace@0.2` | software, scripted_fixture | 否 | SCRIPTED_FIXTURE |
+| `inspect-workpieces@0.2` | software, scripted_fixture | 否 | SCRIPTED_FIXTURE |
+| `kit-three-parts@0.2` | software, scripted_fixture | 否 | SCRIPTED_FIXTURE |
+| `pick-place-red-block@1.0` | software, scripted_fixture | 否 | SCRIPTED_FIXTURE |
+| `sort-parcels@0.2` | software, scripted_fixture | 否 | SCRIPTED_FIXTURE |
+
+<!-- END GENERATED: scenario-readiness -->
+
 ## 许可证
 
 Apache-2.0，详见 [LICENSE](LICENSE)。

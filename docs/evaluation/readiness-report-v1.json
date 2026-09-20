@@ -1,0 +1,495 @@
+{
+  "report_version": "multi-scenario-readiness-v1",
+  "generated_by": "tools/scripts/readiness_report.py",
+  "edit_policy": "This file is generated. Do not hand-edit a test outcome, a replay hash, an evidence class or release_eligible: regenerate it with `python3 tools/scripts/readiness_report.py` and let the gate compare the result. Only generated_at and source_commit change without a change of inputs.",
+  "authority": {
+    "grants": [
+      "a machine-generated statement of what the committed software is ready for per scenario identity",
+      "a reproduction of that statement by a command"
+    ],
+    "does_not_grant": [
+      "release approval",
+      "physical or Gazebo validation",
+      "authority to waive a required check or human approval"
+    ]
+  },
+  "generated_at": "2026-09-20T02:23:31.425725+00:00",
+  "source_commit": "c5016abdf329f4b8649f22f82ca74dd0bcb52ad3",
+  "configuration_hash": "9f386db8558c866526da10beed940801f4c2dd79518b31ca5db4e60b659f5c8c",
+  "evidence_class_vocabulary": {
+    "classes": [
+      "software",
+      "scripted_fixture",
+      "gazebo",
+      "physical"
+    ],
+    "release_eligible_classes": [
+      "gazebo",
+      "physical"
+    ],
+    "rule": "each class is reported independently; software means the definition is registered, contract valid and proven by a committed test per required dimension, scripted_fixture means a committed scripted fixture exercised it, gazebo and physical mean a real environment did; only gazebo and physical can make a row release eligible"
+  },
+  "generated_fields": [
+    "generated_at",
+    "source_commit",
+    "configuration_hash",
+    "scenarios[].evidence_classes",
+    "scenarios[].release_eligible",
+    "scenarios[].software_readiness",
+    "scenarios[].proved_dimensions",
+    "scenarios[].missing_dimensions",
+    "scenarios[].replay_hash",
+    "scenarios[].rendered_as_success"
+  ],
+  "summary": {
+    "registered_count": 5,
+    "software_ready_count": 5,
+    "scripted_fixture_count": 5,
+    "gazebo_count": 0,
+    "physical_count": 0,
+    "release_eligible_count": 0,
+    "not_executed_or_blocked_count": 0
+  },
+  "limitations": [
+    "every committed scenario is a scripted fixture: no Gazebo or physical run backs any row",
+    "NOT_EXECUTED and BLOCKED rows are reported as such and are never rendered as a pass",
+    "this report grants no release approval and replaces no required check or human approval"
+  ],
+  "scenarios": [
+    {
+      "identity": "clear-workspace@0.2",
+      "scenario_id": "clear-workspace",
+      "scenario_version": "0.2",
+      "task_family": "cleaning",
+      "goal": "Clear the blocking cylinder, then place the red block in the tray",
+      "execution_status": "SCRIPTED_FIXTURE",
+      "evidence_classes": {
+        "software": true,
+        "scripted_fixture": true,
+        "gazebo": false,
+        "physical": false
+      },
+      "release_eligible": false,
+      "software_readiness": "ready",
+      "proved_dimensions": [
+        "conflicting_evidence",
+        "deterministic_replay",
+        "missing_provenance",
+        "policy_valid_actions",
+        "release_status_truthful",
+        "stale_evidence",
+        "unsafe_field_rejected"
+      ],
+      "missing_dimensions": [],
+      "failure_coverage": [
+        {
+          "dimension": "conflicting_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_cleaning_conflicting_evidence"
+        },
+        {
+          "dimension": "deterministic_replay",
+          "test": "tests/unit/test_scenario_conformance.py::test_cleaning_deterministic_replay"
+        },
+        {
+          "dimension": "missing_provenance",
+          "test": "tests/unit/test_scenario_conformance.py::test_cleaning_missing_provenance"
+        },
+        {
+          "dimension": "policy_valid_actions",
+          "test": "tests/unit/test_scenario_conformance.py::test_cleaning_policy_valid_actions"
+        },
+        {
+          "dimension": "release_status_truthful",
+          "test": "tests/unit/test_scenario_conformance.py::test_cleaning_release_status_truthful"
+        },
+        {
+          "dimension": "stale_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_cleaning_stale_evidence"
+        },
+        {
+          "dimension": "unsafe_field_rejected",
+          "test": "tests/unit/test_scenario_conformance.py::test_cleaning_unsafe_field_rejected"
+        }
+      ],
+      "replay_hash": "4f431b159d6877c13b4d3a5e548acf8b06139f6f05429115796cbaa02a62bec6",
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_workspace_clearance",
+      "semantic_actions": [
+        "observe",
+        "grasp",
+        "place"
+      ],
+      "required_adapters": [
+        "motion",
+        "perception",
+        "simulation"
+      ],
+      "recovery_policy": [
+        "re_observe",
+        "retry_action",
+        "abort"
+      ],
+      "owners": {
+        "scenario_rules": "Task / Simulation",
+        "adapter": "Motion / Perception",
+        "evidence": "World Model",
+        "release": "Release / QA"
+      },
+      "known_limitations": [
+        "The blocking cylinder is cleared by grasp and place, not by a dedicated cleaning action, so this family declares no pending action and no navigation adapter. Issue #301 registered it and proved the legacy entry point and the registry agree. The fixture is not release eligible."
+      ],
+      "rendered_as_success": false
+    },
+    {
+      "identity": "inspect-workpieces@0.2",
+      "scenario_id": "inspect-workpieces",
+      "scenario_version": "0.2",
+      "task_family": "inspection",
+      "goal": "Inspect presence, identity, and orientation of three workpieces",
+      "execution_status": "SCRIPTED_FIXTURE",
+      "evidence_classes": {
+        "software": true,
+        "scripted_fixture": true,
+        "gazebo": false,
+        "physical": false
+      },
+      "release_eligible": false,
+      "software_readiness": "ready",
+      "proved_dimensions": [
+        "conflicting_evidence",
+        "deterministic_replay",
+        "missing_provenance",
+        "policy_valid_actions",
+        "release_status_truthful",
+        "stale_evidence",
+        "unsafe_field_rejected"
+      ],
+      "missing_dimensions": [],
+      "failure_coverage": [
+        {
+          "dimension": "conflicting_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_inspection_conflicting_evidence"
+        },
+        {
+          "dimension": "deterministic_replay",
+          "test": "tests/unit/test_scenario_conformance.py::test_inspection_deterministic_replay"
+        },
+        {
+          "dimension": "missing_provenance",
+          "test": "tests/unit/test_scenario_conformance.py::test_inspection_missing_provenance"
+        },
+        {
+          "dimension": "policy_valid_actions",
+          "test": "tests/unit/test_scenario_conformance.py::test_inspection_policy_valid_actions"
+        },
+        {
+          "dimension": "release_status_truthful",
+          "test": "tests/unit/test_scenario_conformance.py::test_inspection_release_status_truthful"
+        },
+        {
+          "dimension": "stale_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_inspection_stale_evidence"
+        },
+        {
+          "dimension": "unsafe_field_rejected",
+          "test": "tests/unit/test_scenario_conformance.py::test_inspection_unsafe_field_rejected"
+        }
+      ],
+      "replay_hash": "78083df0d382c350cdfaf29b063615cb39b99322da715dc779642564a2caf29d",
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_inspection_evidence",
+      "semantic_actions": [
+        "observe"
+      ],
+      "required_adapters": [
+        "perception",
+        "simulation"
+      ],
+      "recovery_policy": [
+        "re_observe",
+        "abort"
+      ],
+      "owners": {
+        "scenario_rules": "Task / Simulation",
+        "adapter": "Perception",
+        "evidence": "World Model",
+        "release": "Release / QA"
+      },
+      "known_limitations": [
+        "Inspection is observation-only: it issues no grasp or place action. Issue #301 registered the family and proved the legacy entry point and the registry resolve to the same verifier. The fixture is not release eligible."
+      ],
+      "rendered_as_success": false
+    },
+    {
+      "identity": "kit-three-parts@0.2",
+      "scenario_id": "kit-three-parts",
+      "scenario_version": "0.2",
+      "task_family": "kitting",
+      "goal": "Assemble a three-part kit in the kit tray",
+      "execution_status": "SCRIPTED_FIXTURE",
+      "evidence_classes": {
+        "software": true,
+        "scripted_fixture": true,
+        "gazebo": false,
+        "physical": false
+      },
+      "release_eligible": false,
+      "software_readiness": "ready",
+      "proved_dimensions": [
+        "conflicting_evidence",
+        "deterministic_replay",
+        "missing_provenance",
+        "policy_valid_actions",
+        "release_status_truthful",
+        "stale_evidence",
+        "unsafe_field_rejected"
+      ],
+      "missing_dimensions": [],
+      "failure_coverage": [
+        {
+          "dimension": "conflicting_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_kitting_conflicting_evidence"
+        },
+        {
+          "dimension": "deterministic_replay",
+          "test": "tests/unit/test_scenario_conformance.py::test_kitting_deterministic_replay"
+        },
+        {
+          "dimension": "missing_provenance",
+          "test": "tests/unit/test_scenario_conformance.py::test_kitting_missing_provenance"
+        },
+        {
+          "dimension": "policy_valid_actions",
+          "test": "tests/unit/test_scenario_conformance.py::test_kitting_policy_valid_actions"
+        },
+        {
+          "dimension": "release_status_truthful",
+          "test": "tests/unit/test_scenario_conformance.py::test_kitting_release_status_truthful"
+        },
+        {
+          "dimension": "stale_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_kitting_stale_evidence"
+        },
+        {
+          "dimension": "unsafe_field_rejected",
+          "test": "tests/unit/test_scenario_conformance.py::test_kitting_unsafe_field_rejected"
+        }
+      ],
+      "replay_hash": "82448239eae986c89c874dc759ef7d848cfe5d15fa50b71aff254473cb654b6a",
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_kit_contents",
+      "semantic_actions": [
+        "observe",
+        "grasp",
+        "place"
+      ],
+      "required_adapters": [
+        "motion",
+        "perception",
+        "simulation"
+      ],
+      "recovery_policy": [
+        "re_observe",
+        "retry_action",
+        "abort"
+      ],
+      "owners": {
+        "scenario_rules": "Task / Simulation",
+        "adapter": "Motion / Perception",
+        "evidence": "World Model",
+        "release": "Release / QA"
+      },
+      "known_limitations": [
+        "The verifier and the scripted evaluator existed before the registry; Issue #301 registered the family and proved the legacy task_id and the registry identity resolve to the same verifier and the same frozen corpus. The simulation adapter is a fixture, so no Gazebo or physical claim is made."
+      ],
+      "rendered_as_success": false
+    },
+    {
+      "identity": "pick-place-red-block@1.0",
+      "scenario_id": "pick-place-red-block",
+      "scenario_version": "1.0",
+      "task_family": "pick_place",
+      "goal": "Place the red block in the tray",
+      "execution_status": "SCRIPTED_FIXTURE",
+      "evidence_classes": {
+        "software": true,
+        "scripted_fixture": true,
+        "gazebo": false,
+        "physical": false
+      },
+      "release_eligible": false,
+      "software_readiness": "ready",
+      "proved_dimensions": [
+        "conflicting_evidence",
+        "deterministic_replay",
+        "missing_provenance",
+        "policy_valid_actions",
+        "release_status_truthful",
+        "stale_evidence",
+        "unsafe_field_rejected"
+      ],
+      "missing_dimensions": [],
+      "failure_coverage": [
+        {
+          "dimension": "conflicting_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_pick_place_conflicting_evidence"
+        },
+        {
+          "dimension": "deterministic_replay",
+          "test": "tests/unit/test_scenario_conformance.py::test_pick_place_deterministic_replay"
+        },
+        {
+          "dimension": "missing_provenance",
+          "test": "tests/unit/test_scenario_conformance.py::test_pick_place_missing_provenance"
+        },
+        {
+          "dimension": "policy_valid_actions",
+          "test": "tests/unit/test_scenario_conformance.py::test_pick_place_policy_valid_actions"
+        },
+        {
+          "dimension": "release_status_truthful",
+          "test": "tests/unit/test_scenario_conformance.py::test_pick_place_release_status_truthful"
+        },
+        {
+          "dimension": "stale_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_pick_place_stale_evidence"
+        },
+        {
+          "dimension": "unsafe_field_rejected",
+          "test": "tests/unit/test_scenario_conformance.py::test_pick_place_unsafe_field_rejected"
+        }
+      ],
+      "replay_hash": "23b1c3ab5c8530c0d27bae6935b6a38b624d0afc0e26ac46b07d8a2855770b2b",
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_object_in_tray",
+      "semantic_actions": [
+        "observe",
+        "grasp",
+        "place"
+      ],
+      "required_adapters": [
+        "motion",
+        "perception",
+        "simulation"
+      ],
+      "recovery_policy": [
+        "re_observe",
+        "retry_action",
+        "ask_confirm",
+        "abort"
+      ],
+      "owners": {
+        "scenario_rules": "Task / Simulation",
+        "adapter": "Motion / Perception",
+        "evidence": "World Model",
+        "release": "Release / QA"
+      },
+      "known_limitations": [
+        "Fractional task families are not merged; the simulation adapter is a fixture, so no Gazebo or physical claim is made."
+      ],
+      "rendered_as_success": false
+    },
+    {
+      "identity": "sort-parcels@0.2",
+      "scenario_id": "sort-parcels",
+      "scenario_version": "0.2",
+      "task_family": "parcels",
+      "goal": "Scan the parcel batch, route verified intact parcels to pickup, and isolate exceptions",
+      "execution_status": "SCRIPTED_FIXTURE",
+      "evidence_classes": {
+        "software": true,
+        "scripted_fixture": true,
+        "gazebo": false,
+        "physical": false
+      },
+      "release_eligible": false,
+      "software_readiness": "ready",
+      "proved_dimensions": [
+        "conflicting_evidence",
+        "deterministic_replay",
+        "missing_provenance",
+        "policy_valid_actions",
+        "release_status_truthful",
+        "stale_evidence",
+        "unsafe_field_rejected"
+      ],
+      "missing_dimensions": [],
+      "failure_coverage": [
+        {
+          "dimension": "conflicting_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_parcels_conflicting_evidence"
+        },
+        {
+          "dimension": "deterministic_replay",
+          "test": "tests/unit/test_scenario_conformance.py::test_parcels_deterministic_replay"
+        },
+        {
+          "dimension": "missing_provenance",
+          "test": "tests/unit/test_scenario_conformance.py::test_parcels_missing_provenance"
+        },
+        {
+          "dimension": "policy_valid_actions",
+          "test": "tests/unit/test_scenario_conformance.py::test_parcels_policy_valid_actions"
+        },
+        {
+          "dimension": "release_status_truthful",
+          "test": "tests/unit/test_scenario_conformance.py::test_parcels_release_status_truthful"
+        },
+        {
+          "dimension": "stale_evidence",
+          "test": "tests/unit/test_scenario_conformance.py::test_parcels_stale_evidence"
+        },
+        {
+          "dimension": "unsafe_field_rejected",
+          "test": "tests/unit/test_scenario_conformance.py::test_parcels_unsafe_field_rejected"
+        }
+      ],
+      "replay_hash": "7645a9d62faceae014c733eb57025067af06d98d9b1677bb1c790aeccb3bf567",
+      "verifier": "services/world_model/workbench_world_model/verifier.py::verify_parcel_sorting",
+      "semantic_actions": [
+        "observe",
+        "grasp",
+        "place"
+      ],
+      "required_adapters": [
+        "motion",
+        "perception",
+        "simulation"
+      ],
+      "recovery_policy": [
+        "re_observe",
+        "retry_action",
+        "abort"
+      ],
+      "owners": {
+        "scenario_rules": "Task / Simulation",
+        "adapter": "Motion / Perception",
+        "evidence": "World Model",
+        "release": "Release / QA"
+      },
+      "known_limitations": [
+        "Bounded to the tabletop workstation. Requests that need a mobile base fail closed until a navigation contract and hardware are owned, so no navigation adapter is declared. Issue #301 registered the family and proved the legacy task_id and the registry agree."
+      ],
+      "rendered_as_success": false
+    }
+  ],
+  "declared_not_registered": [
+    {
+      "identity": "assemble-two-parts@0.3",
+      "task_family": "assembly",
+      "status": "BLOCKED",
+      "environment_status": "BLOCKED",
+      "missing_capabilities": [
+        "blocked"
+      ],
+      "notes": "Blocked by hardware. Seat confirmation needs force or torque feedback, which cannot be verified by vision alone, and the family is not implemented, so this row deliberately declares no verifier. Claiming one would read as assembly support."
+    },
+    {
+      "identity": "clean-and-inspect-workspace@0.1",
+      "task_family": "cleaning",
+      "status": "NOT_REGISTERED",
+      "environment_status": "NOT_EXECUTED",
+      "missing_capabilities": [
+        "not_available",
+        "blocked"
+      ],
+      "notes": "Published as a non-executable example. clean_workspace is a pending ActionType and no cleaning task family is registered; Issue #306 owns the first registry-native slice."
+    }
+  ]
+}
