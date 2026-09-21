@@ -5,7 +5,7 @@ E13 的边界是把控制端的只读投影与仿真事件源分开。两台机�
 ## 仿真机
 
 ```bash
-export WORKBENCH_IMAGE=ghcr.io/quchaosheng/workbench-desk-robot:v0.2.0
+export WORKBENCH_IMAGE=ghcr.io/quchaosheng/workbench-mobile-home-robot:v1.0.0
 docker compose -f deploy/multi-host/compose.sim.yaml up -d
 curl --fail http://127.0.0.1:8090/readyz
 ```
@@ -36,7 +36,7 @@ docker compose -f deploy/multi-host/compose.sim.yaml up -d
 ## 控制机
 
 ```bash
-export WORKBENCH_IMAGE=ghcr.io/quchaosheng/workbench-desk-robot:v0.2.0
+export WORKBENCH_IMAGE=ghcr.io/quchaosheng/workbench-mobile-home-robot:v1.0.0
 export WORKBENCH_EVENT_SOURCE_URL=http://10.20.30.40:8090
 export WORKBENCH_EVENT_SOURCE_ALLOWLIST=10.20.30.40/32
 docker compose -f deploy/multi-host/compose.controller.yaml up -d

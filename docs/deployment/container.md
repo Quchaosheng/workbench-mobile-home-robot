@@ -54,8 +54,8 @@ entrypoint 依次 source `/opt/ros/jazzy/setup.bash`、`/opt/workbench_ws/instal
 ## 新开发者快速开始
 
 ```bash
-git clone https://github.com/Quchaosheng/workbench-desk-robot.git
-cd workbench-desk-robot
+git clone https://github.com/Quchaosheng/workbench-mobile-home-robot.git
+cd workbench-mobile-home-robot
 make container-build
 make container-check
 docker compose up dashboard

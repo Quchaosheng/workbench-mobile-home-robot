@@ -208,7 +208,7 @@ container-build:
 container-image-verify:
 	@tag_id=$$(docker image inspect workbench-1:local --format '{{.Id}}'); \
 		test -n "$$tag_id"; \
-		running_id=$$(docker inspect workbench-desk-robot-dashboard-1 --format '{{.Image}}' 2>/dev/null || true); \
+		running_id=$$(docker inspect workbench-mobile-home-robot-dashboard-1 --format '{{.Image}}' 2>/dev/null || true); \
 		if test -n "$$running_id" && test "$$tag_id" != "$$running_id"; then \
 			echo "dashboard image $$running_id differs from workbench-1:local $$tag_id" >&2; exit 2; \
 		fi; \

@@ -1,4 +1,4 @@
-# Workbench Desk Robot
+# Workbench
 
 > **Verify before you say done.**
 >
@@ -8,15 +8,15 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/Quchaosheng/workbench-desk-robot?display_name=tag)](https://github.com/Quchaosheng/workbench-desk-robot/releases/latest)
-[![CI](https://github.com/Quchaosheng/workbench-desk-robot/actions/workflows/ci.yml/badge.svg)](https://github.com/Quchaosheng/workbench-desk-robot/actions)
+[![Release](https://img.shields.io/github/v/release/Quchaosheng/workbench-mobile-home-robot?display_name=tag)](https://github.com/Quchaosheng/workbench-mobile-home-robot/releases/latest)
+[![CI](https://github.com/Quchaosheng/workbench-mobile-home-robot/actions/workflows/ci.yml/badge.svg)](https://github.com/Quchaosheng/workbench-mobile-home-robot/actions)
 
 ![VORA Home Robot](docs/assets/workbench-home-robot-market-v18.png)
 
 <p align="center"><img src="docs/assets/vora-logo.svg" alt="VORA" width="360"></p>
 
 **Product name:** VORA Home Robot<br>
-**Repository/runtime:** Workbench Desk Robot (`workbench-desk-robot`)
+**Repository/runtime:** `workbench-mobile-home-robot` (Workbench)
 
 VORA is the product brand; Workbench remains the engineering repository and
 evidence-first runtime name. The VORA mark uses an open angle and off-axis orbit
@@ -46,8 +46,8 @@ goal -> bounded planner -> semantic action -> trusted executor
 Requirements: Python 3.12. No GPU is required for the offline runtime.
 
 ```bash
-git clone https://github.com/Quchaosheng/workbench-desk-robot.git
-cd workbench-desk-robot
+git clone https://github.com/Quchaosheng/workbench-mobile-home-robot.git
+cd workbench-mobile-home-robot
 python -m pip install -e ".[dev]"
 python tools/scripts/sim_cli.py doctor
 python tools/scripts/sim_cli.py run normal-001 --runner scripted --output-dir runs/demo

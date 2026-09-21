@@ -1,7 +1,7 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://github.com/Quchaosheng/workbench-desk-robot/vex/container-2026-09-01",
-  "author": "Quchaosheng/workbench-desk-robot",
+  "@id": "https://github.com/Quchaosheng/workbench-mobile-home-robot/vex/container-2026-09-01",
+  "author": "Quchaosheng/workbench-mobile-home-robot",
   "version": 1,
   "timestamp": "2026-09-01T00:00:00Z",
   "statements": [

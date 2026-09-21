@@ -33,8 +33,8 @@ The command intentionally fails until at least two of three real participants pa
 ## Path under test
 
 ```bash
-git clone https://github.com/Quchaosheng/workbench-desk-robot.git
-cd workbench-desk-robot
+git clone https://github.com/Quchaosheng/workbench-mobile-home-robot.git
+cd workbench-mobile-home-robot
 docker compose up --build -d
 curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/readyz

@@ -1,4 +1,4 @@
-# Workbench Desk Robot
+# Workbench
 
 > **先验证，再说完成。**
 >
@@ -7,14 +7,14 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/Quchaosheng/workbench-desk-robot?display_name=tag)](https://github.com/Quchaosheng/workbench-desk-robot/releases/latest)
-[![CI](https://github.com/Quchaosheng/workbench-desk-robot/actions/workflows/ci.yml/badge.svg)](https://github.com/Quchaosheng/workbench-desk-robot/actions)
+[![Release](https://img.shields.io/github/v/release/Quchaosheng/workbench-mobile-home-robot?display_name=tag)](https://github.com/Quchaosheng/workbench-mobile-home-robot/releases/latest)
+[![CI](https://github.com/Quchaosheng/workbench-mobile-home-robot/actions/workflows/ci.yml/badge.svg)](https://github.com/Quchaosheng/workbench-mobile-home-robot/actions)
 
 ![VORA 家务机器人](docs/assets/workbench-home-robot-market-v18.png)
 
 <p align="center"><img src="docs/assets/vora-logo.svg" alt="VORA" width="360"></p>
 
-**产品名：** VORA Home Robot  ·  **工程仓库 / 运行时：** Workbench Desk Robot（`workbench-desk-robot`）
+**产品名：** VORA Home Robot  ·  **工程仓库 / 运行时：** `workbench-mobile-home-robot`（Workbench）
 
 VORA 是面向用户的产品品牌；Workbench 继续作为工程仓库和证据优先运行时的名称。
 标志由开放角度和偏心轨道构成，保持识别度，同时不把品牌绑定在某一种机器人用途上。
@@ -42,8 +42,8 @@ VORA 是面向用户的产品品牌；Workbench 继续作为工程仓库和证�
 要求：Python 3.12。离线运行时不需要 GPU。
 
 ```bash
-git clone https://github.com/Quchaosheng/workbench-desk-robot.git
-cd workbench-desk-robot
+git clone https://github.com/Quchaosheng/workbench-mobile-home-robot.git
+cd workbench-mobile-home-robot
 python -m pip install -e ".[dev]"
 python tools/scripts/sim_cli.py doctor
 python tools/scripts/sim_cli.py run normal-001 --runner scripted --output-dir runs/demo

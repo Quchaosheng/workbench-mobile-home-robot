@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Workbench Desk Robot read-only API",
+    "title": "Workbench read-only API",
     "version": "1.0.0",
     "description": "Read-only run, event, health, alert, readiness, and expression projections. No endpoint grants robot or ROS control authority."
   },

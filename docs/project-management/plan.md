@@ -11,7 +11,7 @@ a dual-arm mobile product is in scope.
 
 ```mermaid
 gantt
-    title Workbench Desk Robot - 12 week delivery baseline
+    title Workbench - 12 week delivery baseline
     dateFormat  YYYY-MM-DD
     axisFormat  %m-%d
 

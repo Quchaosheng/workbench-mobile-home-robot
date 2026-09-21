@@ -82,11 +82,11 @@ physical evidence unless the applicable run and verification artifacts exist.
 
 ## Related execution Issues
 
-- Multi-scenario epic: [#309](https://github.com/Quchaosheng/workbench-desk-robot/issues/309)
-- Contract and ownership: [#308](https://github.com/Quchaosheng/workbench-desk-robot/issues/308)
-- Definition of Ready: [#310](https://github.com/Quchaosheng/workbench-desk-robot/issues/310)
-- Capability matrix: [#311](https://github.com/Quchaosheng/workbench-desk-robot/issues/311)
-- Phase gates: [#314](https://github.com/Quchaosheng/workbench-desk-robot/issues/314)
+- Multi-scenario epic: [#309](https://github.com/Quchaosheng/workbench-mobile-home-robot/issues/309)
+- Contract and ownership: [#308](https://github.com/Quchaosheng/workbench-mobile-home-robot/issues/308)
+- Definition of Ready: [#310](https://github.com/Quchaosheng/workbench-mobile-home-robot/issues/310)
+- Capability matrix: [#311](https://github.com/Quchaosheng/workbench-mobile-home-robot/issues/311)
+- Phase gates: [#314](https://github.com/Quchaosheng/workbench-mobile-home-robot/issues/314)
 
 ## Weekly review
 

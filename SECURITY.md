@@ -6,7 +6,7 @@ Security fixes target the default branch and the latest published release. Older
 
 ## Report a vulnerability privately
 
-Do not report vulnerabilities, credentials, private logs, or exploit details in a public Issue or pull request. Use [GitHub private vulnerability reporting](https://github.com/Quchaosheng/workbench-desk-robot/security/advisories/new). If that channel is unavailable, contact the project owner privately and include only enough information to establish a secure follow-up channel.
+Do not report vulnerabilities, credentials, private logs, or exploit details in a public Issue or pull request. Use [GitHub private vulnerability reporting](https://github.com/Quchaosheng/workbench-mobile-home-robot/security/advisories/new). If that channel is unavailable, contact the project owner privately and include only enough information to establish a secure follow-up channel.
 
 Include, when safe:
 

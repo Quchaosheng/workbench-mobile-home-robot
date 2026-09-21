@@ -1,4 +1,4 @@
-site_name: Workbench Desk Robot
+site_name: Workbench
 site_description: Controlled engineering and operator documentation
 docs_dir: docs
 strict: true

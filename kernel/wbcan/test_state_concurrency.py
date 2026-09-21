@@ -132,8 +132,8 @@ RELEASE_BASELINE_EVIDENCE: tuple[dict[str, int | str], ...] = (
             "rounded up; no stress JSON artifact"
         ),
         "stress_artifact_id": "not-available",
-        "run_url": "https://github.com/Quchaosheng/workbench-desk-robot/actions/runs/33034552431",
-        "job_url": "https://github.com/Quchaosheng/workbench-desk-robot/actions/runs/33034552431/job/98394315180",
+        "run_url": "https://github.com/Quchaosheng/workbench-mobile-home-robot/actions/runs/33034552431",
+        "job_url": "https://github.com/Quchaosheng/workbench-mobile-home-robot/actions/runs/33034552431/job/98394315180",
     },
     {
         "milestone": "#280",
@@ -145,8 +145,8 @@ RELEASE_BASELINE_EVIDENCE: tuple[dict[str, int | str], ...] = (
         "observed_duration_ms": 6578,
         "measurement": "stress JSON completed_at - started_at, rounded up",
         "stress_artifact_id": "9635641484",
-        "run_url": "https://github.com/Quchaosheng/workbench-desk-robot/actions/runs/33045892298",
-        "job_url": "https://github.com/Quchaosheng/workbench-desk-robot/actions/runs/33045892298/job/98429673919",
+        "run_url": "https://github.com/Quchaosheng/workbench-mobile-home-robot/actions/runs/33045892298",
+        "job_url": "https://github.com/Quchaosheng/workbench-mobile-home-robot/actions/runs/33045892298/job/98429673919",
     },
     {
         "milestone": "#282",
@@ -158,8 +158,8 @@ RELEASE_BASELINE_EVIDENCE: tuple[dict[str, int | str], ...] = (
         "observed_duration_ms": 6644,
         "measurement": "stress JSON completed_at - started_at, rounded up",
         "stress_artifact_id": "9637268441",
-        "run_url": "https://github.com/Quchaosheng/workbench-desk-robot/actions/runs/33050165163",
-        "job_url": "https://github.com/Quchaosheng/workbench-desk-robot/actions/runs/33050165163/job/98443442430",
+        "run_url": "https://github.com/Quchaosheng/workbench-mobile-home-robot/actions/runs/33050165163",
+        "job_url": "https://github.com/Quchaosheng/workbench-mobile-home-robot/actions/runs/33050165163/job/98443442430",
     },
 )
 
