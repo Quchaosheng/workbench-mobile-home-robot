@@ -710,8 +710,14 @@ svg {
   gap: 14px;
 }
 
-.side-stack {
+/* Each column is a stack, so a fourth panel can never be auto-placed into an
+   implicit row beside a column that is already taller. Auto-placement turned
+   the third panel into a second grid row and left the whole right-hand side of
+   that row blank. */
+.dashboard-column {
   display: grid;
+  align-content: start;
+  min-width: 0;
   gap: 14px;
 }
 
@@ -1666,7 +1672,9 @@ svg {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .side-stack {
+  /* Below this width the two columns stack, so the right column keeps its two
+     cards side by side the way the single stack used to. */
+  .dashboard-column:last-child {
     grid-template-columns: minmax(0, 1fr) minmax(280px, 0.65fr);
   }
 
@@ -1833,7 +1841,7 @@ svg {
     bottom: 12px;
   }
 
-  .side-stack,
+  .dashboard-column:last-child,
   .replay-grid {
     grid-template-columns: minmax(0, 1fr);
   }

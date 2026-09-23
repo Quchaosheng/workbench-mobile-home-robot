@@ -1020,6 +1020,7 @@ function openEvidence(reference) {
 }
 
 const monitoringCards = [
+  { id: "application", label: "应用", matches: (domain) => domain === "application" },
   { id: "safety", label: "安全", matches: (domain) => domain === "safety" },
   { id: "power", label: "电源", matches: (domain) => domain === "power" },
   { id: "can", label: "CAN 通信", matches: (domain) => domain === "communication" },
@@ -1043,6 +1044,25 @@ const monitoringSeverityLabels = { info: "提示", warning: "警告", critical: 
 
 const monitoringAlertStateLabels = { active: "进行中", cleared: "已清除" };
 
+// The overview cards split some domains (communication into CAN, robot into
+// localisation, motion and perception), so the trend table cannot borrow their
+// labels one-to-one. It labels the domains the API actually reports and falls
+// back to the raw id, because an unlabelled domain is still readable while a
+// guessed label would be wrong.
+const monitoringDomainLabels = {
+  application: "应用",
+  communication: "通信",
+  compute: "计算",
+  power: "电源",
+  robot: "机器人",
+  safety: "安全",
+  task: "任务",
+};
+
+function monitoringDomainLabel(domain) {
+  return monitoringDomainLabels[domain] || domain;
+}
+
 const monitoringConditionLabels = {
   estop_unavailable: "急停通道不可用",
   estop_disagreement: "急停通道不一致",
@@ -1061,6 +1081,29 @@ const monitoringConditionLabels = {
   source_missing: "数据源未上报",
   source_stale: "数据源陈旧",
   source_fault: "数据源冲突",
+};
+
+// The English rule summary is authored in the backend policy. The UI shows the
+// same condition in Chinese so one alert is not half-translated; an unmapped
+// condition keeps the backend sentence rather than losing it.
+const monitoringConditionSummaries = {
+  estop_unavailable: "急停通道不可用。",
+  estop_disagreement: "急停通道读数不一致。",
+  watchdog_loss: "安全 MCU 看门狗未收到心跳。",
+  bms_fault: "电池管理状态异常。",
+  contactor_denied: "接触器未获许可闭合。",
+  can_bus_off: "CAN 总线未处于活动状态。",
+  can_link_loss: "CAN 链路中断。",
+  controller_fault: "运动控制器状态异常。",
+  stop_fault: "STOP 路径状态异常。",
+  localization_stale: "定位不可用。",
+  perception_stale: "感知未产生新的观测。",
+  event_store_integrity: "事件库完整性校验失败。",
+  backend_unavailable: "后端不可用。",
+  disk_pressure: "磁盘剩余空间已低于压力阈值。",
+  source_missing: "数据源未上报该指标。",
+  source_stale: "数据源读数已陈旧。",
+  source_fault: "数据源读数相互冲突。",
 };
 
 // One bounded refresh interval. A failed refresh backs off instead of hammering
@@ -1093,6 +1136,28 @@ function monitoringMetricStatus(metric) {
   return "healthy";
 }
 
+// The registry states units as English words ("percent", "volts"). The number
+// stays the pinned reading; only the unit word is localised, and an unknown
+// unit is shown as-is rather than dropped.
+const monitoringUnitLabels = {
+  amperes: "A",
+  bytes: "B",
+  celsius: "°C",
+  errors: "个错误",
+  faults: "次故障",
+  items: "项",
+  load: "负载",
+  percent: "%",
+  restarts: "次重启",
+  seconds: "秒",
+  timeouts: "次超时",
+  volts: "V",
+};
+
+function monitoringUnitLabel(unit) {
+  return monitoringUnitLabels[unit] || unit;
+}
+
 function monitoringMetricText(metric) {
   if (!metric || typeof metric !== "object") return "未知";
   if (metric.missing) return "未上报";
@@ -1103,7 +1168,7 @@ function monitoringMetricText(metric) {
   if (typeof value === "boolean") return value ? "正常" : "异常";
   if (typeof value !== "number") return String(value);
   const rendered = Number.isInteger(value) ? String(value) : value.toFixed(2);
-  const unit = metric.unit && metric.unit !== "bool" ? ` ${metric.unit}` : "";
+  const unit = metric.unit && metric.unit !== "bool" ? ` ${monitoringUnitLabel(metric.unit)}` : "";
   return `${rendered}${unit}`;
 }
 
@@ -1192,6 +1257,21 @@ function monitoringAlertLabel(alert) {
   return monitoringConditionLabels[alert?.condition] || alert?.condition || "未知告警";
 }
 
+// The backend rules own the condition vocabulary; `monitoringConditionLabels`
+// is the one translation table for it. The rule summary is English prose, so it
+// is shown beside the metric and unit rather than dropped, and the condition
+// label above it stays the authoritative reading.
+function monitoringAlertSummaryText(alert) {
+  const parts = [];
+  if (alert?.observed_value !== undefined && alert?.observed_value !== null) {
+    const unit = alert.unit && alert.unit !== "bool" ? ` ${monitoringUnitLabel(alert.unit)}` : "";
+    parts.push(`当前 ${alert.observed_value}${unit}`);
+  }
+  const summary = monitoringConditionSummaries[alert?.condition] || alert?.summary;
+  if (typeof summary === "string" && summary.trim()) parts.push(summary.trim());
+  return parts.join(" · ") || "无附加说明";
+}
+
 // A stable identity for the alert set, so an accessible live region is updated
 // only when the alerts actually change rather than on every poll.
 function monitoringAlertSignature(alerts) {
@@ -1270,7 +1350,7 @@ function renderMonitoringCards(view) {
                 .map(
                   (metric) => `
             <div class="monitoring-metric monitoring-${metric.status}">
-              <dt>${escapeHtml(metric.name)}</dt>
+              <dt title="${escapeHtml(metric.name)}">${escapeHtml(metric.name)}</dt>
               <dd>
                 <strong>${escapeHtml(metric.text)}</strong>
                 <small>${escapeHtml(metric.source || "来源未知")} · ${escapeHtml(metric.freshness)}</small>
@@ -1318,11 +1398,11 @@ function renderMonitoringAlerts(view) {
           <strong>${escapeHtml(monitoringAlertLabel(alert))}</strong>
           <span class="monitoring-alert-metric">${escapeHtml(alert.metric || "--")}</span>
           <span class="monitoring-alert-count">×${escapeHtml(String(alert.count ?? 0))}</span>
-          <small>${escapeHtml(alert.summary || "")} · ${escapeHtml(alert.evidence_ref || "")}</small>
+          <small>${escapeHtml(monitoringAlertSummaryText(alert))} · 证据 ${escapeHtml(alert.evidence_ref || "无")}</small>
         </li>`,
         )
         .join("")}
-    </div>`;
+    </ul>`;
 }
 
 function renderMonitoringTrend(view) {
@@ -1337,9 +1417,9 @@ function renderMonitoringTrend(view) {
   panel.hidden = false;
   panel.innerHTML = `
     <table class="monitoring-trend-table">
-      <caption>最近 ${rows.length} 个快照（<code>collected_at</code>，秒）</caption>
-      <thead><tr><th scope="col">时间</th><th scope="col">总体</th>${domains
-        .map((domain) => `<th scope="col">${escapeHtml(domain)}</th>`)
+      <caption>最近 ${rows.length} 个快照（<code>collected_at</code>，秒）。此处“快照总体”是该次采集的域汇总；顶部“总体状态”另行计入活动告警。</caption>
+      <thead><tr><th scope="col">时间</th><th scope="col">快照总体</th>${domains
+        .map((domain) => `<th scope="col" title="${escapeHtml(domain)}">${escapeHtml(monitoringDomainLabel(domain))}</th>`)
         .join("")}</tr></thead>
       <tbody>
         ${rows

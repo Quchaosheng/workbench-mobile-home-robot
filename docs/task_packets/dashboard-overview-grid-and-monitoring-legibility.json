@@ -1,0 +1,60 @@
+{
+  "issue": "dashboard-overview-grid-and-monitoring-legibility",
+  "human_owner": "Quchaosheng",
+  "objective": "Remove the blank grid area in the overview view and make the read-only robot monitoring view legible without weakening its never-green invariants.",
+  "decision_supported": "Whether the Dashboard is finished enough to be shown as the current operator surface, or whether a further layout pass is still owed.",
+  "allowed_paths": [
+    "apps/dashboard/*.js",
+    "apps/dashboard/*.css",
+    "apps/dashboard/*.html",
+    "apps/dashboard/*.md",
+    "docs/task_packets/dashboard-overview-grid-and-monitoring-legibility.json",
+    "tests/unit/test_dashboard_accessibility.py"
+  ],
+  "read_only_paths": [
+    "services/backend/**",
+    "interfaces/**",
+    "apps/dashboard/data/**",
+    "libs/application/**"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/safety/**"
+  ],
+  "input_refs": [
+    "docs/task_packets/dashboard-accessibility-ux.json"
+  ],
+  "acceptance": [
+    "the overview grid holds exactly two column stacks and no panel is a direct grid child",
+    "the 448x783 px blank right-hand region at 1600 px is gone and no width renders a blank rectangle between panels",
+    "every health domain the API reports has a card, so no published metric is silently dropped",
+    "the trend table labels the domains it renders and its per-snapshot total is not confused with the alert-aware overall status",
+    "the active alert list renders well-formed markup and states its condition in the language of the page",
+    "a clipped metric name keeps its full text available",
+    "the monitoring view remains read-only and never reports a status it cannot justify",
+    "responsive behaviour at 1080 px 780 px and 390 px is preserved"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/dashboard-overview-grid-and-monitoring-legibility.json",
+    "python3 -m pytest tests/unit/test_dashboard_accessibility.py -q",
+    "python3 -m pytest tests/unit/test_dashboard_backend.py tests/unit/test_dashboard_multiscenario.py tests/unit/test_dashboard_execution_claims.py -q",
+    "python3 -m ruff check apps/dashboard",
+    "python3 -m ruff format --check tests/unit/test_dashboard_accessibility.py"
+  ],
+  "evidence": [
+    "Task Packet validation output",
+    "dashboard accessibility test output including the layout and monitoring render assertions",
+    "browser measurements of the overview grid at 1920 1600 1440 1280 1152 1080 780 and 390 px",
+    "browser screenshots of the overview and monitoring views before and after the change",
+    "browser console log inspection",
+    "mutation probes that remove the application card the column nesting the list closure the domain labels the metric title and the unit translation and are each confirmed to fail a guarding test"
+  ],
+  "stop_conditions": [
+    "a frozen event contract fixture meaning or health payload field would need to change",
+    "a robot control ROS firmware or emergency-stop interface would be introduced",
+    "the monitoring view would gain a write action or a control verb",
+    "a status would have to be fabricated to keep a card green",
+    "the layout cannot be verified at the target viewport"
+  ]
+}
