@@ -119,7 +119,9 @@ HOST_UID=$(id -u) HOST_GID=$(id -g) XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR WAYLAND_DIS
 ```
 
 hardware shell 不启动控制节点，不配置 CAN，不发送帧，也不替代急停。串口必须是稳定的 `/dev/serial/by-id/...`；CAN 和 DDS
-网卡必须已由宿主创建；LAN 模式强制 SROS2 Enforce 和外部只读 keystore：
+网卡必须已由宿主创建；LAN 模式强制 SROS2 Enforce 和外部只读 keystore。`ROS_SECURITY_ENABLE` 必须写成 `true`：
+rcl 只把字面量 `true` 当作启用，`1`、`True`、`TRUE` 都会被判为关闭并静默地不启用安全，因此 doctor 会直接判失败而不是报
+PASS。keystore 只由 `ROS_SECURITY_KEYSTORE` 指定，Jazzy 没有任何组件读取 `ROS_SECURITY_ROOT_DIRECTORY`。
 
 ```bash
 WORKBENCH_SERIAL_DEVICE=/dev/serial/by-id/usb-EXACT_DEVICE \
@@ -128,6 +130,10 @@ WORKBENCH_DDS_INTERFACE=eno1 \
 WORKBENCH_SROS2_KEYSTORE=/absolute/path/to/keystore \
   make container-hardware-doctor
 ```
+
+参与者发现用 `ROS_AUTOMATIC_DISCOVERY_RANGE` 控制：dashboard、ros-sim 等本机 profile 用 `LOCALHOST`，hardware shell 的
+LAN 模式用 `SUBNET`。`ROS_LOCALHOST_ONLY` 已在 Iron 之后弃用，且在设为 `1` 时会覆盖并忽略发现范围配置，所以本仓库不再
+使用它；继承到该变量时 doctor 会拒绝 LAN profile。需要跨主机单播发现时另外设置 `ROS_STATIC_PEERS`。
 
 不接受 `/dev/ttyUSB*`、设备目录、`privileged`、`NET_ADMIN`、host IPC 或由容器配置 CAN 总线。
 
