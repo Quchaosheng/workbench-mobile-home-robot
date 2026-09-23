@@ -67,6 +67,55 @@ maximum `8`).  The timer is in a mutually exclusive callback group, and its
 callback only drains already-produced records; it never performs hardware
 I/O or waits for an ACK.
 
+## Process entry point
+
+`workbench-device-runtime-bridge` (declared in `pyproject.toml`, implemented by
+`ros2_runtime_bridge.main`) is the operator entry point for one SocketCAN
+interface:
+
+```text
+workbench-device-runtime-bridge --interface can0 --source socketcan --report run.json
+```
+
+It validates the configuration before ROS 2 is touched, so a usage error and
+`--help` behave identically with and without a ROS installation.  The interface
+and source identity are validated up front for the same reason: an operator typo
+must be a usage error rather than a lifecycle failure discovered after ROS 2 has
+already started.  `SignalHandlerOptions` is read from the module being used
+rather than from `rclpy.signals` directly, so an injected module stays
+self-consistent.
+
+The process owns its own CLI, so it calls `rclpy.init(args=[])` and never lets
+ROS parse bridge flags.  The recorded domain ID is read back from the context
+rclpy actually created, so the deployment snapshot cannot disagree with the
+context that is really in use.
+
+Exit codes are part of the operator contract, so a supervisor can distinguish a
+clean bounded stop from a failure:
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | clean bounded stop; the runtime worker is joined |
+| `2` | invalid configuration, or `rclpy` is unavailable |
+| `3` | `configure` failed or raised |
+| `4` | `activate` failed or raised |
+| `5` | the runtime worker did not stop within the shutdown deadline |
+
+Every run prints one bounded JSON run report (`device-runtime-bridge-run-v1`) and
+can also write it with `--report`.  The report carries the status, the domain ID
+in force, the bounded metrics snapshot (`worker_alive`, drops, depths and drain
+counters) and `worker_joined`.
+
+Shutdown order is deliberate.  `RuntimeBridgeCore.shutdown()` is ROS-free and
+always runs first; the ROS entity teardown (`remove_node`, `executor.shutdown`,
+`destroy_node`, `rclpy.try_shutdown`) runs afterwards on a best-effort basis and
+records its failures under `teardown_errors` without masking a successful join.
+A signal that already invalidated the ROS context must not skip the bounded
+stop: on Jazzy a `SIGINT` leaves `rclpy.ok()` false, so the lifecycle
+transitions in `on_deactivate`/`on_cleanup` raise and a lifecycle-driven
+teardown orphans the CAN worker.  When the join does not complete, the process
+reports `worker_joined: false` and exits `5` instead of claiming success.
+
 ## Bounded data and publication planes
 
 The source `DeviceRuntime` already owns the bounded command/ACK, telemetry,
@@ -151,6 +200,11 @@ failure isolation, SafeCANBus runtime reuse, lifecycle failure, fresh
 activation and terminal cleanup.  The optional ROS test exercises the Jazzy
 LifecycleNode transition path and timer drain when `/opt/ros/jazzy` is
 available.
+
+The entry point tests drive the process without a CAN device and without ROS 2
+through the injected seams, so argument validation, the fail-closed lifecycle
+paths, the context-domain agreement rule and the worker-joined invariant cannot
+hide behind a missing host installation.
 
 The focused tests include a local ROS topic publish/receive loopback and a
 virtual SocketCAN construction path.  They establish software ordering,

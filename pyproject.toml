@@ -9,6 +9,9 @@ description = "Evidence-first embodied-agent simulator foundation"
 requires-python = ">=3.12"
 dependencies = ["pydantic>=2.8,<3"]
 
+[project.scripts]
+workbench-device-runtime-bridge = "workbench.hardware.ros2_runtime_bridge:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8,<10",
