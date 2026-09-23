@@ -6,6 +6,7 @@ card from a missing metric would satisfy any string check.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,10 +22,82 @@ BOOTSTRAP = "\nasync function initialize("
 EXPORT_TAIL = (
     "\nmodule.exports = { monitoringViewState, monitoringCardsFor, monitoringAlertsFor, "
     "monitoringTrendRows, monitoringMetricText, monitoringMetricStatus, monitoringAlertSignature, "
-    "monitoringAlertStatusByMetric, monitoringRetryDelay };\n"
+    "monitoringAlertStatusByMetric, monitoringRetryDelay, monitoringUnitLabel, "
+    "monitoringDomainLabel, monitoringAlertSummaryText, renderMonitoringAlerts, renderMonitoringCards, "
+    "renderMonitoringTrend };\n"
 )
 MODULE_PRELUDE = "const module = { exports: {} };\n(function (module, exports) {\n"
 MODULE_EPILOGUE = "\n})(module, module.exports);\n"
+
+# The render functions write into `document.getElementById(...)`. The stub keeps
+# them executable under Node so a test can assert on the markup they produce
+# rather than on the source that produces it.
+DOM_STUB = (
+    "const __elements = {};\n"
+    'const __element = () => ({ innerHTML: "", hidden: false, textContent: "", '
+    'className: "", classList: { toggle() {}, add() {}, remove() {} } });\n'
+    "const document = { getElementById: (id) => (__elements[id] = __elements[id] || __element()) };\n"
+    "globalThis.__dom = __elements;\n"
+)
+
+
+# A minimal structural parser for the two layout assertions. Counting substrings
+# cannot tell a panel that is nested inside a column from one that is merely
+# near it, and the layout bug was exactly a mis-nested panel.
+_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+
+class _Node:
+    __slots__ = ("children", "classes", "tag")
+
+    def __init__(self, tag: str, classes: set[str]) -> None:
+        self.tag = tag
+        self.classes = classes
+        self.children: list[_Node] = []
+
+
+class _Root(_Node):
+    def __init__(self) -> None:
+        super().__init__("root", set())
+
+
+def _parse_html(markup: str) -> _Root:
+    root = _Root()
+    stack: list[_Node] = [root]
+    for token in re.finditer(r"<(?P<closing>/)?(?P<tag>[a-zA-Z][a-zA-Z0-9]*)(?P<attrs>[^>]*?)(?P<self>/?)>", markup):
+        tag = token.group("tag").lower()
+        if token.group("closing"):
+            if len(stack) > 1 and stack[-1].tag == tag:
+                stack.pop()
+            continue
+        classes = set(re.findall(r'class="([^"]*)"', token.group("attrs")))
+        classes = {name for group in classes for name in group.split()}
+        node = _Node(tag, classes)
+        stack[-1].children.append(node)
+        if tag not in _VOID_TAGS and not token.group("self"):
+            stack.append(node)
+    return root
+
+
+def _find(markup: str, *classes: str) -> _Node:
+    wanted = set(classes)
+    matches = [node for node in _walk(_parse_html(markup)) if wanted <= node.classes]
+    assert len(matches) == 1, (classes, len(matches))
+    return matches[0]
+
+
+def _walk(node: _Node):
+    for child in node.children:
+        yield child
+        yield from _walk(child)
+
+
+def _direct_children(markup: str, *classes: str) -> list[_Node]:
+    return _find(markup, *classes).children
+
+
+def _descendants(node: _Node) -> list[_Node]:
+    return list(_walk(node))
 
 
 def _run_node(expression: str, payload: object) -> object:
@@ -34,6 +107,7 @@ def _run_node(expression: str, payload: object) -> object:
     program = "".join(
         [
             MODULE_PRELUDE,
+            DOM_STUB,
             pure,
             MODULE_EPILOGUE,
             f"process.stdout.write(JSON.stringify({expression}));",
@@ -412,3 +486,200 @@ def test_a_failed_refresh_schedules_a_backoff_retry() -> None:
     )
     # An available view schedules nothing; polling is driven by the interval.
     assert _run_node("module.exports.monitoringRetryDelay(JSON.parse(process.argv[1]), {}, null)", available) is None
+
+
+def test_every_health_domain_has_a_card_that_can_render_its_metrics() -> None:
+    # The registry ships one domain per status the operator must be able to read.
+    # A domain without a matching card silently dropped its metrics: the
+    # `application` domain (readiness, uptime, restarts, queue depth and cycle
+    # age) was absent from the card list, so five of 35 published metrics were
+    # never rendered and never reported as missing either.
+    payload = health_payload()
+    payload["current"]["domains"] = {
+        "application": {
+            "status": "healthy",
+            "metrics": [
+                metric(name="app.readiness", value=True, unit="bool"),
+                metric(name="app.uptime_seconds", value=5.0, unit="seconds"),
+                metric(name="app.restart_count", value=5, unit="restarts"),
+                metric(name="app.queue_depth", value=5, unit="items"),
+                metric(name="app.last_successful_cycle_age_seconds", value=5.0, unit="seconds"),
+            ],
+        }
+    }
+    cards = _run_node("module.exports.monitoringCardsFor(JSON.parse(process.argv[1]))", payload)
+    application = next((card for card in cards if card["id"] == "application"), None)
+    assert application is not None, "no card matches the application domain"
+    assert [item["name"] for item in application["metrics"]] == [
+        "app.readiness",
+        "app.uptime_seconds",
+        "app.restart_count",
+        "app.queue_depth",
+        "app.last_successful_cycle_age_seconds",
+    ]
+
+    # No card may match a domain another card already owns, or metrics would be
+    # counted twice and one card would contradict the other.
+    registry_domains = {
+        "application",
+        "communication",
+        "compute",
+        "power",
+        "robot",
+        "safety",
+        "task",
+    }
+    owned: set[str] = set()
+    for domain in sorted(registry_domains):
+        names = [f"{domain}.sample_metric"]
+        if domain == "compute":
+            names = ["compute.disk_free_bytes"]
+        if domain == "robot":
+            names = ["nav.localization_ok", "motion.controller_ok", "perception.fresh"]
+        payload["current"]["domains"] = {
+            domain: {"status": "healthy", "metrics": [metric(name=name) for name in names]}
+        }
+        cards = _run_node("module.exports.monitoringCardsFor(JSON.parse(process.argv[1]))", payload)
+        matched = [card["id"] for card in cards if card["metrics"]]
+        assert len(matched) == len(set(matched)), (domain, matched)
+        owned.update(matched)
+    assert "application" in owned
+
+
+def test_a_page_never_renders_an_alert_list_with_a_mismatched_tag() -> None:
+    # The alert panel opened a <ul> and closed a </div>. A browser recovers from
+    # that, but the markup is still wrong and no tolerant parser should be the
+    # only thing keeping the list well formed.
+    payload = {
+        "available": True,
+        "alerts": [
+            {
+                "alert_id": "compute.disk_free_bytes:disk_pressure:linux.statvfs",
+                "condition": "disk_pressure",
+                "severity": "warning",
+                "state": "active",
+                "metric": "compute.disk_free_bytes",
+                "observed_value": 0,
+                "unit": "bytes",
+                "count": 1,
+                "evidence_ref": "alert://compute.disk_free_bytes:disk_pressure:linux.statvfs",
+            }
+        ],
+    }
+    markup = _run_node(
+        "(module.exports.renderMonitoringAlerts(JSON.parse(process.argv[1])), __dom['monitoring-alerts'].innerHTML)",
+        payload,
+    )
+    assert markup.startswith("\n    <ul")
+    assert markup.strip().endswith("</ul>")
+    assert "</div>" not in markup
+    # One alert is one list item, and the shipped condition vocabulary decides
+    # the label rather than the English rule prose.
+    assert markup.count("<li ") == 1
+    assert "磁盘空间不足" in markup
+    assert "The disk is at or below the configured pressure level." not in markup
+    # The metric and the evidence reference stay attached to the alert.
+    assert "compute.disk_free_bytes" in markup
+    assert "alert://compute.disk_free_bytes:disk_pressure:linux.statvfs" in markup
+
+
+def test_the_trend_headers_are_localised_and_the_two_totals_are_distinguished() -> None:
+    # The card labels split `communication` into CAN and `robot` into
+    # localisation/motion/perception, so the trend table cannot reuse them; it
+    # labels the domains the API reports. The page also carried two readings
+    # both called 总体: the alert-aware status at the top and the per-snapshot
+    # domain roll-up below. They are different numbers and must not share a
+    # heading.
+    history = {
+        "snapshots": [
+            {"collected_at": 1000.0, "overall": "healthy", "domains": {"communication": "healthy", "robot": "fault"}}
+        ]
+    }
+    markup = _run_node(
+        "(module.exports.renderMonitoringTrend({ available: true, trend: "
+        "module.exports.monitoringTrendRows(JSON.parse(process.argv[1])) }), "
+        "__dom['monitoring-trend'].innerHTML)",
+        history,
+    )
+    assert "通信" in markup and "机器人" in markup
+    assert '<th scope="col">communication</th>' not in markup
+    assert '<th scope="col">robot</th>' not in markup
+    # The unresolved domain stays reachable as a tooltip rather than vanishing.
+    assert 'title="communication"' in markup
+    assert "快照总体" in markup
+    assert '<th scope="col">总体</th>' not in markup
+    # The caption states the difference instead of leaving two 总体 unlabelled.
+    assert "顶部" in markup
+
+
+def test_the_unit_suffix_is_localised_and_an_unknown_unit_is_preserved() -> None:
+    assert _run_node("module.exports.monitoringUnitLabel(JSON.parse(process.argv[1]))", "percent") == "%"
+    assert _run_node("module.exports.monitoringUnitLabel(JSON.parse(process.argv[1]))", "celsius") == "°C"
+    assert _run_node("module.exports.monitoringUnitLabel(JSON.parse(process.argv[1]))", "seconds") == "秒"
+    # An unmapped unit is shown as-is: dropping it would silently change a value.
+    assert _run_node("module.exports.monitoringUnitLabel(JSON.parse(process.argv[1]))", "widgets") == "widgets"
+
+    payload = health_payload()
+    payload["current"]["domains"] = {
+        "compute": {
+            "status": "healthy",
+            "metrics": [metric(name="compute.disk_free_bytes", value=0, unit="bytes")],
+        }
+    }
+    cards = _run_node("module.exports.monitoringCardsFor(JSON.parse(process.argv[1]))", payload)
+    storage = next(card for card in cards if card["id"] == "storage")
+    assert storage["metrics"][0]["text"] == "0 B"
+
+    # The value stays exact; only the unit word is translated.
+    percent = metric(name="compute.cpu_percent", value=5, unit="percent")
+    assert _run_node("module.exports.monitoringMetricText(JSON.parse(process.argv[1]))", percent) == "5 %"
+
+
+def test_a_rendered_metric_name_keeps_the_full_name_available_when_clipped() -> None:
+    # The metric column ellipsises; without a title the clipped name is lost.
+    payload = health_payload()
+    payload["current"]["domains"] = {
+        "safety": {
+            "status": "healthy",
+            "metrics": [metric(name="safety.contactor_permission")],
+        }
+    }
+    markup = _run_node(
+        "(module.exports.renderMonitoringCards({ available: true, cards: "
+        "module.exports.monitoringCardsFor(JSON.parse(process.argv[1])) }), "
+        "__dom['monitoring-cards'].innerHTML)",
+        payload,
+    )
+    assert 'title="safety.contactor_permission"' in markup
+
+
+def test_the_overview_grid_holds_exactly_two_columns() -> None:
+    # `.dashboard-grid` is a fixed two-column grid with no explicit placement, so
+    # a third direct child is auto-placed into a second row and leaves the whole
+    # right-hand side of that row blank (448x783 px at 1600 px). Panels belong to
+    # one of exactly two column stacks; the nesting is the invariant, so the test
+    # parses the markup rather than counting class attributes, which a loose
+    # panel beside a column would still satisfy.
+    markup = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+    grid = _direct_children(markup, "dashboard-grid")
+
+    assert [child.classes for child in grid] == [{"dashboard-column"}, {"dashboard-column"}]
+
+    panels = [entry for column in grid for entry in _descendants(column)]
+    panel_classes = [entry for entry in panels if "panel" in entry.classes and entry.tag == "section"]
+    assert len(panel_classes) == 4
+    named = {name for entry in panel_classes for name in entry.classes}
+    for panel_class in ("timeline-panel", "evidence-panel", "safety-panel"):
+        assert panel_class in named, panel_class
+    # Each column holds exactly two panels, so neither is a bare wrapper.
+    for column in grid:
+        contained = [entry for entry in _descendants(column) if "panel" in entry.classes and entry.tag == "section"]
+        assert len(contained) == 2, [entry.classes for entry in contained]
+
+    assert "side-stack" not in markup
+    styles = (DASHBOARD / "styles.css").read_text(encoding="utf-8")
+    assert ".dashboard-column {" in styles
+    assert "align-content: start" in styles.split(".dashboard-column {", 1)[1].split("}", 1)[0]
+    # The responsive rules follow the renamed wrapper instead of a dead class.
+    assert ".dashboard-column:last-child" in styles
+    assert "side-stack" not in styles

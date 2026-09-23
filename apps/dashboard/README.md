@@ -45,6 +45,12 @@ never presented as verification. Until the timeline request succeeds the panel s
 the timeline is not loaded, rather than reusing the event stream as if it had been
 phase-checked.
 
+The overview view is a **fixed two-column grid**: 事件时间线 and 证据时间线 stack in
+the left column, 世界状态 and 安全与控制 in the right. Panels are grouped into exactly
+two `.dashboard-column` stacks rather than placed as direct grid children, because
+`grid-auto-flow` would otherwise push a third panel into an implicit second row and
+leave the whole right-hand side of that row blank.
+
 The **机器人监控** tab renders `GET /api/v1/health` and
 `GET /api/v1/health/history`: an overall status, active alerts sorted by severity
 then age, per-domain freshness cards, and a bounded recent-trend table. It is
@@ -60,6 +66,15 @@ after a failure, and stops when the tab or the page is hidden.
 view; the health document lives in a subdirectory because run logs are
 discovered with a top-level `*.jsonl` glob and a sibling file would be parsed as
 a run.
+
+The trend table labels the domains the API reports (`应用`, `通信`, `计算`, `电源`,
+`机器人`, `安全`, `任务`) and keeps the raw domain id as a tooltip. It cannot reuse
+the card labels, because the cards split `communication` into `CAN 通信` and
+`robot` into `定位`, `运动` and `感知`. Its **快照总体** column is the per-snapshot
+domain roll-up, which is not the alert-aware **总体状态** shown above it; the
+caption states the difference so two readings of "total" are not read as one
+number. Every domain the API publishes has a card, so a reported metric is never
+silently absent.
 
 The HTTP boundary deliberately implements `GET` only. `POST`, `PUT`, `PATCH`, and `DELETE` return `405 read_only`; there is no ROS, MCU, motion, or emergency-stop publisher in this application.
 

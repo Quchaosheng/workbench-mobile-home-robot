@@ -137,30 +137,32 @@
           </section>
 
           <div class="dashboard-grid">
-            <section class="panel timeline-panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">执行轨迹</p>
-                  <h2>事件时间线</h2>
+            <div class="dashboard-column">
+              <section class="panel timeline-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">执行轨迹</p>
+                    <h2>事件时间线</h2>
+                  </div>
+                  <span id="event-count" class="quiet-count">0 个事件</span>
                 </div>
-                <span id="event-count" class="quiet-count">0 个事件</span>
-              </div>
-              <ol id="overview-timeline" class="timeline"></ol>
-            </section>
+                <ol id="overview-timeline" class="timeline"></ol>
+              </section>
 
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">证据时间线 · 有界</p>
-                  <h2>执行 / 观测 / 验证 / 恢复</h2>
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">证据时间线 · 有界</p>
+                    <h2>执行 / 观测 / 验证 / 恢复</h2>
+                  </div>
+                  <span class="quiet-count">GET /timeline</span>
                 </div>
-                <span class="quiet-count">GET /timeline</span>
-              </div>
-              <p class="panel-note">每一项只属于一个阶段；上下文事件不会被呈现为验证结论。</p>
-              <ol id="evidence-timeline" class="phase-timeline" aria-live="polite"></ol>
-            </section>
+                <p class="panel-note">每一项只属于一个阶段；上下文事件不会被呈现为验证结论。</p>
+                <ol id="evidence-timeline" class="phase-timeline" aria-live="polite"></ol>
+              </section>
+            </div>
 
-            <div class="side-stack">
+            <div class="dashboard-column">
               <section class="panel evidence-panel">
                 <div class="panel-head">
                   <div>
