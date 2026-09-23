@@ -36,7 +36,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     WORKBENCH_OFFLINE=1 \
     RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
     ROS_DOMAIN_ID=42 \
-    ROS_LOCALHOST_ONLY=1 \
+    ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST \
     PATH=/opt/workbench-venv/bin:/opt/workbench-mujoco-venv/bin:$PATH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
