@@ -4,11 +4,11 @@ jsonschema==4.26.0
 kiutils==1.4.8
 mkdocs==1.6.1
 mkdocstrings==1.0.6
-mkdocstrings-python==2.0.8
+mkdocstrings-python==2.0.9
 pre-commit==4.6.2
 pydantic==2.13.5
 pytest==9.1.1
 pytest-benchmark==5.3.0
 pytest-cov==7.1.0
-ruff==0.16.7
+ruff==0.16.8
 typing_extensions==4.16.0
