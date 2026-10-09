@@ -1,0 +1,42 @@
+{
+  "issue": "third-party-review-truthfulness",
+  "human_owner": "Quchaosheng",
+  "objective": "Correct the RLSOK rows in THIRD_PARTY_REVIEW.md so the register states only what the evidence supports: no release is agreed, no written redistribution terms are recorded, and the 2026-09-03 inbound email is named as the contact rather than an unspecified invitation.",
+  "allowed_paths": [
+    "THIRD_PARTY_REVIEW.md",
+    "docs/task_packets/third-party-review-truthfulness.json"
+  ],
+  "read_only_paths": [
+    "integrations/rlsok/**",
+    "interfaces/**",
+    "firmware/**"
+  ],
+  "forbidden": [
+    "changing the RLSOK public-repository row, which already records Apache-2.0 accurately",
+    "changing any other dependency row or its license finding",
+    "claiming a partnership, joint development, endorsement or signed terms with any maintainer",
+    "adding, vendoring or upgrading a dependency"
+  ],
+  "acceptance": [
+    "the RLSOK row no longer asserts an invitation or recorded terms that the repository cannot evidence",
+    "the row records that the maintainer contacted us by email on 2026-09-03",
+    "the closing paragraph describes RLSOK and MonoSim as unaffiliated third-party tools rather than invited integrations",
+    "the Apache-2.0 public-repository row and the xArm 7 boundary statement are unchanged",
+    "no other third-party row is modified"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/third-party-review-truthfulness.json --base origin/main",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "task packet validation output including the changed-path boundary",
+    "the THIRD_PARTY_REVIEW.md diff",
+    "the 2026-09-03 inbound email that the corrected row cites"
+  ],
+  "stop_conditions": [
+    "the register would need a license or partnership claim that no evidence supports",
+    "a change reaches a dependency row outside RLSOK",
+    "the owner cannot confirm the 2026-09-03 email as the only contact record"
+  ]
+}
