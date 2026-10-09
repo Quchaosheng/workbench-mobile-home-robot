@@ -310,10 +310,64 @@ def test_hardware_profile_keeps_devices_and_sros2_fail_closed() -> None:
     assert "WORKBENCH_CAN_INTERFACE" in compose
     assert "WORKBENCH_DDS_INTERFACE" in compose
     assert "ROS_SECURITY_STRATEGY: Enforce" in compose
+    assert 'ROS_SECURITY_ENABLE: "true"' in compose
     assert "/run/sros2/keystore:ro" in compose
     assert "/dev/serial/by-id/" in doctor
     assert "is_char_device" in doctor
     assert "interfaceWhiteList" in (ROOT / "docker/dds_config.py").read_text(encoding="utf-8")
+
+
+def test_security_enable_uses_the_literal_rcl_compares_against() -> None:
+    """rcl compares ROS_SECURITY_ENABLE with strcmp against "true" only."""
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+
+    assert 'ROS_SECURITY_ENABLE: "true"' in compose
+    # "1" is compared as false and silently disables security.
+    assert 'ROS_SECURITY_ENABLE: "1"' not in compose
+    # No component in ROS 2 Jazzy reads a security root directory override.
+    assert "ROS_SECURITY_ROOT_DIRECTORY" not in compose
+
+
+def test_discovery_range_replaces_the_deprecated_localhost_variable() -> None:
+    for relative in ("compose.yaml", "Dockerfile", ".devcontainer/devcontainer.json"):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "ROS_LOCALHOST_ONLY" not in text, relative
+        assert "ROS_AUTOMATIC_DISCOVERY_RANGE" in text, relative
+
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    # Simulation and the dashboard stay isolated; the LAN shell may reach peers.
+    assert 'ROS_AUTOMATIC_DISCOVERY_RANGE: "LOCALHOST"' in compose
+    assert 'ROS_AUTOMATIC_DISCOVERY_RANGE: "SUBNET"' in compose
+
+
+@pytest.mark.parametrize("value", ["1", "True", "TRUE", "yes", "0", "false", ""])
+def test_doctor_rejects_security_enable_values_rcl_treats_as_disabled(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    doctor = _load_doctor()
+    monkeypatch.setenv("ROS_SECURITY_ENABLE", value)
+    monkeypatch.setenv("ROS_SECURITY_STRATEGY", "Enforce")
+    monkeypatch.setenv("WORKBENCH_CAN_INTERFACE", "lo")
+    monkeypatch.setenv("WORKBENCH_DDS_INTERFACE", "lo")
+
+    failures: list[str] = []
+    doctor._hardware_checks({}, failures)
+
+    assert any("SROS2 Enforce requires" in failure for failure in failures), value
+
+
+def test_doctor_rejects_inherited_localhost_only_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    doctor = _load_doctor()
+    monkeypatch.setenv("ROS_SECURITY_ENABLE", "true")
+    monkeypatch.setenv("ROS_SECURITY_STRATEGY", "Enforce")
+    monkeypatch.setenv("WORKBENCH_CAN_INTERFACE", "lo")
+    monkeypatch.setenv("WORKBENCH_DDS_INTERFACE", "lo")
+    monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
+
+    failures: list[str] = []
+    doctor._hardware_checks({}, failures)
+
+    assert any("ROS_LOCALHOST_ONLY=1 overrides" in failure for failure in failures)
 
 
 def test_host_doctor_requires_at_least_one_gpu_row_for_driver_pass() -> None:

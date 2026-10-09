@@ -28,7 +28,7 @@ x-workbench-common: &workbench-common
     WORKBENCH_OFFLINE: "1"
     RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
     ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
-    ROS_LOCALHOST_ONLY: "${ROS_LOCALHOST_ONLY:-1}"
+    ROS_AUTOMATIC_DISCOVERY_RANGE: "${ROS_AUTOMATIC_DISCOVERY_RANGE:-LOCALHOST}"
     HOME: /home/workbench
     ROS_LOG_DIR: /tmp/ros-log
     GZ_LOG_PATH: /tmp/gz-log
@@ -48,7 +48,7 @@ services:
     environment:
       <<: *workbench-env
       WORKBENCH_CONTAINER_PROFILE: dashboard
-      ROS_LOCALHOST_ONLY: "1"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: "LOCALHOST"
     ports:
       - "127.0.0.1:${WORKBENCH_PORT:-8080}:8080"
     networks: [public, model-runtime]
@@ -66,7 +66,7 @@ services:
     environment:
       <<: [*workbench-env, *nvidia-environment]
       WORKBENCH_CONTAINER_PROFILE: ros-sim
-      ROS_LOCALHOST_ONLY: "1"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: "LOCALHOST"
     networks: [ros-local]
 
   gz-gui-x11:
@@ -132,11 +132,10 @@ services:
     environment:
       <<: *workbench-env
       WORKBENCH_CONTAINER_PROFILE: hardware-shell
-      ROS_LOCALHOST_ONLY: "0"
-      ROS_SECURITY_ENABLE: "1"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: "SUBNET"
+      ROS_SECURITY_ENABLE: "true"
       ROS_SECURITY_STRATEGY: Enforce
       ROS_SECURITY_KEYSTORE: /run/sros2/keystore
-      ROS_SECURITY_ROOT_DIRECTORY: /run/sros2/keystore
       WORKBENCH_DDS_INTERFACE: "${WORKBENCH_DDS_INTERFACE:-}"
       WORKBENCH_CAN_INTERFACE: "${WORKBENCH_CAN_INTERFACE:-}"
       WORKBENCH_SERIAL_DEVICE: "${WORKBENCH_SERIAL_DEVICE:-}"

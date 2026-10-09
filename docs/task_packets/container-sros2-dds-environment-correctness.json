@@ -1,0 +1,82 @@
+{
+  "issue": "container-sros2-dds-environment-correctness",
+  "human_owner": "Quchaosheng",
+  "objective": "Make the hardware-shell container's SROS2 and DDS environment actually match what ROS 2 Jazzy reads, and make the container doctor fail closed instead of passing a silently disabled security configuration.",
+  "decision_supported": "The LAN hardware-shell profile may only claim SROS2 Enforce when the environment variables use the exact literals rcl compares against, and the doctor must reject a value that rcl silently ignores.",
+  "allowed_paths": [
+    "compose.yaml",
+    "Dockerfile",
+    ".devcontainer/devcontainer.json",
+    "docker/container-doctor.py",
+    "tests/unit/test_container_profiles.py",
+    "docs/deployment/container.md",
+    "docs/task_packets/container-sros2-dds-environment-correctness.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "docs/decisions/ADR-0005-hardware-device-runtime.md",
+    "docs/architecture/ros2-device-runtime-bridge-v1.md",
+    "docker/dds_config.py",
+    "docker/entrypoint.sh",
+    "docs/evaluation/motion-m1-smoothness.md",
+    "libs/hardware/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/**",
+    "libs/contracts/**",
+    ".github/workflows/**"
+  ],
+  "input_refs": [
+    "docker/entrypoint.sh",
+    "docker/dds_config.py",
+    "docs/deployment/container.md",
+    "docs/decisions/ADR-0005-hardware-device-runtime.md"
+  ],
+  "outputs": [
+    "compose.yaml",
+    "docker/container-doctor.py",
+    "tests/unit/test_container_profiles.py",
+    "docs/deployment/container.md"
+  ],
+  "acceptance": [
+    "ROS_SECURITY_ENABLE uses the exact literal 'true' that rcl_security_enabled compares against, because '1' is compared as false and silently disables security.",
+    "The container doctor rejects ROS_SECURITY_ENABLE values that rcl treats as disabled, so a broken security profile reports NOT_EXECUTED instead of PASS.",
+    "The dead ROS_SECURITY_ROOT_DIRECTORY variable is removed because no component in ROS 2 Jazzy reads it; ROS_SECURITY_KEYSTORE remains the single keystore setting.",
+    "Participant discovery uses ROS_AUTOMATIC_DISCOVERY_RANGE instead of the deprecated ROS_LOCALHOST_ONLY, preserving the same localhost-only and LAN discovery behavior.",
+    "Unit tests fail if the non-matching SROS2 enable literal, the dead root-directory variable, or the deprecated discovery variable returns to the profile.",
+    "Documentation records the exact rcl literal requirement and the discovery-range variables an operator must set for LAN operation."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/container-sros2-dds-environment-correctness.json --base origin/main",
+    "python3 -m pytest tests/unit/test_container_profiles.py -q",
+    "python3 -m ruff check docker/container-doctor.py tests/unit/test_container_profiles.py",
+    "python3 -m ruff format --check docker/container-doctor.py tests/unit/test_container_profiles.py",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check origin/main...HEAD"
+  ],
+  "evidence": [
+    "Task Packet changed-path validation output",
+    "Focused container-profile test output and Ruff check/format output",
+    "Recorded rcl source reference showing ROS_SECURITY_ENABLE is compared against the literal 'true'",
+    "Recorded local ROS 2 Jazzy probe output separating the enabled and silently disabled literals",
+    "Recorded local probe output showing the generated Fast DDS interface whitelist restricts discovery to the selected interface",
+    "required repository test, contract, scenario and context checks"
+  ],
+  "stop_conditions": [
+    "A public interface/schema, firmware, robot-control or service change is required.",
+    "The fix would require claiming real-network two-host DDS, discovery-server or physical keystore validation that was not executed.",
+    "A change is needed outside the allowed paths or would require an unapproved owner decision.",
+    "Removing the deprecated variable would silently change discovery behavior rather than preserve it."
+  ],
+  "data_classification": "container runtime environment configuration and SROS2 policy settings; no credentials or private keys",
+  "model_policy": "No model output is admitted as SROS2 policy, DDS discovery authority or physical network evidence.",
+  "risks_and_fallbacks": [
+    "Dual-physical-host DDS, wrong-NIC, cross-domain isolation and discovery-server behavior remain NOT_EXECUTED until validated on a real network."
+  ]
+}

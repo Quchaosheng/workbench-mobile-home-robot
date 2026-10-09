@@ -129,8 +129,22 @@ def _hardware_checks(checks: dict[str, Any], failures: list[str]) -> None:
             socket.if_nametoindex(interface)
         except OSError:
             failures.append(f"{variable} does not name an existing host interface")
-    if os.environ.get("ROS_SECURITY_ENABLE") != "1" or os.environ.get("ROS_SECURITY_STRATEGY") != "Enforce":
-        failures.append("SROS2 Enforce is required")
+    # rcl enables security only when the value matches the literal "true"
+    # (rcl_security_enabled compares with strcmp).  Any other spelling such as
+    # "1" is compared as false and silently disables security, so the doctor
+    # must reject it instead of reporting a healthy Enforce profile.
+    security_enable = os.environ.get("ROS_SECURITY_ENABLE", "")
+    checks["ros_security_enable"] = security_enable
+    if security_enable != "true" or os.environ.get("ROS_SECURITY_STRATEGY") != "Enforce":
+        failures.append('SROS2 Enforce requires ROS_SECURITY_ENABLE="true" and ROS_SECURITY_STRATEGY="Enforce"')
+    # rcl treats a leading "1" as the deprecated localhost-only flag, and that
+    # flag makes it ignore ROS_AUTOMATIC_DISCOVERY_RANGE entirely.  A LAN profile
+    # that inherits it would silently stop discovering peers off-host.
+    if os.environ.get("ROS_LOCALHOST_ONLY", "").startswith("1"):
+        failures.append(
+            "ROS_LOCALHOST_ONLY=1 overrides ROS_AUTOMATIC_DISCOVERY_RANGE; "
+            "unset it and use the discovery range variable"
+        )
     keystore = Path(os.environ.get("WORKBENCH_SROS2_KEYSTORE", ""))
     checks["sros2_keystore"] = str(keystore)
     if not keystore.is_dir() or not os.access(keystore, os.R_OK):
