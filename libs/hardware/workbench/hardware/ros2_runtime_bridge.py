@@ -15,14 +15,17 @@ of this module's core.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
+import sys
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Protocol
 
 from .can_driver_safe import (
@@ -39,10 +42,19 @@ from .can_driver_safe import (
 from .socketcan_transport import SocketCANTransport
 
 BRIDGE_SCHEMA_VERSION = "device-runtime-bridge-v1"
+BRIDGE_RUN_SCHEMA_VERSION = "device-runtime-bridge-run-v1"
 MAX_CAPACITY = 4096
 MAX_EXECUTOR_THREADS = 8
 MAX_RECORDS_PER_TICK = 1024
 MAX_PERIOD_S = 60.0
+
+# Exit codes are part of the operator contract: a supervisor can tell a clean
+# bounded stop apart from a configuration or lifecycle failure.
+EXIT_OK = 0
+EXIT_USAGE = 2
+EXIT_CONFIGURE_FAILED = 3
+EXIT_ACTIVATE_FAILED = 4
+EXIT_NOT_JOINED = 5
 
 DEFAULT_NODE_NAME = "workbench_device_runtime"
 DEFAULT_TELEMETRY_TOPIC = "/workbench/device/telemetry"
@@ -869,6 +881,15 @@ class RuntimeBridgeCore:
 DeviceRuntimeBridge = RuntimeBridgeCore
 
 
+def _validate_endpoint_identity(interface: object, source: object) -> None:
+    """Reject an interface/source the transport would later refuse to open."""
+
+    if not isinstance(interface, str) or not interface.strip() or interface != interface.strip():
+        raise ValueError("interface must be a non-empty trimmed string")
+    if not isinstance(source, str) or not source.strip() or source != source.strip():
+        raise ValueError("source must be a non-empty trimmed string")
+
+
 def create_socketcan_adapter_factory(
     interface: str,
     *,
@@ -879,10 +900,7 @@ def create_socketcan_adapter_factory(
     """Create a fresh ``SafeCANBus(SocketCANTransport(...))`` per activation."""
 
     bridge_config = _resolve_config(config)
-    if not isinstance(interface, str) or not interface.strip() or interface != interface.strip():
-        raise ValueError("interface must be a non-empty trimmed string")
-    if not isinstance(source, str) or not source.strip() or source != source.strip():
-        raise ValueError("source must be a non-empty trimmed string")
+    _validate_endpoint_identity(interface, source)
     options = dict(transport_kwargs or {})
     for reserved in ("interface", "source"):
         if reserved in options:
@@ -1231,3 +1249,282 @@ def _resolve_config(config: DeviceRuntimeBridgeConfig | None) -> DeviceRuntimeBr
     if not isinstance(config, DeviceRuntimeBridgeConfig):
         raise TypeError("config must be DeviceRuntimeBridgeConfig when present")
     return config
+
+
+def _build_argument_parser() -> argparse.ArgumentParser:
+    """Describe the operator-facing options for the read-only bridge process."""
+
+    parser = argparse.ArgumentParser(
+        prog="workbench-device-runtime-bridge",
+        description=(
+            "Run the bounded, read-only ROS 2 DeviceRuntime bridge for one SocketCAN interface. "
+            "It publishes validated telemetry, ACK and health records only; it never writes WorldState, "
+            "sends CAN commands or replaces the hardware E-stop."
+        ),
+    )
+    parser.add_argument("--interface", required=True, help="existing host SocketCAN interface, for example can0")
+    parser.add_argument("--source", default="socketcan", help="source identity recorded on every projection")
+    parser.add_argument("--node-name", default=DEFAULT_NODE_NAME)
+    parser.add_argument("--telemetry-topic", default=DEFAULT_TELEMETRY_TOPIC)
+    parser.add_argument("--ack-topic", default=DEFAULT_ACK_TOPIC)
+    parser.add_argument("--health-topic", default=DEFAULT_HEALTH_TOPIC)
+    parser.add_argument("--poll-period-s", type=float, default=0.02)
+    parser.add_argument("--shutdown-timeout-s", type=float, default=1.0)
+    parser.add_argument("--executor-threads", type=int, default=2)
+    parser.add_argument("--max-records-per-tick", type=int, default=32)
+    parser.add_argument("--command-capacity", type=int, default=64)
+    parser.add_argument("--telemetry-capacity", type=int, default=64)
+    parser.add_argument("--health-capacity", type=int, default=128)
+    parser.add_argument("--external-capacity", type=int, default=64)
+    parser.add_argument("--max-subscribers-per-id", type=int, default=16)
+    parser.add_argument("--report", type=Path, help="write the JSON run report here in addition to stdout")
+    return parser
+
+
+def _bridge_config_from_namespace(namespace: argparse.Namespace) -> DeviceRuntimeBridgeConfig:
+    """Translate parsed options into a validated bridge configuration."""
+
+    return DeviceRuntimeBridgeConfig(
+        node_name=namespace.node_name,
+        telemetry_topic=namespace.telemetry_topic,
+        ack_topic=namespace.ack_topic,
+        health_topic=namespace.health_topic,
+        poll_period_s=namespace.poll_period_s,
+        shutdown_timeout_s=namespace.shutdown_timeout_s,
+        max_records_per_tick=namespace.max_records_per_tick,
+        executor_threads=namespace.executor_threads,
+        command_capacity=namespace.command_capacity,
+        telemetry_capacity=namespace.telemetry_capacity,
+        health_capacity=namespace.health_capacity,
+        external_capacity=namespace.external_capacity,
+        max_subscribers_per_id=namespace.max_subscribers_per_id,
+    )
+
+
+def _emit_run_report(payload: Mapping[str, object], destination: Path | None) -> None:
+    """Print the run report, then mirror it to ``destination`` when requested.
+
+    The stdout copy is the primary evidence, so a write failure is reported and
+    the documented exit code is preserved instead of escaping as a traceback
+    that would hide the run's real result from a supervisor.
+    """
+
+    rendered = json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2)
+    try:
+        print(rendered)
+    except OSError as exc:
+        print(f"cannot write the run report to stdout: {exc}", file=sys.stderr)
+    if destination is None:
+        return
+    try:
+        destination.write_text(rendered + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot write the run report to {destination}: {exc}", file=sys.stderr)
+
+
+def _load_ros() -> Any | None:
+    """Import rclpy lazily so ``--help`` and validation work without ROS 2."""
+
+    try:
+        import rclpy
+    except ImportError:  # pragma: no cover - depends on the host ROS installation.
+        return None
+    return rclpy
+
+
+def _emit_minimal_report(namespace: argparse.Namespace, status: str) -> None:
+    """Report a startup failure that happened before the bridge existed."""
+
+    _emit_run_report(
+        {
+            "schema_version": BRIDGE_RUN_SCHEMA_VERSION,
+            "status": status,
+            "interface": getattr(namespace, "interface", None),
+            "source": getattr(namespace, "source", None),
+            "worker_joined": True,
+        },
+        getattr(namespace, "report", None),
+    )
+
+
+def run_bridge(
+    namespace: argparse.Namespace,
+    *,
+    adapter_factory: AdapterFactory | None = None,
+    ros: Any | None = None,
+    context: Any | None = None,
+) -> int:
+    """Start, spin and bound the read-only bridge; return a documented exit code.
+
+    The configuration is validated before ROS 2 is touched, so a usage error is
+    reported identically with or without a ROS installation.  ``adapter_factory``
+    and ``ros`` exist so tests can drive the process without a CAN device.
+    """
+
+    try:
+        config = _bridge_config_from_namespace(namespace)
+        # The endpoint identity is validated here rather than at transport open
+        # time so an operator typo is a usage error, not a lifecycle failure
+        # discovered after ROS 2 has already started.
+        _validate_endpoint_identity(getattr(namespace, "interface", None), getattr(namespace, "source", None))
+    except (TypeError, ValueError) as exc:
+        print(f"invalid bridge configuration: {exc}", file=sys.stderr)
+        _emit_minimal_report(namespace, "invalid_configuration")
+        return EXIT_USAGE
+
+    rclpy = _load_ros() if ros is None else ros
+    if rclpy is None:
+        print("ROS 2 rclpy is required to run the bridge", file=sys.stderr)
+        _emit_minimal_report(namespace, "ros_unavailable")
+        return EXIT_USAGE
+
+    if context is None:
+        # The bridge owns its CLI, so ROS must not try to parse these flags.
+        # rclpy re-exports SignalHandlerOptions, and reading it from the module
+        # we were handed keeps an injected rclpy self-consistent.
+        rclpy.init(args=[], signal_handler_options=rclpy.SignalHandlerOptions.ALL)
+        context = rclpy.get_default_context()
+
+    # The run snapshot must describe the context rclpy actually created: the
+    # domain comes from ROS_DOMAIN_ID/--ros-args, not from a local default.
+    config = replace(config, domain_id=context.get_domain_id())
+
+    factory = adapter_factory
+    if factory is None:
+        factory = create_socketcan_adapter_factory(
+            namespace.interface,
+            config=config,
+            source=namespace.source,
+        )
+    node = create_lifecycle_node(factory, config=config, context=context)
+    executor = create_bounded_executor(config, context=context)
+    executor.add_node(node)
+    report: dict[str, object] = {
+        "schema_version": BRIDGE_RUN_SCHEMA_VERSION,
+        "status": "started",
+        "interface": namespace.interface,
+        "source": namespace.source,
+        "domain_id": config.domain_id,
+        "executor_threads": config.executor_threads,
+        "configuration": config.to_dict(),
+    }
+
+    exit_code = EXIT_OK
+    try:
+        exit_code = _configure_and_activate(node, report)
+        if exit_code == EXIT_OK:
+            exit_code = _spin_until_stopped(executor, report)
+    except Exception as exc:  # noqa: BLE001 - the bounded join below must still run.
+        print(f"bridge run failed: {exc}", file=sys.stderr)
+        report["status"] = "failed"
+        exit_code = EXIT_CONFIGURE_FAILED
+    finally:
+        exit_code, report = _bounded_teardown(node, executor, rclpy, config, report, exit_code)
+    _emit_run_report(report, namespace.report)
+    return exit_code
+
+
+def _configure_and_activate(node: Any, report: dict[str, object]) -> int:
+    """Run both lifecycle transitions and classify a failure."""
+
+    try:
+        configure_result = node.trigger_configure()
+    except Exception as exc:  # noqa: BLE001 - a failed transition is a bounded startup error.
+        print(f"bridge configure failed: {exc}", file=sys.stderr)
+        report["status"] = "configure_failed"
+        return EXIT_CONFIGURE_FAILED
+    if not _transition_succeeded(configure_result):
+        print(f"bridge configure returned {configure_result}", file=sys.stderr)
+        report["status"] = "configure_failed"
+        return EXIT_CONFIGURE_FAILED
+    try:
+        activate_result = node.trigger_activate()
+    except Exception as exc:  # noqa: BLE001 - a failed transition is a bounded startup error.
+        print(f"bridge activate failed: {exc}", file=sys.stderr)
+        report["status"] = "activate_failed"
+        return EXIT_ACTIVATE_FAILED
+    if not _transition_succeeded(activate_result):
+        print(f"bridge activate returned {activate_result}", file=sys.stderr)
+        report["status"] = "activate_failed"
+        return EXIT_ACTIVATE_FAILED
+    report["status"] = "active"
+    return EXIT_OK
+
+
+def _transition_succeeded(result: object) -> bool:
+    """Treat only an explicit success as success; ``None`` is not a success."""
+
+    return getattr(result, "name", None) == "SUCCESS" or str(result).endswith("SUCCESS")
+
+
+def _spin_until_stopped(executor: Any, report: dict[str, object]) -> int:
+    """Spin the bounded executor until an external stop arrives."""
+
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        report["stopped_by"] = "SIGINT"
+    except Exception as exc:  # noqa: BLE001 - still needs the bounded join below.
+        name = type(exc).__name__
+        report["stopped_by"] = name
+        if name != "ExternalShutdownException":
+            print(f"executor stopped with {name}: {exc}", file=sys.stderr)
+    else:
+        report["stopped_by"] = "external_shutdown"
+    return EXIT_OK
+
+
+def _bounded_teardown(
+    node: Any,
+    executor: Any,
+    rclpy: Any,
+    config: DeviceRuntimeBridgeConfig,
+    report: dict[str, object],
+    exit_code: int,
+) -> tuple[int, dict[str, object]]:
+    """Join the runtime worker first, then release ROS entities best-effort.
+
+    After SIGINT the ROS context is already invalid, so the lifecycle
+    transitions in ``on_deactivate``/``on_cleanup`` would raise and leave the
+    CAN worker running.  The ROS-free ``RuntimeBridgeCore.shutdown`` is the only
+    path that reliably joins it, so it always runs first and its result decides
+    whether this process may report success.
+    """
+
+    try:
+        joined = bool(node.bridge.shutdown())
+    except Exception as exc:  # noqa: BLE001 - a failed join must stay visible, not fatal.
+        print(f"bridge shutdown raised {type(exc).__name__}: {exc}", file=sys.stderr)
+        joined = False
+    metrics_after = node.bridge.metrics()
+    if not joined or metrics_after.worker_alive:
+        print("bridge runtime worker did not stop within the shutdown deadline", file=sys.stderr)
+        exit_code = EXIT_NOT_JOINED
+    report["worker_joined"] = joined and not metrics_after.worker_alive
+    report["metrics"] = metrics_after.to_dict()
+
+    teardown_errors: list[str] = []
+    for name, action in (
+        ("remove_node", lambda: executor.remove_node(node)),
+        ("executor_shutdown", lambda: executor.shutdown(timeout_sec=config.shutdown_timeout_s)),
+        ("destroy_node", node.destroy_node),
+        ("rclpy_shutdown", rclpy.try_shutdown),
+    ):
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001 - teardown is best-effort after the join.
+            teardown_errors.append(f"{name}: {exc}")
+    if teardown_errors:
+        report["teardown_errors"] = teardown_errors
+    return exit_code, report
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Console entry point; ``--help`` and usage errors need no ROS 2 install."""
+
+    namespace = _build_argument_parser().parse_args(list(argv) if argv is not None else None)
+    return run_bridge(namespace)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

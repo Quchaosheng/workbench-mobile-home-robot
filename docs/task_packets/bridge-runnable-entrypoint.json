@@ -1,0 +1,88 @@
+{
+  "issue": "bridge-runnable-entrypoint",
+  "human_owner": "Quchaosheng",
+  "objective": "Give the bounded DeviceRuntime ROS 2 bridge a real process entry point with a bounded, worker-joined shutdown, so the read-only SocketCAN telemetry path can actually be started and stopped instead of only being unit-tested.",
+  "decision_supported": "The bridge architecture doc calls the read-only boundary implemented, but no process constructed the node, spun the bounded executor or joined the runtime worker; this slice makes that path executable and testable.",
+  "allowed_paths": [
+    "libs/hardware/workbench/hardware/ros2_runtime_bridge.py",
+    "tools/qa/mutations-v1.json",
+    "pyproject.toml",
+    "tests/unit/test_bridge_entrypoint.py",
+    "docs/architecture/ros2-device-runtime-bridge-v1.md",
+    "docs/task_packets/bridge-runnable-entrypoint.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "docs/decisions/ADR-0005-hardware-device-runtime.md",
+    "libs/hardware/package.xml",
+    "libs/hardware/workbench/hardware/can_driver_safe.py",
+    "libs/hardware/workbench/hardware/socketcan_transport.py",
+    "tests/unit/test_ros2_runtime_bridge.py",
+    "compose.yaml",
+    "docker/entrypoint.sh",
+    "interfaces/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/**",
+    "libs/contracts/**",
+    ".github/workflows/**"
+  ],
+  "input_refs": [
+    "docs/architecture/ros2-device-runtime-bridge-v1.md",
+    "docs/decisions/ADR-0005-hardware-device-runtime.md",
+    "libs/hardware/workbench/hardware/ros2_runtime_bridge.py",
+    "tests/unit/test_ros2_runtime_bridge.py"
+  ],
+  "outputs": [
+    "libs/hardware/workbench/hardware/ros2_runtime_bridge.py",
+    "tools/qa/mutations-v1.json",
+    "pyproject.toml",
+    "tests/unit/test_bridge_entrypoint.py"
+  ],
+  "acceptance": [
+    "A console entry point starts the SocketCAN read-only bridge with a bounded executor and fails closed on an invalid configuration or a failed configure/activate.",
+    "The entry point takes its recorded domain ID from the initialized ROS context instead of the argument default, so the deployment snapshot cannot disagree with the context rclpy actually created.",
+    "Shutdown joins the runtime worker within the configured deadline. A signal that already invalidated the ROS context must not skip the bounded stop, and the process must not exit while the worker is still alive.",
+    "The process distinguishes a clean run, an invalid configuration, a failed activation and a teardown that could not join the worker through documented exit codes.",
+    "The entry point reports the bounded metrics snapshot so an operator has evidence of drops, backpressure and worker liveness for the run.",
+    "Importing workbench.hardware still does not import rclpy, and --help works without any ROS installation.",
+    "Tests cover argument validation, the fail-closed paths, the context-domain agreement rule and the worker-joined invariant without requiring a physical CAN device.",
+    "The worker-joined invariant is registered as a mutation probe, so replacing the ROS-free bounded shutdown with a ROS lifecycle teardown is detected rather than silently orphaning the CAN worker."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/bridge-runnable-entrypoint.json --base origin/main",
+    "python3 -m pytest tests/unit/test_bridge_entrypoint.py -q",
+    "python3 -m pytest tests/unit/test_ros2_runtime_bridge.py -q",
+    "python3 -m ruff check libs/hardware/workbench/hardware/ros2_runtime_bridge.py tests/unit/test_bridge_entrypoint.py",
+    "python3 -m ruff format --check libs/hardware/workbench/hardware/ros2_runtime_bridge.py tests/unit/test_bridge_entrypoint.py",
+    "python3 tools/scripts/quality_gates.py mutation --registry tools/qa/mutations-v1.json --quarantine tools/qa/quarantine-v1.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check origin/main...HEAD"
+  ],
+  "evidence": [
+    "Task Packet changed-path validation output",
+    "Focused entry point and bridge test output plus Ruff check/format output",
+    "Recorded virtual SocketCAN run showing the process publishing bounded telemetry JSON and exiting with the worker joined",
+    "Recorded signal-handling probe showing why the ROS-free bounded shutdown is required once the context is invalid",
+    "Mutation gate summary showing the bounded-join probe is CAUGHT by the named entry point tests and the checkout is left byte-identical",
+    "required repository test, contract, scenario and context checks"
+  ],
+  "stop_conditions": [
+    "A public interface/schema, firmware, robot-control or service change is required.",
+    "The change would make the bridge a command publisher, service, action server or safety authority.",
+    "A second worker, queue or lifecycle owner would be introduced.",
+    "The hardware shell would be changed to auto-start a control node without an Owner decision.",
+    "A virtual or loopback result would be used as physical CAN, MCU, actuator or hard-real-time evidence."
+  ],
+  "data_classification": "bounded read-only device telemetry, health metadata and deployment configuration; no credentials or device write handles",
+  "model_policy": "No model output is admitted as a hardware command, lifecycle decision, safety state or physical evidence.",
+  "risks_and_fallbacks": [
+    "Physical CAN, MCU, actuator, PREEMPT_RT and hard-real-time behaviour remain NOT_EXECUTED until validated on real hardware."
+  ]
+}

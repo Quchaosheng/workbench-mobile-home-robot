@@ -4,6 +4,17 @@
   "purpose": "Each entry neuters exactly one fail-closed rejection or threshold and names the tests that must fail because of it. The literal must occur exactly once in the file; an entry that does not apply cleanly is reported as indeterminate rather than as a caught mutation.",
   "mutations": [
     {
+      "id": "bridge-bounded-join-before-ros-teardown",
+      "boundary": "lifecycle cleanup",
+      "summary": "A stop that already invalidated the ROS context must still join the CAN worker through the ROS-free shutdown; a lifecycle-driven teardown orphans it.",
+      "file": "libs/hardware/workbench/hardware/ros2_runtime_bridge.py",
+      "literal": "        joined = bool(node.bridge.shutdown())",
+      "replacement": "        joined = bool(node.trigger_deactivate())",
+      "tests": [
+        "tests/unit/test_bridge_entrypoint.py"
+      ]
+    },
+    {
       "id": "world-model-sequence-ownership",
       "boundary": "event ordering",
       "summary": "Two different events claiming one sequence_no must be rejected, not silently folded.",
