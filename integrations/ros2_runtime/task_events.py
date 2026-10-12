@@ -40,6 +40,15 @@ _OUTCOMES: dict[int, tuple[ActionOutcome, DeviceState]] = {
 }
 
 _CORRELATION_KEYS = ("request_id", "workflow_id", "goal_id")
+
+# The only ``action_status``/``outcome`` pairs task_executor publishes. Written
+# from its three publish sites rather than as a cross product, because a pair
+# the runtime cannot emit is a mismatched or edited capture, not a task result.
+_LEGAL_OUTCOMES: dict[int, frozenset[int]] = {
+    SUCCEEDED: frozenset({0}),
+    ABORTED: frozenset({2, 3}),
+    CANCELED: frozenset({1}),
+}
 _REQUIRED_KEYS = (
     "stamp",
     "task_id",
@@ -88,8 +97,12 @@ def bind_task_event(record: object, *, line_number: int = 1) -> tuple[str, Actio
         raise TaskEventRejected(f"line {line_number}: unknown action_status {status}")
     if outcome not in _OUTCOMES:
         raise TaskEventRejected(f"line {line_number}: unknown runtime outcome {outcome}")
-    if status == SUCCEEDED and outcome != 0:
-        raise TaskEventRejected(f"line {line_number}: SUCCEEDED cannot carry runtime outcome {outcome}")
+    # task_executor emits exactly three pairs: SUCCEEDED+COMPLETED,
+    # CANCELED+CANCELED, and ABORTED+SAFE_STOP|DEVICE_FAULT. Anything else is
+    # not a record the runtime can produce, and accepting it would let a
+    # tampered or mismatched capture be stored as a confirmed completion.
+    if outcome not in _LEGAL_OUTCOMES[status]:
+        raise TaskEventRejected(f"line {line_number}: action_status {status} cannot carry runtime outcome {outcome}")
     if duration_ms < 0 or not 0 <= error_code <= 0xFFFF:
         raise TaskEventRejected(f"line {line_number}: duration_ms or error_code is out of range")
 
@@ -141,8 +154,18 @@ def ingest_task_event(store: SQLiteEventStore, record: object, *, line_number: i
 def ingest_capture(store: SQLiteEventStore, path: str | Path) -> tuple[TaskEventIngestResult, ...]:
     """Ingest a JSONL TaskEvent capture. Blank lines are skipped."""
 
+    capture = Path(path)
+    try:
+        # A capture is untrusted input: a non-UTF-8 or unreadable file is a
+        # refused capture, not a raw UnicodeDecodeError escaping to the caller.
+        text = capture.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise TaskEventRejected(f"{capture}: capture is not valid UTF-8: {error}") from error
+    except OSError as error:
+        raise TaskEventRejected(f"{capture}: capture could not be read: {error}") from error
+
     results = []
-    for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(text.splitlines(), 1):
         if not line.strip():
             continue
         try:

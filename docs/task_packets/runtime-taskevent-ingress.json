@@ -1,11 +1,13 @@
 {
   "issue": "runtime-taskevent-ingress",
   "human_owner": "Quchaosheng",
-  "objective": "Add the one-way adapter that binds a captured ROS 2 runtime TaskEvent to a Workbench action_result as execution evidence rather than a completion claim, so a runtime task and a product-side run share one correlation identity instead of being matched by timestamp.",
+  "objective": "Add the one-way adapter that binds a captured ROS 2 runtime TaskEvent to a Workbench action_result as execution evidence rather than a completion claim, so a runtime task and a product-side run share one correlation identity instead of being matched by timestamp, and cover that ingress boundary with a seeded property corpus.",
   "decision_supported": "Whether a runtime task can share one correlation identity with a Workbench run, and whether a product-side consumer can read a runtime terminal event as execution evidence without treating it as proof that an actuator moved.",
   "allowed_paths": [
     "integrations/ros2_runtime/**",
     "tests/integration/test_ros2_runtime_task_events.py",
+    "tests/property/test_property_task_event_ingress.py",
+    "tools/scripts/quality_gates.py",
     "docs/task_packets/runtime-taskevent-ingress.json"
   ],
   "read_only_paths": [
@@ -42,25 +44,31 @@
     "integrations/ros2_runtime/task_events.py",
     "integrations/ros2_runtime/__init__.py",
     "integrations/ros2_runtime/README.md",
-    "tests/integration/test_ros2_runtime_task_events.py"
+    "tests/integration/test_ros2_runtime_task_events.py",
+    "tests/property/test_property_task_event_ingress.py"
   ],
   "acceptance": [
     "A captured ROS 2 runtime TaskEvent binds to a Workbench run and action_result derived from the runtime's own request_id, workflow_id and task_id, with the ROS 2 goal_id as the action_id, and re-delivery of the same line replays instead of writing a second result",
     "A TaskEvent never produces a verification result and never claims a physical action: a non-success terminal outcome maps to a non-confirmed device_state, and the completion decision stays with the World Model verifier",
     "The adapter writes no spatial claim, because the runtime reports the device it commanded and never where the entity ended up, and a guessed entity would mislead every later verifier",
     "A record missing a correlation field, carrying an unknown status or outcome, an out-of-range code, or an unreadable stamp is refused rather than written, and the refusal names the failing line",
-    "ROS 2 stays out of the Workbench dependency set: the transport is a captured JSONL file, not a DDS subscription"
+    "ROS 2 stays out of the Workbench dependency set: the transport is a captured JSONL file, not a DDS subscription",
+    "The ingress boundary is covered by a seeded, dependency-free property corpus that generates legal terminal pairs as well as pairs the runtime cannot emit, and the corpus is registered with the property gate so a silently shrunken corpus is INCOMPLETE rather than a fast pass",
+    "A captured TaskEvent whose action_status and outcome task_executor never publishes together is refused, so an edited or mismatched capture cannot be stored as a confirmed completion"
   ],
   "commands": [
-    "python3 tools/scripts/check_task_packet.py --base origin/main",
-    "python3 -m pytest tests/integration/test_ros2_runtime_task_events.py -v",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/runtime-taskevent-ingress.json --base origin/main",
+    "python3 -m pytest tests/integration/test_ros2_runtime_task_events.py tests/property/test_property_task_event_ingress.py -v",
+    "python3 tools/scripts/quality_gates.py property --archive runs/qa/property-gate/summary.json",
     "python3 tools/scripts/validate_contracts.py",
-    "python3 -m ruff check integrations/ros2_runtime tests/integration/test_ros2_runtime_task_events.py",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
     "python3 -m pytest tests/unit tests/integration -q"
   ],
   "evidence": [
-    "tests/integration/test_ros2_runtime_task_events.py drives a completed event, three non-success terminal outcomes, ten unusable records, a replayed retry, a restart replay, and a capture whose failing line is reported",
-    "the task packet changed-path validation output and the contract gate output",
+    "tests/integration/test_ros2_runtime_task_events.py drives a completed event, the three legal terminal pairs, eight pairs the runtime cannot emit, ten unusable records, a replayed retry, a restart replay, and unreadable captures",
+    "tests/property/test_property_task_event_ingress.py runs a 144-case seeded corpus whose negative control was confirmed by neutering the terminal-pair check and observing the corpus fail",
+    "the property gate archive, the task packet changed-path validation output and the contract gate output",
     "the full unit and integration suite result recorded on this commit"
   ],
   "stop_conditions": [
@@ -74,6 +82,7 @@
     "A runtime capture could be older than the correlation contract; fallback is that a missing request_id, workflow_id or goal_id is refused so an unbound event is never written by guesswork",
     "A TaskEvent could be read as proof that the robot moved; fallback is that the adapter writes action_result only, maps a non-success outcome to a non-confirmed device_state, and leaves the completion decision to the World Model verifier",
     "A runtime run_id could collide with a Workbench run_id; fallback is that the length-prefixed request_id/workflow_id/task_id tuple is namespaced under run: and cannot render equal to a product run identity",
-    "rollback is a revert of this commit; the change is additive, adds no dependency, and touches no schema, store, seed or runtime path"
+    "rollback is a revert of this commit; the change is additive, adds no dependency, and touches no schema, store, seed or runtime path",
+    "A capture that is not valid UTF-8, or that cannot be read, is a typed refusal rather than a raw UnicodeDecodeError or OSError escaping to the caller"
   ]
 }

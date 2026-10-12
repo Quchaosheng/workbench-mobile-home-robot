@@ -53,23 +53,42 @@ def test_completed_event_binds_run_and_action_identity() -> None:
 
 
 @pytest.mark.parametrize(
-    ("outcome", "expected_outcome", "expected_device"),
+    ("status", "outcome", "expected_outcome", "expected_device"),
     [
-        (1, ActionOutcome.CANCELED, DeviceState.STOPPED),
-        (2, ActionOutcome.SAFE_STOP, DeviceState.STOPPED),
-        (3, ActionOutcome.FAILED, DeviceState.REJECTED),
+        # The three terminal pairs task_executor actually publishes.
+        (3, 1, ActionOutcome.CANCELED, DeviceState.STOPPED),
+        (2, 2, ActionOutcome.SAFE_STOP, DeviceState.STOPPED),
+        (2, 3, ActionOutcome.FAILED, DeviceState.REJECTED),
     ],
 )
 def test_non_success_terminal_outcomes_are_execution_evidence_not_completion(
-    outcome: int, expected_outcome: ActionOutcome, expected_device: DeviceState
+    status: int, outcome: int, expected_outcome: ActionOutcome, expected_device: DeviceState
 ) -> None:
-    _, result = bind_task_event(record(action_status=2, outcome=outcome, error_code=112))
+    _, result = bind_task_event(record(action_status=status, outcome=outcome, error_code=112))
 
     assert result.outcome is expected_outcome
     assert result.device_state is expected_device
     assert result.error_code == 112
     # SAFE_STOP must never be transcribed as a confirmed action.
     assert result.device_state is not DeviceState.CONFIRMED
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome"),
+    [
+        # Pairs the runtime cannot emit. ABORTED+COMPLETED would otherwise be
+        # stored as a confirmed completion by an edited or mismatched capture.
+        (2, 0),
+        (3, 0),
+        (3, 3),
+        (1, 1),
+        (1, 2),
+        (1, 3),
+    ],
+)
+def test_status_outcome_pairs_the_runtime_cannot_emit_are_rejected(status: int, outcome: int) -> None:
+    with pytest.raises(TaskEventRejected, match="cannot carry runtime outcome"):
+        bind_task_event(record(action_status=status, outcome=outcome))
 
 
 @pytest.mark.parametrize(
@@ -145,4 +164,18 @@ def test_capture_file_reports_the_failing_line(tmp_path: Path) -> None:
 
     with pytest.raises(TaskEventRejected, match="line 2: TaskEvent is missing task_id"):
         ingest_capture(store, capture)
+    store.close()
+
+
+def test_an_unreadable_capture_is_refused_not_raised_raw(tmp_path: Path) -> None:
+    """A capture is untrusted input, so its own failures are typed refusals."""
+
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+    corrupt = tmp_path / "corrupt.jsonl"
+    corrupt.write_bytes(b'{"task_id": "t\xff\xfe"}\n')
+
+    with pytest.raises(TaskEventRejected, match="not valid UTF-8"):
+        ingest_capture(store, corrupt)
+    with pytest.raises(TaskEventRejected, match="could not be read"):
+        ingest_capture(store, tmp_path / "absent.jsonl")
     store.close()
