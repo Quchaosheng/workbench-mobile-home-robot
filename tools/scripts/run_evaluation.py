@@ -30,7 +30,7 @@ from workbench.application.redaction import (
     redact_text,
 )
 from workbench_agent_runtime import build_policy_routed_parcel_plan
-from workbench_contracts import ATTRIBUTE_SCHEMA_VERSION
+from workbench_contracts import ATTRIBUTE_SCHEMA_VERSION, ReasonCode, RecoveryHint
 
 SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 EVENT_TYPES = {
@@ -221,6 +221,16 @@ def _action_result_payload(
     return payload
 
 
+def _recovery_hint_for(status: str) -> str:
+    """The contract recovery hint for a synthesized scripted status."""
+
+    if status == "insufficient_evidence":
+        return RecoveryHint.RE_OBSERVE.value
+    if status == "confirmed":
+        return RecoveryHint.NONE.value
+    return RecoveryHint.RETRY_ACTION.value
+
+
 def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_base: int) -> list[dict[str, Any]]:
     """Produce deterministic multi-task fixtures for pipeline and UI tests only."""
     scenario_id = manifest["scenario_id"]
@@ -298,7 +308,7 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
                 "task_id": task_id,
                 "claim": profile["claim"],
                 "status": "refuted",
-                "reason_code": "attempt_failed",
+                "reason_code": "goal_not_satisfied",
                 "recovery_hint": "retry_action",
                 "missing_evidence": [],
                 "required_conditions": list(profile["required_conditions"]),
@@ -579,7 +589,7 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
         reason_code = "stale_observation" if fault_type == "stale_observation" else "confidence_below_threshold"
     elif fault_type == "moving_target" or operation_failed:
         status = "refuted"
-        reason_code = "target_changed"
+        reason_code = "goal_not_satisfied"
     else:
         status = "confirmed"
         reason_code = "goal_satisfied"
@@ -602,9 +612,7 @@ def scripted_events(version: str, manifest: dict[str, Any], commit: str, seed_ba
             "claim": profile["claim"],
             "status": status,
             "reason_code": reason_code,
-            "recovery_hint": (
-                "re_observe" if status == "insufficient_evidence" else "none" if status == "confirmed" else "replan"
-            ),
+            "recovery_hint": _recovery_hint_for(status),
             "missing_evidence": missing_evidence,
             "required_conditions": required_conditions,
             "evaluated_conditions": required_conditions,
@@ -700,6 +708,15 @@ def validate_event_log(
     ):
         raise RuntimeError(f"verification contains an unknown status in {path}")
     for event in verifications:
+        # The status check above caught a missing status but not an invented
+        # reason or hint, so `target_changed` and `replan` shipped in every
+        # fault run. The contract enums are the authority; reuse them.
+        reason = event["payload"].get("reason_code")
+        if reason is not None and reason not in {code.value for code in ReasonCode}:
+            raise RuntimeError(f"verification contains an unknown reason_code {reason!r} in {path}")
+        hint = event["payload"].get("recovery_hint")
+        if hint is not None and hint not in {value.value for value in RecoveryHint}:
+            raise RuntimeError(f"verification contains an unknown recovery_hint {hint!r} in {path}")
         event_evidence = event.get("evidence_refs")
         payload_evidence = event["payload"].get("evidence_refs")
         if (
