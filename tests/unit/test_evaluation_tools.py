@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import sys
@@ -283,6 +284,26 @@ class EvaluationPipelineTests(unittest.TestCase):
             write_jsonl(path, events)
             with self.assertRaisesRegex(RuntimeError, "unknown event_type"):
                 validate_event_log(path, "v-test--normal-001")
+
+    def test_verification_reason_and_hint_must_be_contract_enum_members(self) -> None:
+        """The status check alone let an invented reason ship in every fault run."""
+        manifest_path = ROOT / "sim" / "scenarios" / "frozen" / "moving-target-001.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        events = scripted_events("v-test", manifest, "abc123", 1000)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "events.jsonl"
+
+            write_jsonl(path, events)
+            validate_event_log(path, "v-test--moving-target-001")
+
+            for field, illegal in (("reason_code", "target_changed"), ("recovery_hint", "replan")):
+                mutated = copy.deepcopy(events)
+                for event in mutated:
+                    if event["event_type"] == "verification":
+                        event["payload"][field] = illegal
+                write_jsonl(path, mutated)
+                with self.assertRaisesRegex(RuntimeError, f"unknown {field}"):
+                    validate_event_log(path, "v-test--moving-target-001")
 
     def test_event_metadata_must_match_the_requested_scenario(self) -> None:
         manifest = json.loads((ROOT / "sim" / "scenarios" / "frozen" / "normal-001.json").read_text(encoding="utf-8"))
