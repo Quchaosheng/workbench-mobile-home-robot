@@ -1,0 +1,79 @@
+{
+  "issue": "verification-enum-contract-members",
+  "human_owner": "Quchaosheng",
+  "objective": "Make every verification event that the scripted evaluation path writes carry only contract-defined ReasonCode and RecoveryHint members, and make the validator refuse an invented value by name instead of accepting it because the status field happened to be valid.",
+  "decision_supported": "Whether the committed dashboard fixtures and every generated scenario run can be parsed by a consumer that trusts interfaces/json_schema/verification_result.schema.json.",
+  "allowed_paths": [
+    "tools/scripts/run_evaluation.py",
+    "apps/dashboard/data/**",
+    "tests/unit/test_evaluation_tools.py",
+    "docs/task_packets/verification-enum-contract-members.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "compose.yaml",
+    "libs/contracts/**",
+    "interfaces/**",
+    "services/world_model/**",
+    "services/agent_runtime/**",
+    "libs/kernel/**",
+    "tools/scripts/validate_contracts.py",
+    "apps/dashboard/app.js",
+    "docs/architecture/semantic-action-correlation-ledger.md"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "bsp/**",
+    "deploy/**",
+    "docker/**",
+    "kernel/**"
+  ],
+  "input_refs": [
+    "interfaces/json_schema/verification_result.schema.json",
+    "libs/contracts/workbench_contracts/models.py",
+    "tools/scripts/run_evaluation.py",
+    "apps/dashboard/data/run-recovery.jsonl",
+    "apps/dashboard/data/run-uncertain.jsonl",
+    "apps/dashboard/data/run-parcel.jsonl",
+    "apps/dashboard/app.js"
+  ],
+  "outputs": [
+    "tools/scripts/run_evaluation.py",
+    "apps/dashboard/data/run-recovery.jsonl",
+    "apps/dashboard/data/run-uncertain.jsonl",
+    "apps/dashboard/data/run-parcel.jsonl",
+    "tests/unit/test_evaluation_tools.py"
+  ],
+  "acceptance": [
+    "Every verification event that validate_event_log accepts carries a reason_code that is a ReasonCode member and a recovery_hint that is a RecoveryHint member, and the two enums are imported from workbench_contracts rather than restated as a second constant table",
+    "The validator refuses an invented reason_code or recovery_hint and names the field and the offending value, instead of accepting it because the status field happened to be valid",
+    "A run of every scripted fault family that emits a refuted or insufficient_evidence verification writes only contract-legal reason and recovery values, including the moving_target, grasp_failure and actuator_timeout families that previously wrote target_changed, attempt_failed and replan",
+    "The committed dashboard fixtures carry the same legal members as generated runs, so the read model and app.js render a reason the published schema defines"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/verification-enum-contract-members.json --base origin/main",
+    "python3 -m pytest tests/unit/test_evaluation_tools.py -v",
+    "python3 tools/scripts/validate_contracts.py",
+    "python3 tools/scripts/sim_cli.py run moving-target-001 --runner scripted --output-dir runs/enum-check",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "tests/unit/test_evaluation_tools.py drives a legal log to acceptance and an invented reason_code and recovery_hint each to a named refusal",
+    "the generated events.jsonl for a moving_target run records only contract-legal reason and recovery members",
+    "task packet changed-path validation output and the ruff and contract gate output"
+  ],
+  "stop_conditions": [
+    "stop and report rather than widen an enum: a value with no honest member means the producer is modelling something the contract does not, which is an interface decision and not this change",
+    "stop if the fix would need to edit interfaces/, libs/contracts/, services/ or any hardware path",
+    "stop if a fixture can only be made legal by deleting the verification event it carries"
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "A generated run could still write an illegal member through a path validate_event_log does not reach; fallback is that the contract enums are the single source and a new value is refused at the validator rather than rendered",
+    "An existing consumer could depend on the retired literals target_changed, attempt_failed or replan; fallback is that no tracked code, test or gate reads them and each is replaced by the member that carries the same meaning",
+    "rollback is a revert of these commits; the changes are additive or a literal substitution and no schema, store, seed or runtime path changes"
+  ]
+}
