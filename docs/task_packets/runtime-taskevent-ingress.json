@@ -1,0 +1,79 @@
+{
+  "issue": "runtime-taskevent-ingress",
+  "human_owner": "Quchaosheng",
+  "objective": "Add the one-way adapter that binds a captured ROS 2 runtime TaskEvent to a Workbench action_result as execution evidence rather than a completion claim, so a runtime task and a product-side run share one correlation identity instead of being matched by timestamp.",
+  "decision_supported": "Whether a runtime task can share one correlation identity with a Workbench run, and whether a product-side consumer can read a runtime terminal event as execution evidence without treating it as proof that an actuator moved.",
+  "allowed_paths": [
+    "integrations/ros2_runtime/**",
+    "tests/integration/test_ros2_runtime_task_events.py",
+    "docs/task_packets/runtime-taskevent-ingress.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "libs/contracts/**",
+    "interfaces/**",
+    "services/world_model/**",
+    "services/perception/**",
+    "libs/kernel/**",
+    "tools/scripts/validate_contracts.py",
+    "integrations/omnilink/**",
+    "docs/architecture/semantic-action-correlation-ledger.md"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "bsp/**",
+    "deploy/**",
+    "docker/**",
+    "kernel/**",
+    "services/agent_runtime/**"
+  ],
+  "input_refs": [
+    "libs/contracts/workbench_contracts/models.py",
+    "interfaces/json_schema/action_result.schema.json",
+    "services/world_model/workbench_world_model/event_payloads.py",
+    "services/world_model/workbench_world_model/motion_evidence_adapter.py",
+    "services/perception/workbench_perception/ingestion.py",
+    "integrations/omnilink/client.py"
+  ],
+  "outputs": [
+    "integrations/ros2_runtime/task_events.py",
+    "integrations/ros2_runtime/__init__.py",
+    "integrations/ros2_runtime/README.md",
+    "tests/integration/test_ros2_runtime_task_events.py"
+  ],
+  "acceptance": [
+    "A captured ROS 2 runtime TaskEvent binds to a Workbench run and action_result derived from the runtime's own request_id, workflow_id and task_id, with the ROS 2 goal_id as the action_id, and re-delivery of the same line replays instead of writing a second result",
+    "A TaskEvent never produces a verification result and never claims a physical action: a non-success terminal outcome maps to a non-confirmed device_state, and the completion decision stays with the World Model verifier",
+    "The adapter writes no spatial claim, because the runtime reports the device it commanded and never where the entity ended up, and a guessed entity would mislead every later verifier",
+    "A record missing a correlation field, carrying an unknown status or outcome, an out-of-range code, or an unreadable stamp is refused rather than written, and the refusal names the failing line",
+    "ROS 2 stays out of the Workbench dependency set: the transport is a captured JSONL file, not a DDS subscription"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py --base origin/main",
+    "python3 -m pytest tests/integration/test_ros2_runtime_task_events.py -v",
+    "python3 tools/scripts/validate_contracts.py",
+    "python3 -m ruff check integrations/ros2_runtime tests/integration/test_ros2_runtime_task_events.py",
+    "python3 -m pytest tests/unit tests/integration -q"
+  ],
+  "evidence": [
+    "tests/integration/test_ros2_runtime_task_events.py drives a completed event, three non-success terminal outcomes, ten unusable records, a replayed retry, a restart replay, and a capture whose failing line is reported",
+    "the task packet changed-path validation output and the contract gate output",
+    "the full unit and integration suite result recorded on this commit"
+  ],
+  "stop_conditions": [
+    "stop if the runtime adapter would have to subscribe to DDS to be useful, because ROS 2 is not a Workbench dependency",
+    "stop if binding a TaskEvent would require a new WorldEventType, because action_result already carries execution evidence and a new type is an interface decision",
+    "stop if a TaskEvent can only be bound by guesswork from a timestamp, because an unbound event must be refused rather than written",
+    "stop if the adapter would need to edit interfaces/, libs/contracts/ or services/"
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "A runtime capture could be older than the correlation contract; fallback is that a missing request_id, workflow_id or goal_id is refused so an unbound event is never written by guesswork",
+    "A TaskEvent could be read as proof that the robot moved; fallback is that the adapter writes action_result only, maps a non-success outcome to a non-confirmed device_state, and leaves the completion decision to the World Model verifier",
+    "A runtime run_id could collide with a Workbench run_id; fallback is that the length-prefixed request_id/workflow_id/task_id tuple is namespaced under run: and cannot render equal to a product run identity",
+    "rollback is a revert of this commit; the change is additive, adds no dependency, and touches no schema, store, seed or runtime path"
+  ]
+}
