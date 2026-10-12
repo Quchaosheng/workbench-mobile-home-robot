@@ -50,6 +50,7 @@ PROPERTY_SUITES = {
     "tests/property/test_property_policy_rejection.py": "policy_rejection",
     "tests/property/test_property_frame_decoding.py": "frame_decoding",
     "tests/property/test_property_state_transitions.py": "state_transitions",
+    "tests/property/test_property_task_event_ingress.py": "task_event_ingress",
 }
 
 # The suites cover five boundaries.  The registry must not quietly lose one.
