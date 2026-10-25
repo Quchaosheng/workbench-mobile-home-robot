@@ -14,27 +14,35 @@ The generator builds one legal record and then perturbs exactly one field, or th
 one terminal pair, at a time, so each rejection is attributable to what changed.
 A capture that can be edited into a confirmed completion is the failure this
 suite exists to prevent: ``ABORTED`` with ``COMPLETED`` is not a task result.
+
+The second half of the suite covers the capture file itself, which is untrusted
+input in exactly the same way: a line that repeats a member or carries a
+non-finite constant is ambiguous, and a capture over the committed byte or line
+limit is refused as a whole rather than ingested up to the limit.
 """
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path[:0] = [str(ROOT), str(ROOT / "libs/contracts"), str(ROOT / "services/world_model")]
 
 from workbench_contracts import ActionOutcome, DeviceState
+from workbench_world_model.event_store import SQLiteEventStore
 
-from integrations.ros2_runtime import TaskEventRejected, bind_task_event
+from integrations.ros2_runtime import TaskEventRejected, bind_task_event, ingest_capture
+from integrations.ros2_runtime.task_events import MAX_CAPTURE_BYTES, MAX_CAPTURE_LINES
 
 from ._generator import SEEDS, Rng, assert_corpus_clean, report_for, run_corpus, write_archive_if_requested
 
 SUITE = "task_event_ingress"
-MIN_CASES = 3 * 48
+MIN_CASES = 3 * 56
 
 # ``TaskEvent.action_status`` and the ``ExecuteTask`` result it must pair with.
 SUCCEEDED, ABORTED, CANCELED = 1, 2, 3
@@ -154,10 +162,58 @@ def cases() -> list[dict]:
             generated.append({"record": legal_record(rng), "expect": "accept", "field": "none"})
         for _ in range(32):
             generated.append(perturb(rng))
+        for _ in range(8):
+            generated.append(capture_case(rng))
     return generated
 
 
+# A capture is a file rather than a record, so the ambiguity is in the text: a
+# repeated member, a non-finite constant, or a body past the committed budget.
+AMBIGUOUS_LINES = (
+    '{"task_id": "task-1", "task_id": "task-2"}',
+    '{"stamp": {"sec": 1, "sec": 2, "nanosec": 0}}',
+    '{"stamp": {"sec": NaN, "nanosec": 0}}',
+    '{"duration_ms": Infinity}',
+    '{"error_code": -Infinity}',
+)
+
+
+def capture_case(rng: Rng) -> dict:
+    """Return one capture that must be refused as a whole, and its good prefix.
+
+    The case stores only the prefix line and the fault, never the padding, so the
+    corpus digest stays small and ``capture_text`` materializes the body.
+    """
+
+    fault = rng.choice((*AMBIGUOUS_LINES, "bytes", "lines"))
+    return {"capture": json.dumps(legal_record(rng)), "fault": fault, "expect": "reject", "field": "capture"}
+
+
+def capture_text(case: dict) -> str:
+    good = case["capture"]
+    if case["fault"] == "bytes":
+        return good + "\n" + json.dumps(json.loads(good) | {"message": "x" * MAX_CAPTURE_BYTES}) + "\n"
+    if case["fault"] == "lines":
+        return (good + "\n") * (MAX_CAPTURE_LINES + 1)
+    return good + "\n" + case["fault"] + "\n"
+
+
 def check(case: dict) -> None:
+    if "record" not in case:
+        # Every capture case starts with a line that would parse and bind, so a
+        # lenient reader would store part of it before refusing the rest.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.jsonl"
+            path.write_text(capture_text(case), encoding="utf-8")
+            store = SQLiteEventStore(Path(directory) / "events.sqlite")
+            try:
+                with pytest.raises(TaskEventRejected):
+                    ingest_capture(store, path)
+                assert store.run_ids() == [], case["fault"]
+            finally:
+                store.close()
+        return
+
     record = case["record"]
     if case["expect"] == "reject":
         with pytest.raises(TaskEventRejected):
@@ -231,7 +287,5 @@ def test_rejection_precedes_any_identity() -> None:
 
 def test_the_corpus_is_reproducible_for_a_fixed_seed() -> None:
     write_archive_if_requested()
-    first = cases()
-    second = cases()
-    assert [case["record"] for case in first] == [case["record"] for case in second]
+    assert cases() == cases()
     assert report_for(SUITE).seeds == SEEDS
