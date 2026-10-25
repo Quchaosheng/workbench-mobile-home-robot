@@ -1,0 +1,78 @@
+{
+  "issue": 467,
+  "human_owner": "Quchaosheng",
+  "objective": "Bound and strictly parse the untrusted ROS 2 TaskEvent capture before any event is appended, so an oversized, duplicate-key or non-finite capture is refused as a whole with a typed error instead of being ingested or stored as a prefix of itself.",
+  "decision_supported": "Whether a captured runtime TaskEvent log can be trusted as execution evidence without a capture size, line count, duplicate-key or non-finite value making the stored record ambiguous or unbounded.",
+  "allowed_paths": [
+    "integrations/ros2_runtime/task_events.py",
+    "tests/integration/test_ros2_runtime_task_events.py",
+    "tests/property/test_property_task_event_ingress.py",
+    "docs/**"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "libs/contracts/**",
+    "interfaces/**",
+    "services/world_model/**",
+    "libs/kernel/**",
+    "services/backend/workbench_backend/read_model.py",
+    "integrations/ros2_runtime/README.md"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "bsp/**",
+    "deploy/**",
+    "docker/**",
+    "kernel/**",
+    "services/agent_runtime/**"
+  ],
+  "input_refs": [
+    "integrations/ros2_runtime/task_events.py",
+    "services/backend/workbench_backend/read_model.py",
+    "tests/integration/test_ros2_runtime_task_events.py",
+    "tests/property/test_property_task_event_ingress.py"
+  ],
+  "outputs": [
+    "integrations/ros2_runtime/task_events.py",
+    "tests/integration/test_ros2_runtime_task_events.py",
+    "tests/property/test_property_task_event_ingress.py",
+    "docs/task_packets/issue-467-taskevent-capture-bounds.json"
+  ],
+  "acceptance": [
+    "a capture whose bytes exceed MAX_CAPTURE_BYTES is refused before any line is decoded, and the refusal names the path and the byte limit",
+    "a capture with more than MAX_CAPTURE_LINES nonblank lines is refused before any line is parsed",
+    "a duplicate object key at any nesting level inside one capture line is refused rather than resolved to one of the duplicate values",
+    "the bare NaN, Infinity and -Infinity constants are refused, so no non-finite value can be bound into an action_result",
+    "a refused capture writes no event and leaves the store exactly as it was, because every line is decoded and bound before the first append",
+    "the refusal names the file path or the failing line and the exceeded limit, and never echoes the capture body",
+    "the existing exact-retry, restart-replay and correlation tests still pass unchanged"
+  ],
+  "commands": [
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/integration/test_ros2_runtime_task_events.py tests/property/test_property_task_event_ingress.py",
+    "python3 -m ruff check integrations/ros2_runtime/task_events.py tests/integration/test_ros2_runtime_task_events.py tests/property/test_property_task_event_ingress.py",
+    "python3 -m ruff format --check integrations/ros2_runtime/task_events.py tests/integration/test_ros2_runtime_task_events.py tests/property/test_property_task_event_ingress.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-467-taskevent-capture-bounds.json --base origin/main",
+    "python3 -m pytest tests/unit tests/integration -q"
+  ],
+  "evidence": [
+    "targeted pytest output for the oversize-byte, oversize-line, duplicate-key, non-finite and unchanged-store cases",
+    "the seeded property corpus now includes capture-file cases whose valid prefix would otherwise be stored, and its case count stays above the committed minimum",
+    "ruff check and ruff format --check output for the changed files",
+    "the Task Packet changed-path validation output against origin/main"
+  ],
+  "stop_conditions": [
+    "stop if bounding the capture would require a live ROS 2 or DDS dependency, because ROS 2 is not a Workbench dependency",
+    "stop if the fix would require editing interfaces/, libs/contracts/, services/ or a new WorldEventType",
+    "stop if a capture can only be kept under the limit by truncating it and ingesting a prefix, because a truncated capture is a silently partial evidence chain",
+    "stop if a modification outside allowed_paths is required"
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "A runtime capture could legitimately exceed the committed budget; fallback is that the capture is refused with the limit named rather than ingested partially, and the limits live in one place so a reviewed change can raise them",
+    "A duplicate-key refusal could reject a capture a lenient consumer would have accepted; fallback is that the refusal names the key, so the runtime side can fix the message rather than the evidence being silently ambiguous",
+    "Rejecting a capture before appending means a store-level failure part-way through a batch can still leave earlier lines written; fallback is that those lines carry the runtime's own event identity, so re-ingesting the same capture replays them instead of duplicating results",
+    "rollback is a revert of this commit; the change adds no dependency, touches no schema or store, and leaves the successful-ingest path unchanged"
+  ]
+}
