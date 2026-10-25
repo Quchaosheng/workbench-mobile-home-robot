@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -15,11 +16,16 @@ if str(SCRIPTS) not in sys.path:
 from run_evaluation import scripted_events
 from sim_cli import (
     EXIT_CODES,
+    MAX_RUN_NONCE_LENGTH,
+    RUN_ID_HEX_LENGTH,
+    RUN_ID_INPUTS,
     SimulationInputError,
     _git_commit,
+    derive_run_id,
     doctor,
     load_scenarios,
     run_scenario,
+    run_scenarios,
 )
 
 FROZEN = ROOT / "sim" / "scenarios" / "frozen"
@@ -214,6 +220,254 @@ class SimulationCliTests(unittest.TestCase):
             self.assertIn("NOT_EXECUTED", completed.stdout)
             self.assertNotIn("占位", completed.stdout)
             self.assertNotIn("VTCR", completed.stdout)
+
+
+class RunIdentityTests(unittest.TestCase):
+    """The published run ID is a function of the run's inputs (Issue #466)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.scenario = load_scenarios([FROZEN / "normal-001.json"])[0]
+
+    def test_the_same_inputs_derive_the_same_id_in_two_processes(self) -> None:
+        """Determinism is a property of the process boundary, not of one call."""
+
+        probe = textwrap.dedent(
+            """
+            import json
+            from pathlib import Path
+
+            from sim_cli import load_scenarios, run_scenario
+
+            scenario = load_scenarios([Path(%(manifest)r)])[0]
+            result = run_scenario(scenario, runner="scripted", output_dir=Path(%(output)r), version="cross-process")
+            print(json.dumps({"run_id": result.run_id, "artifact_dir": result.artifact_dir}))
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            observed = []
+            for attempt in ("first", "second"):
+                script = root / f"{attempt}.py"
+                output = root / attempt
+                script.write_text(
+                    probe % {"manifest": str(FROZEN / "normal-001.json"), "output": str(output)},
+                    encoding="utf-8",
+                )
+                completed = subprocess.run(
+                    [sys.executable, str(script)],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    check=False,
+                    env={**os.environ, "PYTHONPATH": str(SCRIPTS) + os.pathsep + os.environ.get("PYTHONPATH", "")},
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                observed.append(json.loads(completed.stdout))
+
+            self.assertEqual(observed[0]["run_id"], observed[1]["run_id"])
+            self.assertEqual(Path(observed[0]["artifact_dir"]).name, Path(observed[1]["artifact_dir"]).name)
+            # The identity is stable; the two bundles are still separate evidence.
+            self.assertNotEqual(observed[0]["artifact_dir"], observed[1]["artifact_dir"])
+
+    def test_a_different_seed_version_or_commit_changes_the_id(self) -> None:
+        base = derive_run_id(
+            scenario_id="normal-001",
+            registry_identity="pick-place-red-block@1.0",
+            seed=1101,
+            version="sim-cli",
+            commit="a" * 40,
+        )[0]
+        changes = {
+            "seed": {"seed": 1102},
+            "version": {"version": "sim-cli-2"},
+            "commit": {"commit": "b" * 40},
+            "registry_identity": {"registry_identity": "pick-place-red-block@1.1"},
+            "scenario_id": {"scenario_id": "normal-002"},
+        }
+        self.assertEqual(
+            base,
+            derive_run_id(
+                scenario_id="normal-001",
+                registry_identity="pick-place-red-block@1.0",
+                seed=1101,
+                version="sim-cli",
+                commit="a" * 40,
+            )[0],
+        )
+        for name, change in changes.items():
+            arguments = {
+                "scenario_id": "normal-001",
+                "registry_identity": "pick-place-red-block@1.0",
+                "seed": 1101,
+                "version": "sim-cli",
+                "commit": "a" * 40,
+            }
+            arguments.update(change)
+            with self.subTest(changed=name):
+                self.assertNotEqual(base, derive_run_id(**arguments)[0])
+
+    def test_the_nonced_and_default_ids_differ_and_the_nonce_is_recorded(self) -> None:
+        arguments = {
+            "scenario_id": self.scenario.scenario_id,
+            "registry_identity": "pick-place-red-block@1.0",
+            "seed": 1000 + self.scenario.manifest["seed"],
+            "version": "nonced",
+            "commit": _git_commit(),
+        }
+        default_id, default_material = derive_run_id(**arguments)
+        nonced_id, nonced_material = derive_run_id(**arguments, nonce="rerun-2")
+        self.assertNotEqual(default_id, nonced_id)
+        # An absent nonce is recorded as an explicit value, never as a random one.
+        self.assertEqual(default_material["nonce"], "none")
+        self.assertEqual(nonced_material["nonce"], "rerun-2")
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_scenario(
+                self.scenario,
+                runner="scripted",
+                output_dir=Path(directory),
+                version="nonced",
+                nonce="rerun-2",
+            )
+            metadata = json.loads((Path(result.artifact_dir) / "metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["run_nonce"], "rerun-2")
+        self.assertEqual(metadata["run_id_derivation"]["material"]["nonce"], "rerun-2")
+        self.assertEqual(result.run_id, nonced_id)
+
+    def test_a_nonce_is_bounded_and_cannot_masquerade_as_the_default(self) -> None:
+        arguments = {
+            "scenario_id": "normal-001",
+            "registry_identity": "pick-place-red-block@1.0",
+            "seed": 1101,
+            "version": "sim-cli",
+            "commit": "a" * 40,
+        }
+        for nonce, reason in (
+            ("", "non-blank"),
+            ("   ", "non-blank"),
+            (" padded", "padded"),
+            ("x" * (MAX_RUN_NONCE_LENGTH + 1), "exceeds"),
+            ("has/slash", "filesystem-safe"),
+            ("répété", "ASCII"),
+        ):
+            with self.subTest(nonce=nonce), self.assertRaisesRegex(SimulationInputError, reason):
+                derive_run_id(**arguments, nonce=nonce)
+
+        # The reserved default is a value, not a random ID, so an explicit
+        # request for it is the same request as omitting it.
+        self.assertEqual(
+            derive_run_id(**arguments)[0],
+            derive_run_id(**arguments, nonce="none")[0],
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(SimulationInputError, "exceeds"):
+                run_scenario(
+                    self.scenario,
+                    runner="scripted",
+                    output_dir=Path(directory),
+                    version="test",
+                    nonce="x" * (MAX_RUN_NONCE_LENGTH + 1),
+                )
+
+    def test_a_second_run_into_the_same_output_root_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = run_scenario(self.scenario, runner="scripted", output_dir=root, version="collide")
+            artifact = Path(first.artifact_dir)
+            before = (artifact / "checksums.sha256").read_text(encoding="utf-8")
+
+            with self.assertRaisesRegex(SimulationInputError, "refusing to overwrite existing run artifact"):
+                run_scenario(self.scenario, runner="scripted", output_dir=root, version="collide")
+
+            # The refusal leaves the first bundle byte-identical and no debris.
+            self.assertEqual((artifact / "checksums.sha256").read_text(encoding="utf-8"), before)
+            self.assertEqual([path.name for path in root.iterdir() if path.is_dir()], [artifact.name])
+            self.assertFalse(list(root.glob("*.partial")))
+
+            # An explicit nonce is the documented way to publish a second bundle.
+            second = run_scenario(self.scenario, runner="scripted", output_dir=root, version="collide", nonce="rerun")
+            self.assertNotEqual(second.run_id, first.run_id)
+
+    def test_the_scenario_name_cannot_be_confused_with_the_digest_suffix(self) -> None:
+        """A name is ``<scenario_id>-<hex>``; the last '-' always separates them."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_scenario(self.scenario, runner="scripted", output_dir=Path(directory), version="parse")
+        scenario_id, separator, suffix = result.run_id.rpartition("-")
+        self.assertEqual(separator, "-")
+        self.assertEqual(scenario_id, self.scenario.scenario_id)
+        self.assertEqual(len(suffix), RUN_ID_HEX_LENGTH)
+        self.assertTrue(all(character in "0123456789abcdef" for character in suffix))
+
+        # A second scenario whose ID is the first run's whole name still gets a
+        # distinct directory, because the suffix is recomputed over the new ID.
+        doppelganger = derive_run_id(
+            scenario_id=result.run_id,
+            registry_identity="pick-place-red-block@1.0",
+            seed=1101,
+            version="parse",
+            commit=_git_commit(),
+        )[0]
+        self.assertNotEqual(doppelganger, result.run_id)
+        self.assertTrue(doppelganger.startswith(f"{result.run_id}-"))
+
+    def test_the_recorded_derivation_reproduces_the_published_name(self) -> None:
+        """A reviewer can recompute the directory name from the metadata alone."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_scenario(self.scenario, runner="scripted", output_dir=Path(directory), version="reflect")
+            metadata = json.loads((Path(result.artifact_dir) / "metadata.json").read_text(encoding="utf-8"))
+        derivation = metadata["run_id_derivation"]
+        self.assertEqual(derivation["inputs"], list(RUN_ID_INPUTS))
+        self.assertEqual(derivation["suffix_length"], RUN_ID_HEX_LENGTH)
+        self.assertEqual(derivation["material"]["commit"], metadata["commit"])
+        self.assertEqual(derivation["material"]["seed"], str(metadata["seed"]))
+        recomputed, _ = derive_run_id(**derivation["material"])
+        self.assertEqual(recomputed, result.run_id)
+        self.assertEqual(metadata["run_id"], result.run_id)
+
+    def test_the_summary_records_the_nonce_and_the_derived_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            summary = run_scenarios(
+                [self.scenario],
+                runner="scripted",
+                output_dir=Path(directory),
+                version="summary",
+                nonce="rerun-3",
+            )
+        self.assertEqual(summary["run_nonce"], "rerun-3")
+        self.assertEqual(len(summary["results"]), 1)
+        self.assertTrue(summary["results"][0]["run_id"].startswith("normal-001-"))
+
+    def test_an_unresolvable_identity_is_refused_before_the_runner_starts(self) -> None:
+        """No registry definition means no identity, and never a random name.
+
+        A manifest that loads always resolves today, so the refusal is driven
+        through the resolver itself. What is asserted is the ordering: the
+        resolution happens before the output root is created, so a run whose
+        identity cannot be derived leaves no directory and no staging debris
+        behind, which is the property #466 changes.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "runs"
+            refusal = SimulationInputError("scenario does not resolve to exactly one registered scenario")
+            with (
+                patch("sim_cli._identity_entry", side_effect=refusal),
+                self.assertRaisesRegex(SimulationInputError, "does not resolve"),
+            ):
+                run_scenario(self.scenario, runner="scripted", output_dir=output, version="test")
+
+            self.assertFalse(output.exists())
+
+    def test_the_id_input_list_is_ordered_and_has_no_duplicates(self) -> None:
+        self.assertEqual(
+            RUN_ID_INPUTS,
+            ("scenario_id", "registry_identity", "seed", "version", "commit", "nonce"),
+        )
 
 
 if __name__ == "__main__":
