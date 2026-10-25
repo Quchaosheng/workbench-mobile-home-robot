@@ -1,0 +1,44 @@
+{
+  "issue": 443,
+  "human_owner": "Quchaosheng",
+  "objective": "Verify BSP image input digests instead of accepting any 64-hex string, so a manifest cannot claim inputs_locked without the artifact being hashed.",
+  "allowed_paths": [
+    "bsp/validation/validate_image_inputs.py",
+    "bsp/image/build-inputs.yaml",
+    "bsp/validation/README.md",
+    "tests/unit/test_bsp_manifests.py",
+    "docs/task_packets/bsp-443-image-input-digests.json"
+  ],
+  "read_only_paths": [
+    "bsp/validation/validate_manifests.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "interfaces/**"
+  ],
+  "acceptance": [
+    "a local input declaring a digest is hashed and compared, and a mismatch names the field with expected and actual value",
+    "missing, truncated, unreadable, directory and path-escaping local inputs fail closed",
+    "network inputs and the container digest require a retrieval record of url, size_bytes and sha256, with HTTPS URLs and a digest-pinned registry reference",
+    "an output digest is NOT_BUILT or bound to a build_record whose artifacts are hashed",
+    "inputs_locked is unreachable while any error exists",
+    "the committed manifest stays non-buildable and explicitly inputs_unresolved"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_bsp_manifests.py -q",
+    "python3 bsp/validation/validate_image_inputs.py",
+    "python3 bsp/validation/validate_manifests.py"
+  ],
+  "evidence": [
+    "27 passed in tests/unit/test_bsp_manifests.py",
+    "BSP image input validation passed",
+    "BSP manifest validation passed",
+    "the audit reproduction with all-zero digests now returns 15 errors naming every unverified digest"
+  ],
+  "stop_conditions": [
+    "a digest would have to be invented or fetched to satisfy validation",
+    "the change would require downloading a vendor artifact",
+    "a schema under interfaces/ would have to change"
+  ]
+}
