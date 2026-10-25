@@ -1,0 +1,9 @@
+builtin_interfaces/Time stamp
+string device_id
+uint8 NORMAL=0
+uint8 BUSY=1
+uint8 FAULT=2
+uint8 STOPPED=3
+uint8 mode
+uint16 fault_code
+uint32 last_command_id

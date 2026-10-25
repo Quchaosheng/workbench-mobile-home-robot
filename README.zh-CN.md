@@ -37,6 +37,25 @@ VORA 是面向用户的产品品牌；Workbench 继续作为工程仓库和证�
 | 验证 | 检查动作后的证据，不猜成功 |
 | 回放 | 从追加式事件流重建状态 |
 
+### 两个执行面，一个仓库
+
+Workbench 同时承担这条闭环的两半。它们各自的主张不同，仓库把这一区别保留在
+明面上，而不是抹平：
+
+| 执行面 | 语言 | 负责 | 位置 |
+| --- | --- | --- | --- |
+| 证据面 | Python | 事件库、世界模型、验证器、回放、dashboard、评估 | `services/`、`libs/`、`tools/`、`apps/` |
+| 执行面 | C++ / ROS 2 | 受限任务编排、设备命令、运行时诊断、任务历史 | [`integrations/embodied_agent_runtime/`](integrations/embodied_agent_runtime/README.md) |
+
+两者的唯一交点是 `/runtime/task_events` 上的终态 `TaskEvent`，由
+[`integrations/ros2_runtime/`](integrations/ros2_runtime/README.md) 转成一条
+`action_result` 事件。`TaskEvent` 只证明 Action 终态与协议结果，从不证明执行器
+真的动了；那个主张仍归世界模型验证器与观测证据。两半放在同一个仓库，是为了让
+这条边界能在一个 diff 里被审查，而不是为了合并两种主张。
+
+证据面只需要 Python 3.12 即可离线运行；执行面需要 ROS 2 Jazzy 和 Linux Docker
+宿主，因此纯 Python 改动不会触发它的构建。
+
 ## 3 分钟开始
 
 要求：Python 3.12。离线运行时不需要 GPU。
@@ -66,6 +85,7 @@ python -m ruff check .
 - 受限语义工具的失败关闭式策略校验。
 - 只读 dashboard 与确定性仿真 fixture。
 - MCU、CAN、Motion、BSP 的软件基础边界。
+- ROS 2 执行运行时：BehaviorTree.CPP 编排、嵌套 Action、SocketCAN 设备控制、运行时诊断与 SQLite 任务历史。
 
 ## 可选：OmniLink 知识层
 

@@ -1,0 +1,8 @@
+<root BTCPP_format="4">
+  <BehaviorTree ID="single_task">
+    <Sequence><RuntimeReady/><ExecuteTask/></Sequence>
+  </BehaviorTree>
+  <BehaviorTree ID="ready_then_task">
+    <Sequence><RetryReady attempts="2" delay_ms="100"/><ExecuteTask/></Sequence>
+  </BehaviorTree>
+</root>

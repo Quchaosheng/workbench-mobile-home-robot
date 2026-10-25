@@ -1,0 +1,7 @@
+device_bridge:
+  ros__parameters:
+    interface_name: vcan0
+    max_ack_timeout_ms: 5000
+    stop_timeout_ms: 500
+    receive_poll_ms: 25
+    diagnostic_period_ms: 1000

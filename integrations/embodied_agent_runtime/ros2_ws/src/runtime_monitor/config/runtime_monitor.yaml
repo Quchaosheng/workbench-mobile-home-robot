@@ -1,0 +1,4 @@
+runtime_monitor:
+  ros__parameters:
+    aggregate_period_ms: 500
+    stale_timeout_ms: 2000
