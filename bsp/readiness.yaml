@@ -4,7 +4,10 @@ status: REPOSITORY_BASELINE_READY_PHYSICAL_BRINGUP_BLOCKED
 gates:
   - id: BSP-GATE-ARCH
     owner: System Owner
-    status: PASS
+    # A PASS claim needs a typed record bound to gate, board and source revision
+    # (bsp/validation/check_readiness.py). This decision is documented, but no
+    # such record exists before the board is purchased, so it needs review.
+    status: REVIEW_REQUIRED
     evidence: docs/architecture/robot-bsp-v0.1.md
     requirement: one Linux board and six controller domains are frozen
   - id: BSP-GATE-SELECTION

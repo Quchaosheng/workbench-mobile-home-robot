@@ -127,6 +127,7 @@ def test_readiness_rejects_missing_or_unknown_controlled_gate() -> None:
 
 def test_readiness_rejects_evidence_outside_repository(tmp_path: Path) -> None:
     changed = deepcopy(load_readiness())
+    changed["gates"][0]["status"] = "PASS"
     changed["gates"][0]["evidence"] = "../outside.txt"
 
     errors = validate_readiness(changed, tmp_path / "repo")
@@ -138,6 +139,7 @@ def test_readiness_rejects_directory_as_pass_evidence(tmp_path: Path) -> None:
     changed = deepcopy(load_readiness())
     root = tmp_path / "repo"
     (root / "evidence").mkdir(parents=True)
+    changed["gates"][0]["status"] = "PASS"
     changed["gates"][0]["evidence"] = "evidence"
 
     errors = validate_readiness(changed, root)
@@ -151,9 +153,27 @@ def test_readiness_release_flag_and_package_status_follow_all_gates(tmp_path: Pa
     evidence = root / "evidence.txt"
     evidence.parent.mkdir(parents=True)
     evidence.write_text("controlled evidence\n", encoding="ascii")
+    digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
     for gate in changed["gates"]:
         gate["status"] = "PASS"
-        gate["evidence"] = "evidence.txt"
+        gate["evidence"] = f"{gate['id']}.yaml"
+        (root / gate["evidence"]).write_text(
+            yaml.safe_dump(
+                {
+                    "gate": gate["id"],
+                    "board_model": "NVIDIA_JETSON_ORIN_NANO_SUPER_DEVELOPER_KIT_8GB",
+                    "board_revision": "P3449-A02",
+                    "kernel_version": "5.15.148-tegra",
+                    "firmware_versions": {"MCU-BASE": "1.2.0"},
+                    "timestamp_utc": "2026-10-20T04:05:06Z",
+                    "result": "PASS",
+                    "source_revision": "a" * 40,
+                    "raw_capture": "evidence.txt",
+                    "raw_capture_hash": digest,
+                }
+            ),
+            encoding="utf-8",
+        )
     changed["physical_release_ready"] = True
     changed["status"] = READY_STATUS
 
@@ -455,3 +475,126 @@ class TestVerifiedImageInputDigests:
 
 def _digest(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+class TestReadinessStructuredEvidence:
+    """Issue #442: a PASS gate needs a typed record, not any existing file."""
+
+    @staticmethod
+    def _root(tmp_path: Path) -> Path:
+        root = tmp_path / "repo"
+        (root / "bsp/validation/captures").mkdir(parents=True)
+        (root / "bsp/validation/captures/arch.log").write_text("cold boot transcript\n", encoding="ascii")
+        return root
+
+    @staticmethod
+    def _record(root: Path, **overrides: object) -> dict:
+        capture = root / "bsp/validation/captures/arch.log"
+        record = {
+            "gate": "BSP-GATE-ARCH",
+            "board_model": "NVIDIA_JETSON_ORIN_NANO_SUPER_DEVELOPER_KIT_8GB",
+            "board_revision": "P3449-A02",
+            "kernel_version": "5.15.148-tegra",
+            "firmware_versions": {"MCU-BASE": "1.2.0"},
+            "timestamp_utc": "2026-10-20T04:05:06Z",
+            "result": "PASS",
+            "source_revision": "a" * 40,
+            "raw_capture": "bsp/validation/captures/arch.log",
+            "raw_capture_hash": hashlib.sha256(capture.read_bytes()).hexdigest(),
+        }
+        record.update(overrides)
+        return record
+
+    @staticmethod
+    def _readiness(root: Path, record: dict | None = None) -> dict:
+        readiness = deepcopy(load_readiness())
+        for gate in readiness["gates"]:
+            gate["status"] = "BLOCKED"
+            gate["evidence"] = "NOT_ATTACHED"
+        arch = next(gate for gate in readiness["gates"] if gate["id"] == "BSP-GATE-ARCH")
+        arch["status"] = "PASS"
+        arch["evidence"] = "evidence.yaml"
+        if record is not None:
+            (root / "evidence.yaml").write_text(yaml.safe_dump(record), encoding="utf-8")
+        return readiness
+
+    def test_arbitrary_existing_file_is_not_pass_evidence(self, tmp_path: Path) -> None:
+        root = self._root(tmp_path)
+        (root / "README.md").write_text("# docs\n", encoding="ascii")
+        readiness = self._readiness(root)
+        for gate in readiness["gates"]:
+            gate["status"] = "PASS"
+            gate["evidence"] = "README.md"
+        readiness["physical_release_ready"] = True
+        readiness["status"] = READY_STATUS
+
+        errors = validate_readiness(readiness, root)
+
+        assert "BSP-GATE-ARCH evidence must be a structured YAML record" in errors
+        assert "physical_release_ready must equal the all-gates-PASS result" in errors
+        assert f"BSP package status must be {BLOCKED_STATUS}" in errors
+
+    def test_structured_record_closes_the_gate_without_a_code_special_case(self, tmp_path: Path) -> None:
+        root = self._root(tmp_path)
+
+        assert validate_readiness(self._readiness(root, self._record(root)), root) == []
+
+    def test_stale_digest_and_mutated_capture_are_rejected(self, tmp_path: Path) -> None:
+        root = self._root(tmp_path)
+        stale = self._record(root, raw_capture_hash="b" * 64)
+
+        errors = validate_readiness(self._readiness(root, stale), root)
+        assert "BSP-GATE-ARCH raw capture digest does not match raw_capture_hash" in errors
+
+        original = self._record(root)
+        (root / "bsp/validation/captures/arch.log").write_text("mutated\n", encoding="ascii")
+        errors = validate_readiness(self._readiness(root, original), root)
+        assert "BSP-GATE-ARCH raw capture digest does not match raw_capture_hash" in errors
+
+    def test_record_bound_to_another_gate_is_rejected(self, tmp_path: Path) -> None:
+        root = self._root(tmp_path)
+        other = self._record(root, gate="BSP-GATE-CAN")
+
+        errors = validate_readiness(self._readiness(root, other), root)
+
+        assert "BSP-GATE-ARCH evidence is bound to gate 'BSP-GATE-CAN', not BSP-GATE-ARCH" in errors
+
+    def test_missing_blank_and_placeholder_fields_are_rejected(self, tmp_path: Path) -> None:
+        root = self._root(tmp_path)
+        partial = self._record(root)
+        del partial["firmware_versions"]
+        assert "BSP-GATE-ARCH evidence is missing fields: firmware_versions" in validate_readiness(
+            self._readiness(root, partial), root
+        )
+
+        blank = self._record(root, board_revision="  ", kernel_version="TBD_L4T_KERNEL_VERSION")
+        errors = validate_readiness(self._readiness(root, blank), root)
+        assert "BSP-GATE-ARCH evidence board_revision is blank or unresolved" in errors
+        assert "BSP-GATE-ARCH evidence kernel_version is blank or unresolved" in errors
+
+    def test_result_source_revision_and_timestamp_must_be_valid(self, tmp_path: Path) -> None:
+        root = self._root(tmp_path)
+        failed = self._record(root, result="NOT_EXECUTED", source_revision="abc123")
+        failed["timestamp_utc"] = "2026-10-20 04:05:06"
+
+        errors = validate_readiness(self._readiness(root, failed), root)
+
+        assert "BSP-GATE-ARCH evidence result NOT_EXECUTED cannot close a PASS gate" in errors
+        assert "BSP-GATE-ARCH evidence source_revision must be a full commit hash" in errors
+        assert "BSP-GATE-ARCH evidence timestamp_utc must be an ISO-8601 UTC timestamp" in errors
+
+    def test_raw_capture_must_be_a_repository_file(self, tmp_path: Path) -> None:
+        root = self._root(tmp_path)
+        escaped = self._record(root, raw_capture="../outside.log")
+
+        errors = validate_readiness(self._readiness(root, escaped), root)
+
+        assert "BSP-GATE-ARCH raw capture must reference a repository file" in errors
+
+    def test_committed_readiness_keeps_physical_release_blocked(self) -> None:
+        readiness = load_readiness()
+
+        assert check() == []
+        assert readiness["physical_release_ready"] is False
+        assert readiness["status"] == BLOCKED_STATUS
+        assert not [gate for gate in readiness["gates"] if gate["status"] == "PASS"]
