@@ -500,6 +500,100 @@ def test_a_hardware_claim_without_physical_evidence_is_refused() -> None:
 def test_coverage_refuses_an_undeclared_fault_name() -> None:
     with pytest.raises(FaultInjectionError):
         coverage_report(simulated=["earthquake"])
+    with pytest.raises(FaultInjectionError):
+        coverage_report(hardware_tested=["earthquake"], physical_evidence={"earthquake": "runs/hardware/quake.json"})
+    # An evidence key nobody claimed is an orphan reference, not extra coverage.
+    with pytest.raises(FaultInjectionError):
+        coverage_report(physical_evidence={"earthquake": "runs/hardware/quake.json"})
+    # A name that is not a string is not a declared fault either.
+    with pytest.raises(FaultInjectionError):
+        coverage_report(simulated=[["occlusion"]])
+
+
+def test_coverage_refuses_the_same_fault_claimed_twice() -> None:
+    """A repeated name is a malformed claim, not a second unit of coverage."""
+    with pytest.raises(FaultInjectionError):
+        coverage_report(simulated=["occlusion", "occlusion"])
+    with pytest.raises(FaultInjectionError):
+        coverage_report(
+            hardware_tested=["occlusion", "occlusion"],
+            physical_evidence={"occlusion": "runs/hardware/val5-07.json"},
+        )
+
+
+def test_coverage_refuses_a_fault_claimed_both_simulated_and_hardware_tested() -> None:
+    """The overlap used to be resolved by iteration order; it is refused now."""
+    with pytest.raises(FaultInjectionError):
+        coverage_report(
+            simulated=["occlusion"],
+            hardware_tested=["occlusion"],
+            physical_evidence={"occlusion": "runs/hardware/val5-07.json"},
+        )
+
+
+def test_coverage_refuses_a_physical_reference_for_a_fault_that_is_not_hardware_tested() -> None:
+    """A simulated fault carrying a physical artifact would cite evidence it lacks."""
+    with pytest.raises(FaultInjectionError):
+        coverage_report(simulated=["occlusion"], physical_evidence={"occlusion": "runs/hardware/val5-07.json"})
+    with pytest.raises(FaultInjectionError):
+        coverage_report(physical_evidence={"occlusion": "runs/hardware/val5-07.json"})
+    with pytest.raises(FaultInjectionError):
+        coverage_report(
+            simulated=["occlusion"],
+            hardware_tested=["link_loss"],
+            physical_evidence={"occlusion": "runs/hardware/val5-07.json", "link_loss": "runs/hardware/dc-4.json"},
+        )
+
+
+def test_coverage_omits_a_physical_reference_for_every_non_hardware_entry() -> None:
+    report = coverage_report(
+        simulated=["occlusion"],
+        hardware_tested=["link_loss"],
+        physical_evidence={"link_loss": "runs/hardware/dc-4.json"},
+    )
+    references = {entry["fault"]: entry["physical_evidence_ref"] for entry in report["faults"]}
+    assert references["link_loss"] == "runs/hardware/dc-4.json"
+    assert all(reference is None for name, reference in references.items() if name != "link_loss")
+
+
+def test_coverage_counts_match_the_entries_in_each_status() -> None:
+    """Counts are derived from the entries, so they cannot disagree with them."""
+    report = coverage_report(
+        simulated=["occlusion", "grasp_failure"],
+        hardware_tested=["link_loss"],
+        physical_evidence={"link_loss": "runs/hardware/dc-4.json"},
+    )
+    assert report["hardware_tested_count"] == 1
+    assert report["simulated_count"] == 2
+    assert report["not_executed_count"] == report["declared_count"] - 3
+    for status, key in (
+        ("SIMULATED", "simulated_count"),
+        ("HARDWARE_TESTED", "hardware_tested_count"),
+        ("NOT_EXECUTED", "not_executed_count"),
+    ):
+        assert report[key] == sum(1 for entry in report["faults"] if entry["status"] == status)
+    assert report["declared_count"] == sum(
+        report[key] for key in ("simulated_count", "hardware_tested_count", "not_executed_count")
+    )
+
+
+def test_a_valid_evidence_only_report_is_accepted() -> None:
+    """Hardware coverage with a reference per fault, and nothing simulated."""
+    evidence = {
+        "link_loss": "runs/hardware/val5-07.json",
+        "process_restart": "runs/hardware/val5-08.json",
+    }
+    report = coverage_report(hardware_tested=sorted(evidence), physical_evidence=evidence)
+    statuses = {entry["fault"]: entry["status"] for entry in report["faults"]}
+    assert statuses["link_loss"] == "HARDWARE_TESTED"
+    assert statuses["process_restart"] == "HARDWARE_TESTED"
+    assert report["hardware_tested_count"] == 2
+    assert report["simulated_count"] == 0
+    assert report["not_executed_count"] == report["declared_count"] - 2
+    for entry in report["faults"]:
+        assert entry["status"] in report["coverage_statuses"]
+        if entry["status"] == "HARDWARE_TESTED":
+            assert entry["physical_evidence_ref"] == evidence[entry["fault"]]
 
 
 def test_coverage_document_is_json_serializable_and_versioned() -> None:

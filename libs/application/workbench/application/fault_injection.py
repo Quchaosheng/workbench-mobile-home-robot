@@ -382,26 +382,48 @@ def coverage_report(
     that claims hardware coverage without one is refused, because the cheapest
     way to overstate this report is to assert a status instead of attaching the
     artifact that supports it.
+
+    The three inputs must also agree with each other. Each fault is claimed at
+    most once, never as both ``SIMULATED`` and ``HARDWARE_TESTED``, and a
+    physical reference belongs only to a hardware-tested fault -- one left
+    behind on another status would cite an artifact the report does not claim.
+    Refusal is chosen over a documented precedence because precedence silently
+    discards one of the caller's claims, and argument order is not evidence.
+    ``NOT_EXECUTED`` cannot absorb the ambiguity either: it states that a fault
+    was not executed, which is exactly what a conflicting report does not know.
     """
     evidence = dict(physical_evidence or {})
     statuses: dict[str, CoverageStatus] = {}
-    for name in simulated:
+    for status, names in (("SIMULATED", simulated), ("HARDWARE_TESTED", hardware_tested)):
+        for name in names:
+            _require_declared(name)
+            previous = statuses.get(name)
+            if previous == status:
+                raise FaultInjectionError(f"{name} is claimed twice as {status}")
+            if previous is not None:
+                raise FaultInjectionError(f"{name} is claimed both {previous} and {status}")
+            if status == "HARDWARE_TESTED":
+                reference = evidence.get(name)
+                if not isinstance(reference, str) or not reference.strip():
+                    raise FaultInjectionError(f"{name} claims HARDWARE_TESTED without a physical evidence reference")
+            statuses[name] = status
+
+    for name in evidence:
         _require_declared(name)
-        statuses[name] = "SIMULATED"
-    for name in hardware_tested:
-        _require_declared(name)
-        reference = evidence.get(name)
-        if not isinstance(reference, str) or not reference.strip():
-            raise FaultInjectionError(f"{name} claims HARDWARE_TESTED without a physical evidence reference")
-        statuses[name] = "HARDWARE_TESTED"
-    entries = [
-        {
-            **spec.as_dict(),
-            "status": statuses.get(spec.fault.value, "NOT_EXECUTED"),
-            "physical_evidence_ref": evidence.get(spec.fault.value),
-        }
-        for spec in FAULT_SPECS
-    ]
+        if statuses.get(name) != "HARDWARE_TESTED":
+            raise FaultInjectionError(f"{name} carries a physical evidence reference without claiming HARDWARE_TESTED")
+
+    entries: list[dict[str, Any]] = []
+    for spec in FAULT_SPECS:
+        status = statuses.get(spec.fault.value, "NOT_EXECUTED")
+        entries.append(
+            {
+                **spec.as_dict(),
+                "status": status,
+                # A physical artifact is only ever cited by a hardware-tested entry.
+                "physical_evidence_ref": evidence[spec.fault.value] if status == "HARDWARE_TESTED" else None,
+            }
+        )
     return {
         "fault_injection_version": FAULT_INJECTION_VERSION,
         "coverage_statuses": list(COVERAGE_STATUSES),
@@ -414,7 +436,9 @@ def coverage_report(
 
 
 def _require_declared(name: str) -> None:
-    if name not in declared_faults():
+    # A name that is not a string is not a declared fault either. Checking the
+    # type first keeps an unhashable argument from escaping as a TypeError.
+    if not isinstance(name, str) or name not in declared_faults():
         raise FaultInjectionError(f"coverage report names an undeclared fault: {name!r}")
 
 
