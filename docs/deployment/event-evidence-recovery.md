@@ -44,10 +44,21 @@ restore and never a "best effort" restore.
 
 `format` names the artifact, `format_version` names the manifest contract,
 `schema_version` names the event-store schema, and `sha256` binds the manifest to
-the exact bytes. A restore accepts a snapshot only when all four agree and the
-snapshot still passes `PRAGMA integrity_check` with the documented event count.
-The manifest is moved into place after the snapshot, so a crash cannot leave a
-manifest describing a snapshot that never landed.
+the exact bytes. `database` names the backend that wrote the snapshot, and it is
+matched against the supported set `{"jsonl", "sqlite"}` rather than guessed: a
+missing, unknown, misspelt or non-string value is refused, and the refusal names
+the unsupported backend. A restore accepts a snapshot only when all four fields
+agree, the declared backend matches the snapshot bytes, and the snapshot still
+passes `PRAGMA integrity_check` with the documented event count. The manifest is
+moved into place after the snapshot, so a crash cannot leave a manifest describing
+a snapshot that never landed.
+
+A `database` label and the snapshot bytes must describe the same storage. A
+snapshot labelled `sqlite` must begin with the SQLite file-format header, so an
+empty or text snapshot cannot be opened as a new empty database; a snapshot
+labelled `jsonl` must actually parse as an event log. Neither direction silently
+falls back to the other parser. A refused restore happens before the destination
+is written or replaced, so the previous contents survive unchanged.
 
 ## Operating procedures
 
@@ -133,6 +144,7 @@ Raw evidence lives by reference in the operator-owned store described in
 |---|---|
 | Restore refuses with a checksum mismatch | Treat the snapshot as tampered or truncated. Restore a different snapshot; never override the check. |
 | Restore refuses with a schema or format mismatch | Use a snapshot taken from a compatible schema version. Do not edit the manifest. |
+| Restore refuses with an unsupported database backend | The manifest's `database` is missing, misspelt or not `sqlite`/`jsonl`. Restore a snapshot whose manifest names a supported backend; do not hand-edit the field to force it through, because the parser would then disagree with the bytes. |
 | Recovery refuses a damaged line before the tail | Treat every event after the damage as unproven. Restore the most recent verified snapshot instead. |
 | Integrity check fails on the live store | Restore the most recent verified snapshot, then re-run the scenario. Do not append to a store that cannot be read. |
 | References are missing | Report the incomplete run as incomplete evidence. Do not reconstruct the reference by hand. |
@@ -144,3 +156,9 @@ restore that is replay-equivalent to its source, a refused tampered snapshot, a
 refused manifest mismatch, an interrupted append, a refused mid-file corruption,
 a refused clean-log recovery, a refused unwritable destination, and an evidence
 audit that reports a missing reference without inventing one.
+
+`tests/unit/test_event_evidence_recovery.py` covers the snapshot backend
+contract: a missing, unknown, misspelt or non-string `database` is refused, a
+snapshot whose label disagrees with its bytes is refused in both directions, each
+refusal leaves an existing destination byte-for-byte unchanged, and the supported
+`sqlite`/`jsonl` restores still round trip.
