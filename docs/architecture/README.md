@@ -32,6 +32,8 @@ python3 tools/scripts/check_scenario_capabilities.py --check-generated
 - `architecture/linux-drivers.md` -- the driver framework and its tests.
 - `architecture/robot-bsp-*.md` -- the board support package manifests and selection rules.
 - `architecture/semantic-action-correlation-ledger.md` -- how an action result is tied to evidence.
+- `architecture/omnisim-pilot-identity-v1.md` -- why an OmniSim pilot identity is a
+  verified world digest rather than a random one, and what a missing digest refuses.
 
 ## How these documents relate
 

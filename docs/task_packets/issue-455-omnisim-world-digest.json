@@ -1,0 +1,98 @@
+{
+  "issue": 455,
+  "human_owner": "REPLACE_WITH_SIMULATION_INTEGRATION_OWNER",
+  "objective": "Derive the OmniSim pilot identity from the verified digest of the world the harness loaded plus the bounded request inputs, instead of uuid4, and refuse the pilot when that digest is missing, ambiguous or contradicted.",
+  "decision_supported": "Whether an OmniSim pilot artifact can be tied to the exact world revision that was loaded and compared across reruns as the same probe, without promoting the artifact past simulation-only evidence.",
+  "allowed_paths": [
+    "integrations/omnisim/pilot.py",
+    "integrations/omnisim/client.py",
+    "integrations/omnisim/__init__.py",
+    "integrations/omnisim/README.md",
+    "tests/integration/test_omnisim_pilot.py",
+    "docs/architecture/omnisim-pilot-identity-v1.md",
+    "docs/architecture/README.md",
+    "docs/task_packets/issue-455-omnisim-world-digest.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "libs/kernel/workbench/kernel/run_provenance.py",
+    "libs/kernel/workbench/kernel/scenario_identity.py",
+    "sim/**",
+    "services/world_model/**",
+    "tools/scripts/sim_cli.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "services/agent_runtime/**",
+    "Gazebo, ROS or Motion runner changes",
+    "physical or release evidence claims for an OmniSim artifact"
+  ],
+  "input_refs": [
+    "integrations/omnisim/pilot.py",
+    "integrations/omnisim/client.py",
+    "tests/integration/test_omnisim_pilot.py",
+    "libs/kernel/workbench/kernel/run_provenance.py",
+    "libs/kernel/workbench/kernel/scenario_identity.py",
+    "docs/architecture/run-provenance-v1.md",
+    "tools/scripts/sim_cli.py"
+  ],
+  "outputs": [
+    "integrations/omnisim/pilot.py",
+    "integrations/omnisim/client.py",
+    "integrations/omnisim/__init__.py",
+    "integrations/omnisim/README.md",
+    "tests/integration/test_omnisim_pilot.py",
+    "docs/architecture/omnisim-pilot-identity-v1.md",
+    "docs/architecture/README.md"
+  ],
+  "acceptance": [
+    "the same world digest and bounded request derive the same run_id in two separate processes",
+    "a changed world digest derives a different run_id",
+    "a changed step count derives a different run_id",
+    "a missing or ambiguous world digest is an INVALID_OUTPUT refusal with a null identity, never a random ID",
+    "a digest that disagrees with a caller-supplied value or an absolute local world file is refused",
+    "an existing artifact directory is refused with FileExistsError before a staging directory is created",
+    "metadata retains release_eligible false, evidence_class SIMULATION, physical_evidence false and mapped_to_workbench_event_contract false",
+    "the identity input list, its order and the metadata identity block are asserted by a test",
+    "no existing test in tests/integration/test_omnisim_pilot.py is moved, reordered or restructured"
+  ],
+  "commands": [
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/integration/test_omnisim_pilot.py",
+    "python3 -m ruff check integrations/omnisim/pilot.py integrations/omnisim/client.py integrations/omnisim/__init__.py tests/integration/test_omnisim_pilot.py",
+    "python3 -m ruff format --check integrations/omnisim/pilot.py integrations/omnisim/client.py integrations/omnisim/__init__.py tests/integration/test_omnisim_pilot.py",
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/integration/test_omnisim_pilot.py tests/integration/test_rlsok_shadow.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-455-omnisim-world-digest.json",
+    "python3 tools/scripts/check_ready_gate.py --kind issue --body-file /tmp/issue_bodies/455.md"
+  ],
+  "evidence": [
+    "pytest transcript for tests/integration/test_omnisim_pilot.py with the passed count",
+    "a two-process identity vector: the same world digest and step count printed from a child process equal to the run_id this process published",
+    "a changed-world vector and a changed-step vector showing two different run_ids",
+    "a missing-digest refusal showing status INVALID_OUTPUT, identity null and no /sim/step request",
+    "an existing-output refusal showing FileExistsError and the first artifact's checksums unchanged",
+    "ruff check and ruff format --check output",
+    "build/verify.sh output ending in OK: no new failures",
+    "mkdocs build --strict exit code 0 for the new architecture page"
+  ],
+  "stop_conditions": [
+    "the harness cannot report a world digest; report NOT_EXECUTED rather than hashing a path name and calling it provenance",
+    "a stable identity would need to overwrite an existing artifact, which the collision refusal forbids",
+    "the change would require a frozen interface, contract or schema change",
+    "the change would require editing a test Issue #466 is concurrently editing beyond additive lines",
+    "a physical, Gazebo or release claim would have to change to make the identity reproducible"
+  ],
+  "max_iterations": 12,
+  "data_classification": "public repository source, documentation and test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may write the pilot identity derivation, the strict digest parsing, the tests and the documentation; the named human Simulation Integration owner must accept the identity input list and the artifact-directory migration, and the Evaluation / Evidence reviewer must accept the missing-digest refusal, before this is treated as evidence",
+  "risks_and_fallbacks": [
+    "a deterministic run ID could overwrite prior evidence; fallback is that the collision refusal runs before staging and an existing directory is never replaced",
+    "a caller could pin a digest and call it verified; fallback is that the harness must report the same digest, and an absolute local world file must agree with it",
+    "a harness could report a path where a digest belongs; fallback is that only a bare 64-character hex SHA-256 parses, so a path is refused rather than coerced",
+    "two spellings of one digest could become two identities; fallback is that the parser canonicalizes case and the optional sha256: prefix",
+    "the concurrent Issue #466 edit could conflict; fallback is that every change to the test module is additive and lives in one new class at the end of the file",
+    "rollback is a revert of this commit; no interface, contract, event schema or stored event is touched, and the pilot writes only new artifact directories"
+  ]
+}
