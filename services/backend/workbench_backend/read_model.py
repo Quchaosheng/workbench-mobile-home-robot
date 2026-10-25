@@ -521,6 +521,16 @@ class DashboardReadModel:
             raise KeyError(run_id) from None
         return run_timeline(events)
 
+    def expression_contract(self) -> dict[str, Any]:
+        """The static expression vocabulary; it reads no event source."""
+        return {
+            "states": [state.value for state in ExpressionState],
+            "transitions": {
+                state.value: sorted(next_state.value for next_state in transitions)
+                for state, transitions in ALLOWED_TRANSITIONS.items()
+            },
+        }
+
     def summarize(self, events: list[dict[str, Any]], replay_index: int | None = None) -> dict[str, Any]:
         if not events:
             raise ValueError("cannot summarize an empty run")
@@ -658,15 +668,6 @@ class RemoteDashboardReadModel(DashboardReadModel):
         if any(event["run_id"] != run_id for event in events):
             raise ReadModelError("remote event source returned unexpected run_id values")
         return events
-
-    def expression_contract(self) -> dict[str, Any]:
-        return {
-            "states": [state.value for state in ExpressionState],
-            "transitions": {
-                state.value: sorted(next_state.value for next_state in transitions)
-                for state, transitions in ALLOWED_TRANSITIONS.items()
-            },
-        }
 
 
 class UnavailableRemoteDashboardReadModel(RemoteDashboardReadModel):

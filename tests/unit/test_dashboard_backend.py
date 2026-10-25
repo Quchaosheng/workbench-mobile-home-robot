@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services" / "backend"))
 
-from workbench_backend.expression import ExpressionMachine, ExpressionState, derive_expression
+from workbench_backend.expression import ALLOWED_TRANSITIONS, ExpressionMachine, ExpressionState, derive_expression
 from workbench_backend.logging import StructuredLogger
 from workbench_backend.read_model import DashboardReadModel, ReadModelError
 from workbench_backend.server import (
@@ -455,6 +455,55 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(missing.exception.code, 404)
         with urllib.request.urlopen(f"{self.base_url}/api/v1/runs", timeout=2) as response:
             self.assertEqual(response.headers["X-API-Version"], "1")
+
+    def test_expression_contract_is_served_without_any_event_log(self) -> None:
+        expected = {
+            "states": [state.value for state in ExpressionState],
+            "transitions": {
+                state.value: sorted(next_state.value for next_state in transitions)
+                for state, transitions in ALLOWED_TRANSITIONS.items()
+            },
+        }
+        contract = json.loads(OPENAPI_RESOURCE.read_text(encoding="utf-8"))
+        declared = contract["components"]["schemas"]["ExpressionContract"]
+        self.assertEqual(declared["properties"]["states"]["items"]["enum"], expected["states"])
+        self.assertEqual(set(declared["required"]), set(expected))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = create_server("127.0.0.1", 0, data_dir=temp_dir)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_address[1]}"
+                # The static vocabulary is answerable even when the empty run
+                # directory is not ready: the route reads no event source.
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(f"{base_url}/readyz", timeout=2)
+                self.assertEqual(caught.exception.code, 503)
+                for path in ("/api/v1/expression-states", "/api/expression-states"):
+                    with urllib.request.urlopen(f"{base_url}{path}", timeout=2) as response:
+                        self.assertEqual(response.status, 200)
+                        self.assertEqual(json.loads(response.read()), expected)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_local_and_remote_controllers_serve_the_same_expression_contract(self) -> None:
+        local_status, local_contract = self.read_json("/api/v1/expression-states")
+        self.assertEqual(local_status, 200)
+        controller = create_server("127.0.0.1", 0, event_source_url="http://127.0.0.1:1")
+        thread = threading.Thread(target=controller.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{controller.server_address[1]}/api/v1/expression-states"
+            with urllib.request.urlopen(url, timeout=2) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read()), local_contract)
+        finally:
+            controller.shutdown()
+            controller.server_close()
+            thread.join(timeout=2)
 
     def test_openapi_contract_is_packaged_and_matches_checked_in_docs(self) -> None:
         packaged = json.loads(OPENAPI_RESOURCE.read_text(encoding="utf-8"))
