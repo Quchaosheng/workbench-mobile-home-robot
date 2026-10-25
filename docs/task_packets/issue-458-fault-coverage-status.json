@@ -1,0 +1,98 @@
+{
+  "issue": 458,
+  "human_owner": "Quchaosheng",
+  "objective": "Make fault coverage aggregation refuse contradictory evidence instead of resolving it by iteration order: a fault claimed twice or claimed both SIMULATED and HARDWARE_TESTED is refused, a physical evidence reference recorded for a fault that is not HARDWARE_TESTED is refused, every entry carries exactly one status from the controlled vocabulary, and the top-level counts equal the number of entries in each status.",
+  "decision_supported": "Given a set of caller-supplied coverage claims, does the report either state one honest status per fault backed by the evidence supplied for that fault, or refuse the input, rather than emitting a report whose per-fault status and top-level counts depend on argument order?",
+  "allowed_paths": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py",
+    "docs/task_packets/issue-458-fault-coverage-status.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/task_packets/README.md",
+    "docs/task_packets/example-001-world-reducer.json",
+    "docs/task_packets/issue-77-fault-injection-coverage.json",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "tools/scripts/scenario_tools.py",
+    "pyproject.toml",
+    "Makefile"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "sim/**",
+    "apps/**",
+    "kernel/**"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py",
+    "docs/task_packets/example-001-world-reducer.json",
+    "docs/task_packets/issue-77-fault-injection-coverage.json"
+  ],
+  "outputs": [
+    "coverage_report() refuses a fault claimed twice, a fault claimed both SIMULATED and HARDWARE_TESTED, an undeclared fault name and a physical evidence reference attached to a fault that is not HARDWARE_TESTED.",
+    "coverage_report() emits physical_evidence_ref only on HARDWARE_TESTED entries and derives simulated_count, hardware_tested_count and not_executed_count from the emitted entries.",
+    "Tests covering duplicate membership, a simulated fault with a physical reference, a hardware plus simulated conflict, an orphan evidence key, count/entry consistency and a valid hardware-tested fixture with its reference.",
+    "This Task Packet."
+  ],
+  "acceptance": [
+    "Refusal is chosen over documented precedence: coverage_report(simulated=[f], hardware_tested=[f]) raises FaultInjectionError naming the fault, in either argument order, and no status is written for it; asserted by tests/integration/test_fault_injection_coverage.py::test_coverage_refuses_a_fault_claimed_both_simulated_and_hardware_tested.",
+    "A repeated fault name in one claim raises FaultInjectionError instead of counting as a second unit of coverage; asserted by tests/integration/test_fault_injection_coverage.py::test_coverage_refuses_the_same_fault_claimed_twice.",
+    "A physical evidence reference for a fault that is not HARDWARE_TESTED raises FaultInjectionError, whether the fault is SIMULATED or NOT_EXECUTED, so the reference is refused rather than dropped; asserted by tests/integration/test_fault_injection_coverage.py::test_coverage_refuses_a_physical_reference_for_a_fault_that_is_not_hardware_tested.",
+    "Every emitted entry carries exactly one status from COVERAGE_STATUSES, only HARDWARE_TESTED entries carry a physical_evidence_ref and every other entry reports null; asserted by tests/integration/test_fault_injection_coverage.py::test_coverage_omits_a_physical_reference_for_every_non_hardware_entry.",
+    "simulated_count, hardware_tested_count and not_executed_count each equal the number of emitted entries in that status and sum to declared_count; asserted by tests/integration/test_fault_injection_coverage.py::test_coverage_counts_match_the_entries_in_each_status.",
+    "A valid evidence-only report with no simulated claims is accepted, marks each claimed fault HARDWARE_TESTED with its own reference and leaves the rest NOT_EXECUTED; asserted by tests/integration/test_fault_injection_coverage.py::test_a_valid_evidence_only_report_is_accepted.",
+    "Unknown, non-string and duplicate fault names still fail closed: non-string names raise FaultInjectionError rather than TypeError; asserted by tests/integration/test_fault_injection_coverage.py::test_coverage_refuses_an_undeclared_fault_name.",
+    "A report with no evidence still reports every declared fault NOT_EXECUTED and counts them; covered by tests/integration/test_fault_injection_coverage.py::test_coverage_never_reports_a_fault_as_passing_by_default.",
+    "The pre-existing hardware claim without a reference refusal and the JSON-serializable versioned document test still pass unchanged.",
+    "No injector, fault taxonomy, scenario manifest, runtime control path, interface schema or physical evidence claim is modified."
+  ],
+  "commands": [
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/integration/test_fault_injection_coverage.py",
+    "python3 -m ruff check libs/application/workbench/application/fault_injection.py tests/integration/test_fault_injection_coverage.py",
+    "python3 -m ruff format --check libs/application/workbench/application/fault_injection.py tests/integration/test_fault_injection_coverage.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-458-fault-coverage-status.json",
+    "make task-check PACKET=docs/task_packets/issue-458-fault-coverage-status.json",
+    "git diff --check",
+    "git diff --name-only"
+  ],
+  "evidence": [
+    "Pre-fix reproduction on 3737d308de936d9d3b55de7fa6309ec59b3afd88: coverage_report(simulated=['occlusion'], hardware_tested=['occlusion'], physical_evidence={'occlusion': 'runs/hardware/val5-07.json'}) returned status HARDWARE_TESTED with simulated_count 0 and hardware_tested_count 1, i.e. the SIMULATED claim was silently overwritten.",
+    "Pre-fix reproduction: coverage_report(simulated=['occlusion'], physical_evidence={'occlusion': 'runs/hardware/val5-07.json'}) returned status SIMULATED carrying physical_evidence_ref runs/hardware/val5-07.json.",
+    "Pre-fix reproduction: coverage_report(simulated=['occlusion', 'occlusion']) returned simulated_count 1 with no diagnostic, and coverage_report(physical_evidence={'earthquake': 'runs/x.json'}) returned a clean report that ignored the orphan reference.",
+    "Pre-fix reproduction: coverage_report(simulated=[['occlusion']]) escaped as TypeError: unhashable type: 'list' instead of the contract error.",
+    "Post-fix output for the same calls: 'occlusion is claimed both SIMULATED and HARDWARE_TESTED', 'occlusion carries a physical evidence reference without claiming HARDWARE_TESTED', 'occlusion is claimed twice as SIMULATED' and FaultInjectionError for the unhashable name.",
+    "Post-fix count/entry consistency: a report with two simulated faults, one hardware-tested fault and its reference emits simulated_count 2, hardware_tested_count 1, not_executed_count 5 against declared_count 8, matching the entry list.",
+    "Post-fix valid hardware fixture: hardware_tested=['link_loss', 'process_restart'] with runs/hardware/val5-07.json and runs/hardware/val5-08.json reports both HARDWARE_TESTED with their own references and simulated_count 0.",
+    "Targeted pytest output with the pass count and exit code.",
+    "ruff check and ruff format --check output for both changed Python files.",
+    "build/verify.sh output ending in 'OK: no new failures' with the twelve pre-existing environmental failures unchanged; build/ is gitignored and excluded from forbidden because it is a local check, not a writable or changed path.",
+    "git diff --check and git diff --name-only output proving every changed path is inside allowed_paths."
+  ],
+  "stop_conditions": [
+    "The fix would mark a fault hardware-tested from a name alone, or invent, copy or upgrade a physical evidence reference.",
+    "The fix requires changing an injector, the fault taxonomy, a scenario manifest, an interface schema, libs/contracts or any path outside allowed_paths.",
+    "Meeting the acceptance requires a runtime, safety-MCU, dashboard or backend behavior change rather than a coverage-report change.",
+    "A contradictory input can only be handled by silently picking one claim, by last-write-wins, or by downgrading the fault to NOT_EXECUTED.",
+    "A targeted or required repository check fails for a reason caused by this diff and cannot be corrected inside allowed_paths."
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; the tests use declared fault names, synthetic evidence reference paths and no real robot, operator, camera or credential data",
+  "model_policy": "no model call; coverage validation and counting are deterministic pure functions over caller-supplied claim lists",
+  "risks_and_fallbacks": [
+    "Refusal versus precedence is a QA Owner decision this Packet depends on. Refusal was chosen because every precedence rule throws away a caller's claim silently, and the issue's rollback path forbids last-write-wins; the alternative remains available by changing the refusal to an explicit documented precedence, but that change needs a new decision record.",
+    "A refused input aborts the whole report rather than degrading one entry. This is deliberate: a caller that supplies contradictory evidence has an upstream defect, and a partial report would be quoted as if it were complete.",
+    "The orphan-evidence refusal means a caller cannot leave a physical reference in the mapping for a fault it does not currently claim. That is stricter than dropping the key, and it is the only choice that cannot quietly detach evidence from the status it supports.",
+    "coverage_report() remains a pure function over its arguments: it does not read the filesystem, so a reference that does not exist on disk is still accepted. Verifying that a cited artifact exists is out of scope for this issue and would need a separate evidence-resolution issue.",
+    "Rollback consists of reverting this commit; no schema, manifest or persisted coverage document is written by this change."
+  ]
+}
