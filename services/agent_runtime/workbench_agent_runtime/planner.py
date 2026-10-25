@@ -55,6 +55,30 @@ DEFAULT_PARCEL_ATTRIBUTES = {
 }
 PARCEL_POLICY_VERSION = "parcel-routing-v3"
 PARCEL_IDENTITY_KEYS = ("tracking_id", "barcode", "parcel_uid")
+# A parcel batch is a tabletop workstation batch, not a warehouse pick wave. Each
+# parcel costs three steps and every grasp waits on the whole scan, while every
+# route step waits on its own grasp: n parcels produce 3n steps and
+# n*n + (n - 1) + n dependency links, so graph and serialized size grow with the
+# square of the batch. The reviewed ceiling is 64 parcels -- eight times the
+# largest committed parcel scenario's eight destination slots -- which keeps a
+# plan at 192 steps and 4,223 links. The guard runs before any TaskStep exists,
+# so an oversized batch is refused instead of being allocated first.
+MAX_PARCEL_BATCH_PARCELS = 64
+MAX_PARCEL_BATCH_STEPS = 3 * MAX_PARCEL_BATCH_PARCELS
+MAX_PARCEL_BATCH_DEPENDENCIES = MAX_PARCEL_BATCH_PARCELS**2 + 2 * MAX_PARCEL_BATCH_PARCELS - 1
+
+
+class ParcelBatchLimitExceeded(ValueError):
+    """A parcel batch is larger than the reviewed planning budget.
+
+    Callers route on ``code`` instead of matching message text, so a reworded
+    message can never silently turn a refusal into an accepted plan.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
 
 
 def _matches_task_keyword(text: str, english: tuple[str, ...], chinese: tuple[str, ...]) -> bool:
@@ -197,6 +221,15 @@ def _validate_entity_ids(values: Sequence[str], label: str) -> tuple[str, ...]:
     if len(normalized) != len(set(normalized)):
         raise ValueError(f"{label} requires unique entity IDs")
     return normalized
+
+
+def _validate_parcel_batch_budget(parcel_count: int) -> None:
+    if parcel_count > MAX_PARCEL_BATCH_PARCELS:
+        raise ParcelBatchLimitExceeded(
+            "parcel_batch_too_large",
+            f"parcel batch has {parcel_count} parcels, above the {MAX_PARCEL_BATCH_PARCELS} parcel limit "
+            f"({MAX_PARCEL_BATCH_STEPS} steps and {MAX_PARCEL_BATCH_DEPENDENCIES} dependency links)",
+        )
 
 
 def _unique_step_tokens(entity_ids: Sequence[str], *, preserve_legacy_tokens: bool = False) -> dict[str, str]:
@@ -449,6 +482,10 @@ def build_parcel_sorting_plan(
     routes = tuple(parcel_routes)
     if not routes or any(not isinstance(route, tuple | list) or len(route) != 2 for route in routes):
         raise ValueError("parcel routing requires entity/destination pairs")
+    # This is the step producer, so it enforces the same budget the policy
+    # planner does: a caller cannot reach an unbounded graph by bypassing the
+    # policy entry point.
+    _validate_parcel_batch_budget(len(routes))
     parcel_ids = _validate_entity_ids(tuple(route[0] for route in routes), "parcel sorting")
     observed_parcel_ids = (
         parcel_ids if observation_order is None else _validate_entity_ids(observation_order, "parcel observation order")
@@ -660,6 +697,10 @@ def build_policy_routed_parcel_plan(
         raise ValueError("pickup and quarantine destinations must be different")
     if not isinstance(parcel_attributes, Mapping):
         raise ValueError("parcel_attributes must be a mapping")
+    # The budget is checked against the raw batch, before IDs, identities or
+    # decisions are expanded, so an oversized batch costs one comparison rather
+    # than a partly built graph.
+    _validate_parcel_batch_budget(len(parcel_attributes))
     parcel_ids = _validate_entity_ids(tuple(parcel_attributes), "parcel policy")
     observed_identities = _validate_unique_parcel_identities(parcel_attributes)
     normalized_manifest_id, manifest_statuses = _validate_parcel_manifest(

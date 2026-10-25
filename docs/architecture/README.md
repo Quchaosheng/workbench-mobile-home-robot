@@ -29,6 +29,8 @@ python3 tools/scripts/check_scenario_capabilities.py --check-generated
   host/MCU split and who owns a frame.
 - `architecture/ros2-device-runtime-bridge-v1.md` -- the adapter boundary below orchestration.
 - `architecture/observability-contract-v1.md` -- what a health snapshot may claim.
+- `architecture/parcel-batch-budget-v1.md` -- the reviewed parcel batch ceiling, its step and
+  dependency arithmetic, and the typed refusal that enforces it before a graph is built.
 - `architecture/linux-drivers.md` -- the driver framework and its tests.
 - `architecture/robot-bsp-*.md` -- the board support package manifests and selection rules.
 - `architecture/semantic-action-correlation-ledger.md` -- how an action result is tied to evidence.
