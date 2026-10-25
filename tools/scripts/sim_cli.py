@@ -651,6 +651,11 @@ def run_scenario(
     # Resolve the registered definition before anything is written. A run whose
     # identity cannot be derived is refused here rather than falling back to a
     # random name, because an unrecorded random ID is the defect #466 fixes.
+    #
+    # Admission (INV-01): an unresolvable scenario is refused before a staging
+    # directory or a runner process exists, so the refusal cannot leave partial
+    # evidence behind. The registry is read here as well as when provenance is
+    # recorded; the extra read is cheap and keeps the two paths independent.
     entry = _identity_entry(scenario)
     commit = _git_commit()
     effective_seed = seed_base + scenario.manifest["seed"]

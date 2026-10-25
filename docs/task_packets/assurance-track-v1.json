@@ -1,0 +1,61 @@
+{
+  "issue": "assurance-track-v1",
+  "human_owner": "Quchaosheng",
+  "objective": "Freeze the runtime-assurance register: the invariants the runtime claims, the fault acceptance matrix, and a gate that refuses a claim whose enforcement point or evidence no longer resolves.",
+  "allowed_paths": [
+    "docs/assurance/invariants-v1.json",
+    "docs/assurance/acceptance-matrix-v1.json",
+    "docs/architecture/assurance-track.md",
+    "docs/architecture/README.md",
+    "docs/decisions/ADR-0010-runtime-assurance-track.md",
+    "docs/task_packets/assurance-track-v1.json",
+    "libs/kernel/workbench/kernel/assurance.py",
+    "tools/scripts/check_assurance.py",
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_assurance_matrix.py",
+    "Makefile",
+    ".github/workflows/ci.yml",
+    "mkdocs.yml",
+    "README.md"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "robot/control/**",
+    "firmware/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "robot/control/**",
+    "firmware/**"
+  ],
+  "acceptance": [
+    "every ENFORCED invariant names an enforcement symbol and at least one test that resolve in the repository",
+    "every NOT_IMPLEMENTED invariant states a gap and cites no evidence",
+    "every required fault has exactly one acceptance case with a declared terminal state and a three-valued verdict",
+    "no fault case expects a confirmed goal verdict",
+    "the generated page is byte-identical to the document the register generates",
+    "an unresolvable scenario is refused before a runner starts and leaves no output directory",
+    "existing scenario, controller and CAN tests keep passing"
+  ],
+  "commands": [
+    "python -m pytest tests/unit/test_assurance_matrix.py tests/unit/test_sim_cli.py -v",
+    "python tools/scripts/check_assurance.py --check-generated",
+    "python -m ruff check libs/kernel/workbench/kernel/assurance.py tools/scripts/check_assurance.py tests/unit/test_assurance_matrix.py tools/scripts/sim_cli.py",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "make docs"
+  ],
+  "evidence": [
+    "assurance gate output with invariant and acceptance-case counts",
+    "focused pytest output for the register, the gate and the admission guard",
+    "mkdocs strict build output",
+    "Task Packet and context validation output"
+  ],
+  "stop_conditions": [
+    "an interface enum or JSON Schema change is required",
+    "a new runtime state machine or a second stop path would be needed",
+    "a claim can only be satisfied by weakening an existing fail-closed test",
+    "a write outside allowed_paths is required"
+  ]
+}

@@ -1,0 +1,212 @@
+{
+  "matrix_version": "assurance-acceptance-matrix-v1",
+  "status": "proposed",
+  "issue": "assurance-track-v1",
+  "decision_record": "docs/decisions/ADR-0010-runtime-assurance-track.md",
+  "invariants_version": "assurance-invariants-v1",
+  "terminal_states": {
+    "execution": [
+      "pending",
+      "dispatched",
+      "succeeded",
+      "failed",
+      "timed_out",
+      "cancelled",
+      "stopped"
+    ],
+    "can_link": [
+      "new",
+      "starting",
+      "active",
+      "stopping",
+      "safe_stopped",
+      "bus_off",
+      "link_lost",
+      "shutdown"
+    ],
+    "gate_reason": [
+      "restart_invalidated_run"
+    ],
+    "run_status": [
+      "SCRIPTED_FIXTURE",
+      "EXECUTED",
+      "NOT_EXECUTED",
+      "FAILED",
+      "TIMED_OUT",
+      "INVALID_OUTPUT",
+      "INTERRUPTED"
+    ]
+  },
+  "evidence_classes": [
+    "SIMULATED",
+    "HARDWARE_TESTED",
+    "NOT_EXECUTED"
+  ],
+  "required_faults": [
+    "none",
+    "cancel",
+    "device_disconnect",
+    "ack_lost",
+    "ack_late",
+    "process_death",
+    "task_timeout",
+    "evidence_gap",
+    "resource_conflict"
+  ],
+  "rows": [
+    {
+      "case_id": "ack-late",
+      "fault": "ack_late",
+      "trigger": "The acknowledgement for a timed-out command arrives after the stop was issued.",
+      "expected_terminal_state": {
+        "domain": "can_link",
+        "state": "safe_stopped"
+      },
+      "expected_verdict": "insufficient_evidence",
+      "invariants": [
+        "INV-04"
+      ],
+      "evidence": [
+        "tests/unit/test_can_transport.py::test_late_ack_does_not_confirm_after_command_timeout"
+      ],
+      "coverage": "SIMULATED"
+    },
+    {
+      "case_id": "ack-lost",
+      "fault": "ack_lost",
+      "trigger": "The device acknowledgement never arrives and the retry budget is spent.",
+      "expected_terminal_state": {
+        "domain": "can_link",
+        "state": "safe_stopped"
+      },
+      "expected_verdict": "insufficient_evidence",
+      "invariants": [
+        "INV-06"
+      ],
+      "evidence": [
+        "tests/unit/test_can_transport.py::test_retry_keeps_correlation_and_timeout_escalates_to_stop"
+      ],
+      "coverage": "SIMULATED"
+    },
+    {
+      "case_id": "cancel-mid-run",
+      "fault": "cancel",
+      "trigger": "A cancel or STOP arrives after the first step is dispatched.",
+      "expected_terminal_state": {
+        "domain": "execution",
+        "state": "cancelled"
+      },
+      "expected_verdict": "insufficient_evidence",
+      "invariants": [
+        "INV-03"
+      ],
+      "evidence": [
+        "tests/unit/test_post_action_gate.py::FailClosedStateTests::test_cancellation_blocks_every_step",
+        "tests/unit/test_execution_controller.py::test_stop_request_preempts_remaining_steps_and_is_idempotent"
+      ],
+      "coverage": "SIMULATED"
+    },
+    {
+      "case_id": "device-disconnect",
+      "fault": "device_disconnect",
+      "trigger": "The CAN link drops while a command is outstanding.",
+      "expected_terminal_state": {
+        "domain": "can_link",
+        "state": "link_lost"
+      },
+      "expected_verdict": "insufficient_evidence",
+      "invariants": [
+        "INV-05"
+      ],
+      "evidence": [
+        "tests/unit/test_can_transport.py::test_receive_link_loss_is_fail_closed_until_recovery"
+      ],
+      "coverage": "SIMULATED"
+    },
+    {
+      "case_id": "evidence-gap",
+      "fault": "evidence_gap",
+      "trigger": "The action completes but the observation that would support the claim is missing at verification time.",
+      "expected_terminal_state": {
+        "domain": "execution",
+        "state": "succeeded"
+      },
+      "expected_verdict": "insufficient_evidence",
+      "invariants": [
+        "INV-08"
+      ],
+      "evidence": [
+        "tests/unit/test_world_model.py::WorldModelTests::test_action_result_without_spatial_observation_is_insufficient"
+      ],
+      "coverage": "SIMULATED"
+    },
+    {
+      "case_id": "nominal",
+      "fault": "none",
+      "trigger": "One registered scenario runs to completion with no injected fault.",
+      "expected_terminal_state": {
+        "domain": "run_status",
+        "state": "SCRIPTED_FIXTURE"
+      },
+      "expected_verdict": "confirmed",
+      "invariants": [
+        "INV-01",
+        "INV-02"
+      ],
+      "evidence": [
+        "tests/unit/test_sim_cli.py::SimulationCliTests::test_scripted_fixture_publishes_complete_non_release_artifact"
+      ],
+      "coverage": "SIMULATED"
+    },
+    {
+      "case_id": "process-death",
+      "fault": "process_death",
+      "trigger": "The runtime process restarts while a run is in flight.",
+      "expected_terminal_state": {
+        "domain": "gate_reason",
+        "state": "restart_invalidated_run"
+      },
+      "expected_verdict": "insufficient_evidence",
+      "invariants": [
+        "INV-07"
+      ],
+      "evidence": [
+        "tests/unit/test_post_action_gate.py::FailClosedStateTests::test_restart_invalidates_run_correlation_fail_closed"
+      ],
+      "coverage": "SIMULATED"
+    },
+    {
+      "case_id": "resource-conflict",
+      "fault": "resource_conflict",
+      "trigger": "A second run asks for a resource the first run still holds.",
+      "expected_terminal_state": {
+        "domain": "run_status",
+        "state": "NOT_EXECUTED"
+      },
+      "expected_verdict": "insufficient_evidence",
+      "invariants": [
+        "INV-09"
+      ],
+      "evidence": [],
+      "coverage": "NOT_EXECUTED",
+      "gap": "No claim or lease implementation exists; ADR-0009 is proposed and this row is the acceptance target for it."
+    },
+    {
+      "case_id": "task-timeout",
+      "fault": "task_timeout",
+      "trigger": "The manifest timeout elapses before the runner finishes.",
+      "expected_terminal_state": {
+        "domain": "run_status",
+        "state": "TIMED_OUT"
+      },
+      "expected_verdict": "insufficient_evidence",
+      "invariants": [
+        "INV-06"
+      ],
+      "evidence": [
+        "tests/unit/test_sim_cli.py::SimulationCliTests::test_timeout_records_status_and_does_not_leave_partial_directory"
+      ],
+      "coverage": "SIMULATED"
+    }
+  ]
+}
