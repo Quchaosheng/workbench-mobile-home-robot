@@ -2,7 +2,7 @@
 # linux/amd64 manifest verified from Docker Hub on 2026-08-28.
 # Keep this validated baseline aligned with the labels, inventory and GPU matrix.
 # CUDA upgrades require host-driver and GPU simulation validation together.
-FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04@sha256:828c4d878adcaa4265d80c95d8ec877149b49bb2419a4cf3bb6aa889bbb7ca2e
+FROM nvidia/cuda:13.4.3-runtime-ubuntu24.04@sha256:f58bd7a0701fae3a2160f22e1d451b77b349bd9ef83dad76f5529aa413c149a8
 
 ARG ROS_KEY_SHA256=4a91c49af0d6f0016108b93698782b596c27ccd836937e18e0e36c3347dc602f
 ARG WORKBENCH_VERSION=development
