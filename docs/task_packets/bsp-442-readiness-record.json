@@ -1,0 +1,49 @@
+{
+  "issue": 442,
+  "human_owner": "Quchaosheng",
+  "objective": "Require a typed bring-up record for a BSP readiness PASS, so an existing repository file can no longer be cited as evidence.",
+  "allowed_paths": [
+    "bsp/validation/check_readiness.py",
+    "bsp/validation/validate_manifests.py",
+    "bsp/validation/bringup-plan.yaml",
+    "bsp/validation/bringup-closure-checklist.md",
+    "bsp/readiness.yaml",
+    "tests/unit/test_bsp_manifests.py",
+    "docs/task_packets/bsp-442-readiness-record.json",
+    "bsp/validation/validate_image_inputs.py",
+    "bsp/image/build-inputs.yaml",
+    "bsp/validation/README.md",
+    "docs/task_packets/bsp-443-image-input-digests.json"
+  ],
+  "read_only_paths": [],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "interfaces/**"
+  ],
+  "acceptance": [
+    "a PASS gate's evidence is parsed as a YAML bring-up record, not accepted because the path exists",
+    "the record carries the fields the committed bring-up plan declares plus gate, board_model, source_revision and raw_capture binding fields",
+    "a blank, placeholder or malformed value keeps the gate non-PASS",
+    "a non-PASS result inside the record keeps the gate non-PASS",
+    "a raw_capture that is not repository-relative or escapes the repository is refused",
+    "a sha256 that does not recompute keeps the gate non-PASS",
+    "a generic README.md can no longer mark every gate PASS",
+    "the schema is read from bringup-plan.yaml rather than a hardcoded per-gate list"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_bsp_manifests.py -q",
+    "python3 bsp/validation/check_readiness.py",
+    "python3 bsp/validation/validate_image_inputs.py"
+  ],
+  "evidence": [
+    "35 passed in tests/unit/test_bsp_manifests.py (stacked on #477)",
+    "BSP readiness validation passed",
+    "the README.md mutation script prints a structured-record failure for each of the nine gates plus the release-flag and package-status failures, where it previously printed []"
+  ],
+  "stop_conditions": [
+    "a code special case would be needed for one gate",
+    "an interface schema under interfaces/ would have to change",
+    "a physical claim would have to be asserted without a capture"
+  ]
+}
