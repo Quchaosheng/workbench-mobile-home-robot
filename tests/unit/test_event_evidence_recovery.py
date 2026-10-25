@@ -5,6 +5,7 @@ are about what survives: a refused operation must leave the live store readable
 at its previous state, and a recovery must never invent an event.
 """
 
+import hashlib
 import json
 import sys
 import time
@@ -17,6 +18,7 @@ sys.path.insert(0, str(ROOT / "libs" / "kernel"))
 
 from workbench.kernel.event_store import (
     SCHEMA_VERSION,
+    SNAPSHOT_BACKENDS,
     SNAPSHOT_FORMAT,
     SNAPSHOT_FORMAT_VERSION,
     EventStore,
@@ -166,6 +168,142 @@ class TestRestore:
         restored = EventStore.restore(snapshot, tmp_path / "restored.jsonl")
         assert [item["event_id"] for item in restored.replay()] == ["event-0", "event-1"]
         assert restored.verify_integrity()
+        restored.close()
+
+
+class TestRestoreBackendIdentity:
+    """Issue #471: the manifest's backend label is matched, never guessed.
+
+    The restore path is the recovery boundary for evidence, so an unrecognized
+    ``database`` is refused instead of falling through to the JSONL parser. Each
+    test keeps a pre-existing destination and asserts it survives byte for byte,
+    because a refusal that still replaced the destination would be the failure
+    this issue describes.
+    """
+
+    def test_supported_backends_are_the_documented_pair(self) -> None:
+        assert SNAPSHOT_BACKENDS == {"jsonl", "sqlite"}
+
+    @pytest.mark.parametrize(
+        ("label", "detail"),
+        [
+            pytest.param(None, "missing", id="missing"),
+            pytest.param("Sqlite", "unknown", id="case-mismatch"),
+            pytest.param("sqlite3", "unknown", id="typo"),
+            pytest.param("postgres", "unknown", id="unknown"),
+            pytest.param("", "unknown", id="empty"),
+            pytest.param(1, "typed", id="integer"),
+            pytest.param(["sqlite"], "typed", id="list"),
+            pytest.param({"name": "sqlite"}, "typed", id="object"),
+        ],
+    )
+    def test_unusable_backend_label_is_refused_before_the_destination_is_touched(
+        self, tmp_path: Path, label: object, detail: str
+    ) -> None:
+        store = populated(tmp_path / "events.sqlite3")
+        snapshot = tmp_path / "snapshot.sqlite3"
+        manifest_path = store.backup(snapshot)
+        store.close()
+        snapshot_bytes = snapshot.read_bytes()
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if detail == "missing":
+            del manifest["database"]
+        else:
+            manifest["database"] = label
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+        destination = tmp_path / "restored.sqlite3"
+        destination.write_bytes(b"live evidence that must survive")
+        with pytest.raises(EventStoreError, match="unsupported database backend"):
+            EventStore.restore(snapshot, destination)
+
+        # Refusal happens before any destination write or replacement.
+        assert destination.read_bytes() == b"live evidence that must survive"
+        assert not list(tmp_path.glob(".*.restore-tmp"))
+        assert snapshot.read_bytes() == snapshot_bytes
+
+    def test_sqlite_snapshot_is_not_opened_as_jsonl(self, tmp_path: Path) -> None:
+        """A SQLite snapshot labelled jsonl is refused, not parsed as a log."""
+        store = populated(tmp_path / "events.sqlite3")
+        snapshot = tmp_path / "snapshot.sqlite3"
+        manifest_path = store.backup(snapshot)
+        store.close()
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["database"] = "jsonl"
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+        destination = tmp_path / "restored.sqlite3"
+        with pytest.raises(EventStoreError, match="integrity verification as a jsonl snapshot"):
+            EventStore.restore(snapshot, destination)
+        assert not destination.exists()
+
+    def test_jsonl_snapshot_is_not_opened_as_sqlite(self, tmp_path: Path) -> None:
+        """An empty JSONL snapshot relabelled sqlite used to restore silently.
+
+        SQLite creates the missing file and reports zero events, which matched the
+        manifest count and made a restore that never read the log look successful.
+        """
+
+        source = EventStore(tmp_path / "events.jsonl", backend="jsonl")
+        snapshot = tmp_path / "snapshot.jsonl"
+        manifest_path = source.backup(snapshot)
+        source.close()
+        assert snapshot.read_bytes() == b""
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["database"] = "sqlite"
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+        destination = tmp_path / "restored.sqlite3"
+        with pytest.raises(EventStoreError, match="bytes are not a SQLite database"):
+            EventStore.restore(snapshot, destination)
+        assert not destination.exists()
+
+    def test_sqlite_header_without_a_readable_database_is_refused(self, tmp_path: Path) -> None:
+        """A file that only has the magic is still not a snapshot this build reads."""
+        store = populated(tmp_path / "events.sqlite3")
+        snapshot = tmp_path / "snapshot.sqlite3"
+        manifest_path = store.backup(snapshot)
+        store.close()
+
+        damaged = b"SQLite format 3\x00" + b"\x00" * 92
+        snapshot.write_bytes(damaged)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["sha256"] = hashlib.sha256(damaged).hexdigest()
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+        with pytest.raises(EventStoreError, match="cannot be read as sqlite"):
+            EventStore.restore(snapshot, tmp_path / "restored.sqlite3")
+        assert not (tmp_path / "restored.sqlite3").exists()
+
+    def test_jsonl_snapshot_still_restores_as_jsonl(self, tmp_path: Path) -> None:
+        """The supported pair is not narrowed by the refusal."""
+        log = tmp_path / "events.jsonl"
+        source = EventStore(log, backend="jsonl")
+        source.append(event(0, refs=["frame-0"]))
+        source.append(event(1, refs=["frame-1"]))
+        expected = source.replay()
+        snapshot = tmp_path / "snapshot.jsonl"
+        source.backup(snapshot)
+        source.close()
+
+        restored = EventStore.restore(snapshot, tmp_path / "restored.jsonl")
+        assert restored.backend == "jsonl"
+        assert restored.replay() == expected
+        restored.close()
+
+    def test_sqlite_snapshot_still_restores_as_sqlite(self, tmp_path: Path) -> None:
+        store = populated(tmp_path / "events.sqlite3")
+        expected = store.replay()
+        snapshot = tmp_path / "snapshot.sqlite3"
+        store.backup(snapshot)
+        store.close()
+
+        restored = EventStore.restore(snapshot, tmp_path / "restored.sqlite3")
+        assert restored.backend == "sqlite"
+        assert restored.replay() == expected
         restored.close()
 
 
