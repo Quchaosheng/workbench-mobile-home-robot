@@ -22,6 +22,23 @@ python3 tools/scripts/check_scenario_contract.py
 python3 tools/scripts/check_scenario_capabilities.py --check-generated
 ```
 
+## Runtime assurance
+
+| Document | What it freezes |
+| --- | --- |
+| `docs/decisions/ADR-0010-runtime-assurance-track.md` | What the assurance track may claim, what it may never claim, and where the sibling repositories land. |
+| `docs/assurance/invariants-v1.json` | The invariants, each with an enforcement symbol and the committed tests that prove it. |
+| `docs/assurance/acceptance-matrix-v1.json` | One row per fault case: the terminal state it must reach, its expected verdict and its coverage class. |
+| `docs/architecture/assurance-track.md` | The human-readable page, generated from the two artifacts above. |
+
+The register is enforced by a gate, not by review alone. A claim whose symbol or
+test no longer resolves fails `tools/scripts/check_assurance.py`, and so does a
+fault case that expects a `confirmed` goal verdict.
+
+```bash
+python3 tools/scripts/check_assurance.py --check-generated
+```
+
 ## Runtime and hardware boundaries
 
 - `architecture/system.md` -- the service map and the trusted runtime boundary.

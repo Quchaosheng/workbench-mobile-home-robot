@@ -532,6 +532,11 @@ def run_scenario(
         raise SimulationInputError(f"unsupported runner: {runner}")
     if not _safe_id(version):
         raise SimulationInputError(f"version must be ASCII and filesystem-safe: {version!r}")
+    # Admission (INV-01): an unresolvable scenario is refused before a staging
+    # directory or a runner process exists, so the refusal cannot leave partial
+    # evidence behind. The registry is read here as well as when provenance is
+    # recorded; the extra read is cheap and keeps the two paths independent.
+    _identity_entry(scenario)
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = f"{scenario.scenario_id}-{uuid.uuid4().hex[:12]}"
     staging = Path(tempfile.mkdtemp(prefix=f".{run_id}.", suffix=".partial", dir=output_dir))

@@ -37,6 +37,7 @@ nav:
   - System architecture: architecture/system.md
   - Scenario registry contract: decisions/ADR-0006-scenario-registry-contract.md
   - Scenario capability matrix: architecture/scenario-capability-matrix.md
+  - Assurance track: architecture/assurance-track.md
   - Architecture documents: architecture/README.md
   - Decisions:
       - Multi-scenario registry contract: decisions/ADR-0006-scenario-registry-contract.md
@@ -44,6 +45,7 @@ nav:
       - Learning-data plane and policy boundary: decisions/ADR-0008-learning-data-plane.md
       - Hardware device runtime: decisions/ADR-0005-hardware-device-runtime.md
       - Run resources and lifecycle: decisions/ADR-0009-run-resource-lifecycle-boundaries.md
+      - Runtime assurance track: decisions/ADR-0010-runtime-assurance-track.md
   - Revision D robot description: architecture/revision-d-robot-description.md
   - Observability contract: architecture/observability-contract-v1.md
   - Linux driver architecture: architecture/linux-drivers.md

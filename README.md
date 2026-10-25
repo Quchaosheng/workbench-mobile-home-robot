@@ -72,6 +72,26 @@ logs, metadata, and SHA-256 checksums) labelled `SCRIPTED_FIXTURE`.
 - Read-only dashboard and deterministic simulation fixtures.
 - Software-only foundations for MCU, CAN, Motion, and BSP boundaries.
 
+## Assurance track (optional)
+
+The runtime is also described as an assurance surface: a register of invariants,
+each naming the code that enforces it and the test that proves it, plus an
+acceptance matrix that says which terminal state each injected fault must reach.
+Only the nominal case may expect a confirmed goal; every fault must end in
+`insufficient_evidence` or `refuted`.
+
+```bash
+python3 tools/scripts/check_assurance.py --check-generated
+```
+
+The register is at [`docs/assurance/`](docs/assurance/) and the readable page is
+[`docs/architecture/assurance-track.md`](docs/architecture/assurance-track.md).
+This track is **runtime assurance, not a functional-safety certification**: no
+row is a SIL, ASIL or ISO 26262 claim, and every current row is `SIMULATED`.
+
+Default behaviour is unchanged; the assurance mode is opt-in and reads the
+evidence a normal run already writes.
+
 ## Optional: OmniLink knowledge layer
 
 [OmniLink AI](https://github.com/vivekmaru/omnilink-ai) is an independent service
