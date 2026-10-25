@@ -1,0 +1,75 @@
+{
+  "issue": 440,
+  "human_owner": "unassigned",
+  "objective": "Bound parcel policy planning so an oversized batch is refused with a typed input error before any TaskStep or dependency list is constructed, while a batch at the reviewed ceiling keeps the current plan shape and semantics.",
+  "decision_supported": "Whether the parcel policy planner may accept an unbounded batch, and which parcel count is the reviewed planning budget for a tabletop workstation intake.",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/planner.py",
+    "tests/unit/test_agent_runtime.py",
+    "docs/task_packets/issue-440-planner-graph-bound.json",
+    "docs/architecture/parcel-batch-budget-v1.md",
+    "docs/architecture/README.md"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**",
+    "tools/scripts/run_evaluation.py",
+    "tools/scripts/scenario_tools.py",
+    "sim/registry/sort-parcels.json"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/safety/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**",
+    "mkdocs.yml"
+  ],
+  "input_refs": [
+    "libs/contracts/workbench_contracts/models.py",
+    "interfaces/json_schema/task_graph.schema.json",
+    "services/agent_runtime/workbench_agent_runtime/local_model.py",
+    "tools/scripts/run_evaluation.py",
+    "tasks/parcels/README.md"
+  ],
+  "acceptance": [
+    "the planner checks a committed parcel, step and dependency ceiling before constructing any step, and the ceiling is derived from the graph arithmetic rather than from a benchmark host",
+    "a batch of exactly MAX_PARCEL_BATCH_PARCELS still produces the current plan shape: 3n steps, n observations, n*n + 2n - 1 dependency links, unique step IDs, and parcel-policy-v3 planner metadata",
+    "a batch above the ceiling raises ParcelBatchLimitExceeded with code parcel_batch_too_large, naming the observed parcel count and the limit",
+    "the refusal occurs before a single TaskStep is constructed, so the oversized TaskGraph is never allocated",
+    "build_parcel_sorting_plan enforces the same ceiling, so the step producer cannot be used to bypass the policy entry point",
+    "a regression test demonstrates both the construction the limit removes and the new typed refusal"
+  ],
+  "commands": [
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/unit/test_agent_runtime.py",
+    "python3 -m ruff check services/agent_runtime/workbench_agent_runtime/planner.py tests/unit/test_agent_runtime.py",
+    "python3 -m ruff format --check services/agent_runtime/workbench_agent_runtime/planner.py tests/unit/test_agent_runtime.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-440-planner-graph-bound.json",
+    "make test"
+  ],
+  "evidence": [
+    "focused planner test output covering the admitted 64 parcel batch (192 steps, 4223 links, 140011 JSON bytes), the 65/1000/5000 parcel refusals, and the direct-producer bypass",
+    "mutations observed to fail the tests: dropping the policy-planner guard, dropping the step-producer guard, raising the ceiling to 65, making the ceiling effectively unbounded, and widening the comparison by one",
+    "pre-fix 100/250/1000 parcel growth measurements: 300/750/3000 steps, 10199/62999/1001999 dependency links, 0.28/1.5/21.7 MiB JSON",
+    "post-fix refusal transcript for 65, 1000 and 5000 parcels: each refused with parcel_batch_too_large before any policy decision or TaskStep, at 0.02-1.5 ms of planner time and at most 1.2 MiB traced for the 5000 parcel input",
+    "the six committed parcel-intake scenarios still plan 9 steps each with planner parcel-policy-v3, and the parcel evaluation and local-model tests pass unchanged",
+    "Ruff check and format output, the Task Packet boundary check, and build/verify.sh reporting no new failures"
+  ],
+  "stop_conditions": [
+    "the fix would require a distributed or streaming planner",
+    "the fix would change semantic actions, routing decisions or verifier meaning",
+    "an interfaces schema, libs/contracts model or services/world_model change is required",
+    "a reviewed batch size cannot be chosen without inventing one from the benchmark host",
+    "a modification outside allowed_paths is required"
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "The reviewed ceiling could be wrong for a future intake workstation; fallback is that the ceiling is a single module constant with a documented derivation, so raising it is a reviewed one-line change and never a removal of the check",
+    "An unset or removed limit could silently mean unbounded; fallback is that both the policy planner and the step producer call the same guard, so deleting one call is caught by the bypass test",
+    "A caller could present a legitimate batch above the ceiling; fallback is that the typed refusal names the observed count and the limit, so the caller can split the batch rather than receive an unbounded graph",
+    "Only the parcel step producer is bounded here; other planners build fixed-size graphs and are unchanged"
+  ]
+}
