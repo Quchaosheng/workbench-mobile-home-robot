@@ -15,16 +15,20 @@ deletion tool, an export tool and a test all consult one table:
   refused while a hold covers the data it would remove.
 * :func:`export_projection` produces the publishable form of a run and reports
   what it withheld, so an export carries hashes, provenance and references
-  without copying restricted payloads.
+  without copying restricted payloads. Its content digest covers the bytes that
+  are published, never the unprojected source they were derived from.
 * :func:`deletion_decision` is the single verdict a deletion tool must respect.
 
-Three rules are deliberate:
+Four rules are deliberate:
 
 * Public dashboard data never contains raw sensitive evidence. It contains
   references, and the reference is not resolvable from the public surface.
 * Audit and safety records are never deletable while a hold is active, and a
   hold is never quietly expired by the code that wants to delete.
 * Every withheld field is reported. Silent omission looks identical to absence.
+* A content digest covers the bytes that were published. A digest over the
+  unprojected source would verify a payload the export never carried, and would
+  hand a public and a restricted projection of one record the same hash.
 """
 
 from __future__ import annotations
@@ -45,7 +49,11 @@ from workbench.application.redaction import (
 )
 
 GOVERNANCE_RULES_VERSION = "data-governance-v1"
-PUBLIC_PROJECTION_VERSION = "public-evidence-projection-v1"
+# v2 changed what ``content_sha256`` covers. v1 hashed the unprojected source, so
+# every published projection advertised a digest over bytes it never carried.
+PUBLIC_PROJECTION_VERSION = "public-evidence-projection-v2"
+CONTENT_DIGEST_COVERS = "run"
+PROJECTION_DIGEST_COVERS = "projection-envelope"
 
 
 class GovernanceError(ValueError):
@@ -336,6 +344,47 @@ def _digest(value: object) -> str:
 # is the whole point of evidence-by-reference, and a hash is not the content.
 PUBLIC_RETAINED_FIELDS = frozenset({"evidence_refs", "run_id", "event_id", "sequence_no", "occurred_at", "event_type"})
 
+# The only envelope keys the projection digest does not hash: ``run`` is covered
+# by ``content_sha256`` instead, and a digest cannot cover itself.
+_UNHASHED_ENVELOPE_KEYS = frozenset({"run", "projection_sha256"})
+
+
+def projection_digest_material(projection: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the exact mapping hashed into ``projection_sha256``.
+
+    A consumer that re-publishes a projection verifies both digests: this material
+    with :func:`projection_digest`, and the ``run`` object with
+    :func:`content_digest`. The ``content_sha256`` inside the material is what
+    binds the envelope to the bytes under ``run``, so neither half can be edited
+    without breaking the other.
+    """
+    return {key: value for key, value in projection.items() if key not in _UNHASHED_ENVELOPE_KEYS}
+
+
+def content_digest(projected_run: Mapping[str, Any]) -> str:
+    """SHA-256 of the canonical bytes published under ``run``."""
+    return _digest(projected_run)
+
+
+def projection_digest(projection: Mapping[str, Any]) -> str:
+    """SHA-256 of the canonical envelope, excluding ``run`` and the digest itself."""
+    return _digest(projection_digest_material(projection))
+
+
+def _sealed(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Attach both digests to one projection envelope, declaring what each covers.
+
+    ``content_sha256`` hashes only ``run``, because that is the payload a consumer
+    actually receives. ``projection_sha256`` hashes every other published field,
+    ``content_sha256`` included, so the access level, the withheld-field list and
+    the redaction markers cannot be edited without the envelope digest noticing.
+    """
+    envelope["content_digest_covers"] = CONTENT_DIGEST_COVERS
+    envelope["projection_digest_covers"] = PROJECTION_DIGEST_COVERS
+    envelope["content_sha256"] = content_digest(envelope["run"])
+    envelope["projection_sha256"] = projection_digest(envelope)
+    return envelope
+
 
 def export_projection(
     run: Mapping[str, Any],
@@ -347,19 +396,24 @@ def export_projection(
     The projection carries hashes, provenance and evidence references and never
     copies restricted payloads. Every withheld field is named, because a silently
     missing field looks the same as a field that was never there.
+
+    Both digests cover published bytes, never the unprojected source: a digest
+    over the source would verify a payload the export never carried, and would
+    give a public and a restricted projection of one record the same hash.
     """
     if requester_access is AccessLevel.RESTRICTED:
         sanitized, redacted_count = redact_mapping(run)
-        return {
-            "projection_version": PUBLIC_PROJECTION_VERSION,
-            "governance_rules": GOVERNANCE_RULES_VERSION,
-            "redaction_rules": REDACTION_RULES_VERSION,
-            "requires_authorization": False,
-            "withheld_fields": [],
-            "redacted_value_count": redacted_count,
-            "content_sha256": _digest(run),
-            "run": sanitized,
-        }
+        return _sealed(
+            {
+                "projection_version": PUBLIC_PROJECTION_VERSION,
+                "governance_rules": GOVERNANCE_RULES_VERSION,
+                "redaction_rules": REDACTION_RULES_VERSION,
+                "requires_authorization": False,
+                "withheld_fields": [],
+                "redacted_value_count": redacted_count,
+                "run": sanitized,
+            }
+        )
 
     withheld: list[str] = []
     projected: dict[str, Any] = {}
@@ -374,17 +428,18 @@ def export_projection(
     projected, redacted_count = redact_mapping(projected)
     if redacted_count:
         withheld.append(REDACTED)
-    return {
-        "projection_version": PUBLIC_PROJECTION_VERSION,
-        "governance_rules": GOVERNANCE_RULES_VERSION,
-        "redaction_rules": REDACTION_RULES_VERSION,
-        "requires_authorization": True,
-        "required_access": AccessLevel.RESTRICTED.value,
-        "withheld_fields": sorted(set(withheld)),
-        "redacted_value_count": redacted_count,
-        "content_sha256": _digest(run),
-        "run": projected,
-    }
+    return _sealed(
+        {
+            "projection_version": PUBLIC_PROJECTION_VERSION,
+            "governance_rules": GOVERNANCE_RULES_VERSION,
+            "redaction_rules": REDACTION_RULES_VERSION,
+            "requires_authorization": True,
+            "required_access": AccessLevel.RESTRICTED.value,
+            "withheld_fields": sorted(set(withheld)),
+            "redacted_value_count": redacted_count,
+            "run": projected,
+        }
+    )
 
 
 @dataclass(frozen=True)

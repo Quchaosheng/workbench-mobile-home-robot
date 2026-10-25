@@ -97,14 +97,39 @@ withheld.
   `workbench.application.redaction`: authorization is not a reason to copy a
   secret into an artifact.
 
-Every projection carries `content_sha256`, so provenance and integrity travel with
-the published data even when the payload does not. The projection never mutates
-the source record, and projecting the same run twice produces the same bytes.
-
 The boundary rules that decide what may leave the process are defined in
 [security hardening](../security/hardening.md) and applied at the point of writing.
 How a damaged or missing store is recovered is defined in
 [event evidence recovery](event-evidence-recovery.md).
+
+### What the digests cover
+
+A digest that describes bytes the export did not publish is worse than no digest,
+because it verifies something the consumer never received. Every projection
+therefore carries two digests, and both cover published output only:
+
+| Field | Hashes | Declared by |
+|---|---|---|
+| `content_sha256` | the `run` object alone, exactly as published, including any evidence-redaction or credential-redaction marker inside it | `content_digest_covers: "run"` |
+| `projection_sha256` | the complete projection envelope **minus** `run` and minus `projection_sha256` itself | `projection_digest_covers: "projection-envelope"` |
+
+The canonical form is UTF-8 JSON of the hashed value with sorted keys, compact
+separators (`,` and `:`), `ensure_ascii=false` and no trailing newline. Both
+digests are lowercase SHA-256 hex.
+
+Neither digest is taken over the unprojected source record. The source cannot be
+reconstructed from a public projection, so a digest over it would be unverifiable
+by the reader and would give a public and a restricted projection of one record
+the same hash even though their payloads differ. The envelope digest hashes
+`content_sha256`, so the two bind each other: editing the `run` payload breaks
+`content_sha256`, and editing an access field, a `withheld_fields` entry, a
+version string or a redaction marker breaks `projection_sha256`.
+
+`projection_version` is `public-evidence-projection-v2`. Under `v1`,
+`content_sha256` covered the unprojected source; an artifact that carries `v1`
+must be treated as having an unbound content digest, since nothing in it proves
+what bytes were published. The projection never mutates the source record, and
+projecting the same run twice produces the same bytes and the same two digests.
 
 ## Lifecycle logging
 
@@ -122,6 +147,8 @@ action with no named actor or no scope is refused, and the log stays empty.
 | Deletion refused with active retention | Wait for the retention period to end, or escalate to the class owner. Do not disable the rule. |
 | Export refused for access | Request the required access level. Do not retry with a public projection and treat it as the export. |
 | A field is missing from a public projection | Check `withheld_fields`; the field was withheld on purpose and named. Do not reconstruct it by hand. |
+| `content_sha256` does not match the published `run` | Recompute it over the canonical `run` bytes. A mismatch means the `run` object was edited after export; do not re-seal it, and treat the projection as unverified. |
+| `projection_sha256` does not match the envelope | Recompute it over the envelope minus `run` and `projection_sha256`. A mismatch means a published field was edited; a projection carrying `projection_version: public-evidence-projection-v1` has no bound content digest at all. |
 | A record must be removed immediately | Open the decision through the class owner and the security owner first. The repository defines no emergency deletion path. |
 
 ## What the tests prove
@@ -129,6 +156,10 @@ action with no named actor or no scope is refused, and the log stays empty.
 `tests/unit/test_data_governance.py` covers retention expiry, an active hold that
 outranks expiry, release and incident holds, hold scope and wildcard holds,
 duplicate and malformed holds, refused public export of restricted classes, a
-public projection that withholds the payload while keeping references and the
-content hash, a restricted projection that still scrubs secrets, a determinism
-check, and a lifecycle log that records both authorized and refused actions.
+public projection that withholds the payload while keeping references and both
+digests, a content digest recomputed from the published `run` for public and
+restricted access, distinct public and restricted digests for one record, an
+envelope digest that changes when any published field or redaction marker is
+edited, a spliced projection that mixes one access level's bytes into another's
+envelope, a restricted projection that still scrubs secrets, a determinism check,
+and a lifecycle log that records both authorized and refused actions.

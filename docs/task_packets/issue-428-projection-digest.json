@@ -1,0 +1,103 @@
+{
+  "issue": 428,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the public projection content digest cover the bytes that are actually published: content_sha256 is recomputed over the canonical projected run for both access levels, a second projection_sha256 binds every other published envelope field including content_sha256, and the projection version is bumped so a v1 artifact is not read as carrying a bound digest.",
+  "decision_supported": "Whether a consumer holding an exported projection can verify the bytes it received: what exactly content_sha256 covers, which published fields a second digest covers, and whether a public and a restricted projection of one record are distinguishable by digest instead of sharing one hash over the unprojected source.",
+  "allowed_paths": [
+    "libs/application/workbench/application/data_governance.py",
+    "tests/unit/test_data_governance.py",
+    "docs/deployment/data-governance.md",
+    "docs/task_packets/issue-428-projection-digest.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/task_packets/README.md",
+    "docs/task_packets/example-001-world-reducer.json",
+    "docs/task_packets/issue-85-run-evidence-data-governance.json",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "libs/application/workbench/application/redaction.py",
+    "docs/security/hardening.md",
+    "docs/deployment/event-evidence-recovery.md",
+    "docs/context/EVIDENCE_INDEX.md",
+    "tests/unit/test_redaction.py",
+    "mkdocs.yml",
+    "pyproject.toml"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "bsp/**",
+    "sim/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/agent_runtime/**",
+    "services/perception/**",
+    "services/backend/**",
+    "services/world_model/**",
+    "apps/dashboard/**",
+    ".github/**",
+    "docs/security/**"
+  ],
+  "input_refs": [
+    "libs/application/workbench/application/data_governance.py",
+    "libs/application/workbench/application/redaction.py",
+    "tests/unit/test_data_governance.py",
+    "docs/deployment/data-governance.md",
+    "docs/task_packets/issue-85-run-evidence-data-governance.json"
+  ],
+  "outputs": [
+    "libs/application/workbench/application/data_governance.py",
+    "tests/unit/test_data_governance.py",
+    "docs/deployment/data-governance.md"
+  ],
+  "acceptance": [
+    "A test recomputes SHA-256 over the canonical projected run and proves it equals content_sha256 for both a public and a restricted projection",
+    "Public and restricted projections of a record whose payload holds restricted content carry distinct content_sha256 values",
+    "A projection_sha256 covers every other published envelope field, including content_sha256, withheld_fields, the access metadata, the version strings and any redaction marker, so editing any of them is detected",
+    "The content digest is never the digest of the unprojected source record, because the source is not reconstructable from the export",
+    "content_digest_covers and projection_digest_covers declare the covered material, and projection_version is bumped to public-evidence-projection-v2 so a v1 artifact is not read as carrying a bound content digest",
+    "The policy page states exactly which bytes each digest covers, the canonical serialization, and that the digest is over the run object rather than the whole envelope, with the envelope digest covering the rest",
+    "The source record is unmodified after projection and repeated projection of one record is deterministic, including both digests",
+    "A deliberately edited projection fails the digest check, and a foreign access level's run bytes spliced into another envelope fail the envelope digest",
+    "The documented rollback fails closed: an older projection carrying a v1 version is treated as unverified rather than silently accepted"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-428-projection-digest.json",
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/unit/test_data_governance.py",
+    "python3 -m ruff check libs/application/workbench/application/data_governance.py tests/unit/test_data_governance.py",
+    "python3 -m ruff format --check libs/application/workbench/application/data_governance.py tests/unit/test_data_governance.py",
+    "python3 -m pytest -q --no-header -p no:cacheprovider",
+    "git diff --check"
+  ],
+  "evidence": [
+    "pytest transcript for tests/unit/test_data_governance.py with the passed count and exit code",
+    "the reproducer transition: recomputing the digest over the public run printed False before the fix and True after it, while the digest over the source record stays False in both cases",
+    "the public and restricted digest pair for one record, showing two distinct content_sha256 values where v1 produced one",
+    "the field-mutation table naming withheld_fields, required_access, requires_authorization, projection_version, content_digest_covers and redaction_rules, each changing projection_sha256",
+    "the spliced-envelope case, where the restricted run bytes and content digest are placed in the public envelope and the public projection_sha256 no longer matches",
+    "ruff check and ruff format --check output",
+    "build/verify.sh output ending in OK: no new failures"
+  ],
+  "stop_conditions": [
+    "stop if a stable canonical projection would require changing the public schema without a version bump, because a consumer must not read a v1 artifact as carrying a digest that covers the published bytes",
+    "stop if the source record would have to be copied into the digest input, because that would reintroduce restricted content into a public projection",
+    "stop if the change would need to alter an AccessLevel, the authorize_export refusal contract, or the redaction rules in libs/application/workbench/application/redaction.py",
+    "stop if satisfying the acceptance requires editing interfaces/, libs/contracts/ or a service owned by another module",
+    "stop if the digest would bind to a wall clock, a random salt or a Python hash seed, because repeated projection must stay deterministic",
+    "stop if a new runtime dependency would be required; the digests use hashlib and json from the standard library"
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; tests use the synthetic records already assembled in tests/unit/test_data_governance.py and commit no real evidence, credentials or personal data",
+  "model_policy": "no model call; the digest is a deterministic serialization and SHA-256, and the redaction markers come from the existing versioned rules",
+  "risks_and_fallbacks": [
+    "A consumer that verified the v1 digest will see a different value. Fallback is the projection_version bump: a v1 artifact is read as carrying an unbound digest rather than silently re-verified, and the rollback in the policy page keeps the old format only while marking the digest unsupported.",
+    "A digest that covered the whole envelope would make the run bytes and the access fields indistinguishable. Fallback is two digests with declared coverage: content_sha256 over run, projection_sha256 over the envelope minus run and minus itself, and the envelope hashes content_sha256 so neither can be edited alone.",
+    "The envelope digest could be recomputed by an attacker after editing a field. Fallback is that the digest is an integrity check for the reader, not a signature; the documented boundary says it detects accidental or partial edits and names the redaction and access fields it covers.",
+    "withheld_fields derived from set ordering could make the projection non-deterministic. Fallback is that the public branch sorts and de-duplicates the list, and the determinism test compares whole projections including both digests.",
+    "A restricted projection could still copy a secret into hashed material. Fallback is that the digest input is the post-redaction sanitized run in both branches, so the digest never hashes a credential.",
+    "rollback is a revert of this commit; the change is additive to the projection envelope and touches no store, schema, seed or runtime path"
+  ]
+}
