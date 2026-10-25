@@ -41,6 +41,28 @@ goal -> bounded planner -> semantic action -> trusted executor
 | Verification | Check post-action evidence; never guess success |
 | Replay | Rebuild the state from an append-only event stream |
 
+### Two execution planes, one repository
+
+Workbench carries both halves of the loop. They make different claims, and the
+repository keeps that difference visible instead of flattening it:
+
+| Plane | Language | Owns | Lives in |
+| --- | --- | --- | --- |
+| Evidence | Python | Event store, World Model, verifier, replay, dashboard, evaluation | `services/`, `libs/`, `tools/`, `apps/` |
+| Execution | C++ / ROS 2 | Bounded task orchestration, device commands, runtime diagnostics, task history | [`integrations/embodied_agent_runtime/`](integrations/embodied_agent_runtime/README.md) |
+
+They meet at exactly one artefact: the terminal `TaskEvent` on
+`/runtime/task_events`, which
+[`integrations/ros2_runtime/`](integrations/ros2_runtime/README.md) turns into an
+`action_result` event. A `TaskEvent` proves an Action terminal status and a
+protocol outcome; it never proves an actuator moved. That claim stays with the
+World Model verifier and observation evidence. Keeping both planes in one
+repository makes the boundary reviewable in a single diff — it does not merge
+the two claims.
+
+The evidence plane runs offline with Python 3.12 alone. The execution plane needs
+ROS 2 Jazzy and a Linux Docker host, so a Python-only change never builds it.
+
 ## Quickstart
 
 Requirements: Python 3.12. No GPU is required for the offline runtime.
@@ -71,6 +93,7 @@ logs, metadata, and SHA-256 checksums) labelled `SCRIPTED_FIXTURE`.
 - Fail-closed policy validation for bounded semantic tools.
 - Read-only dashboard and deterministic simulation fixtures.
 - Software-only foundations for MCU, CAN, Motion, and BSP boundaries.
+- The ROS 2 execution runtime: BehaviorTree.CPP orchestration, nested Actions, SocketCAN device control, runtime diagnostics and SQLite task history.
 
 ## Optional: OmniLink knowledge layer
 

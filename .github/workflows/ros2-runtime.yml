@@ -1,0 +1,152 @@
+name: ROS 2 Runtime CI
+
+on:
+  push:
+    paths:
+      - "integrations/embodied_agent_runtime/**"
+      - ".github/workflows/ros2-runtime.yml"
+  pull_request:
+    paths:
+      - "integrations/embodied_agent_runtime/**"
+      - ".github/workflows/ros2-runtime.yml"
+
+jobs:
+  windows-tools:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: integrations/embodied_agent_runtime
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check PowerShell syntax
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem scripts -File -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$tokens, [ref]$errors
+            ) | Out-Null
+            foreach ($parseError in $errors) {
+              Write-Error "$($_.Name): $($parseError.Message)"
+              $failed = $true
+            }
+          }
+          if ($failed) {
+            exit 1
+          }
+
+      - name: Test Windows WSL tool behavior
+        shell: powershell
+        run: >-
+          powershell.exe -NoProfile -ExecutionPolicy Bypass
+          -File scripts/test_windows_wsl.ps1
+
+  build-test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: integrations/embodied_agent_runtime
+    env:
+      ROS_DISTRO: jazzy
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check bilingual documentation and repository boundaries
+        run: python3 scripts/check_docs.py
+
+      - uses: ros-tooling/setup-ros@0.7.19
+        with:
+          required-ros-distributions: jazzy
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            can-utils \
+            cmake \
+            iproute2 \
+            kmod \
+            libgrpc++-dev \
+            libprotobuf-dev \
+            libprotoc-dev \
+            libsqlite3-dev \
+            pkg-config \
+            protobuf-compiler \
+            protobuf-compiler-grpc \
+            python3-colcon-common-extensions \
+            python3-rosdep \
+            ripgrep \
+            ros-jazzy-behaviortree-cpp
+          rosdep update
+          rosdep install --from-paths ros2_ws/src --ignore-src \
+            --rosdistro jazzy -y
+
+      - name: Check shell syntax
+        run: find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
+      - name: Test ARM64 configuration behavior
+        run: bash scripts/test_arm64_configuration.sh
+
+      - name: Build eleven packages
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          cd ros2_ws
+          colcon build \
+            --packages-select \
+              robot_task_interfaces runtime_can virtual_can_device device_bridge \
+              task_executor runtime_monitor runtime_history task_orchestrator \
+              runtime_gateway ai_task_adapter perception_task_adapter \
+            --cmake-args -DBUILD_TESTING=ON
+
+      - name: Test eleven packages
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source ros2_ws/install/setup.bash
+          cd ros2_ws
+          set +e
+          colcon test \
+            --executor sequential \
+            --packages-select \
+              robot_task_interfaces runtime_can virtual_can_device device_bridge \
+              task_executor runtime_monitor runtime_history task_orchestrator \
+              runtime_gateway ai_task_adapter perception_task_adapter \
+            --return-code-on-test-failure
+          test_status=$?
+          result_file="$(mktemp)"
+          colcon test-result --test-result-base build --verbose \
+            >"$result_file" 2>&1
+          result_status=$?
+          cat "$result_file"
+          if ((test_status != 0 || result_status != 0)); then
+            annotation="$(tail -c 30000 "$result_file")"
+            annotation="${annotation//'%'/'%25'}"
+            annotation="${annotation//$'\r'/'%0D'}"
+            annotation="${annotation//$'\n'/'%0A'}"
+            printf '::error title=ROS 2 test failures::%s\n' "$annotation"
+            exit 1
+          fi
+
+      - name: Run industrial vcan E2E when supported
+        shell: bash
+        run: |
+          if ! ip link show vcan0 >/dev/null 2>&1; then
+            sudo modprobe vcan >/dev/null 2>&1 || true
+            sudo ip link add dev vcan0 type vcan >/dev/null 2>&1 || true
+          fi
+
+          if sudo ip link set vcan0 up >/dev/null 2>&1 && \
+            ip link show vcan0 >/dev/null 2>&1; then
+            WORKSPACE="$GITHUB_WORKSPACE/integrations/embodied_agent_runtime/ros2_ws" SETUP_VCAN=0 \
+              bash scripts/run_industrial_e2e.sh
+          else
+            echo "::notice::SKIP: runner cannot create and enable vcan0"
+          fi

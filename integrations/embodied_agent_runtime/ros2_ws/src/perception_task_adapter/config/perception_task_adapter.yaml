@@ -1,0 +1,11 @@
+perception_task_adapter:
+  ros__parameters:
+    input_mode: image
+    image_path: ""
+    camera_index: 0
+    marker_ids: [10, 20]
+    workflow_ids: [single_task, ready_then_task]
+    target_ids: [dock_a, home]
+    allowed_duration_ms: 3000
+    confirm_frames: 3
+    rearm_missing_frames: 5
