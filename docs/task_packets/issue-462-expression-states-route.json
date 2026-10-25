@@ -1,0 +1,62 @@
+{
+  "issue": 462,
+  "human_owner": "Backend Read API Owner (unassigned)",
+  "objective": "Serve GET /api/v1/expression-states from the shared read-model surface so the default local deployment returns the committed expression contract with 200 instead of dying with an AttributeError and a dropped connection.",
+  "allowed_paths": [
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/server.py",
+    "services/backend/workbench_backend/api-openapi-v1.json",
+    "tests/unit/test_dashboard_backend.py",
+    "tests/unit/test_backend_shutdown.py",
+    "docs/task_packets/issue-462-expression-states-route.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**",
+    "services/backend/workbench_backend/expression.py",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**",
+    "services/backend/workbench_backend/expression.py"
+  ],
+  "acceptance": [
+    "a local server answers GET /api/v1/expression-states with 200 and the states/transitions contract, with no traceback and no dropped connection",
+    "the local and remote-capable controllers return the same expression contract, because the method now lives on the shared read model and the remote subclass inherits it",
+    "the route stays read-only and reads no event log, so it answers even when the run directory is empty and /readyz is 503",
+    "the expression enum and the allowed transitions are unchanged, so no new control state is exposed",
+    "OpenAPI keeps declaring 200 ExpressionContract and 503 Error, and the local 200 body matches the declared schema",
+    "a unit test exercises successful dispatch of the route, not only the shutdown rejection"
+  ],
+  "commands": [
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/unit/test_dashboard_backend.py tests/unit/test_backend_shutdown.py",
+    "python3 -m ruff check services/backend/workbench_backend/read_model.py tests/unit/test_dashboard_backend.py",
+    "python3 -m ruff format --check services/backend/workbench_backend/read_model.py tests/unit/test_dashboard_backend.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-462-expression-states-route.json",
+    "python3 tools/scripts/validate_contracts.py",
+    "make test",
+    "make contract",
+    "git diff --check"
+  ],
+  "evidence": [
+    "local GET /api/v1/expression-states response: 200 application/json with states idle/thinking/uncertain/pleased and their sorted transitions",
+    "remote-capable controller response for the same route, byte-identical to the local body",
+    "server stderr empty across both requests: no AttributeError, no connection reset",
+    "targeted dashboard backend and shutdown test output",
+    "full suite compared against build/baseline.txt with no new failures",
+    "Task Packet and contract validation output"
+  ],
+  "stop_conditions": [
+    "the fix would expose a new control state or change the committed expression enum",
+    "a supported mode cannot list the static transitions without reading an event file",
+    "an interfaces schema or libs/contracts change is required",
+    "a modification outside allowed_paths is required"
+  ]
+}
