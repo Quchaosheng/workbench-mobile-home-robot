@@ -494,6 +494,64 @@ def test_allocated_exact_retry_is_idempotent_and_conflict_preserves_original(tmp
     store.close()
 
 
+def test_allocated_exact_retry_of_a_later_event_returns_the_allocated_event(tmp_path: Path) -> None:
+    """Issue #437: an exact retry must not be refused for the sequence it was given.
+
+    The preflight candidate carries the World Model's first sequence (``1``) so an
+    invalid payload is refused before it can consume a number. Once the Kernel
+    store has allocated ``2``, the persisted row differs from that candidate by
+    exactly the number this store assigned, so comparing the whole event refused
+    every retry after the run's first event. The comparison therefore excludes the
+    sequence the store owns, and the returned event keeps the allocated one.
+    """
+
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+    database_path = tmp_path / "events.sqlite"
+
+    first = append_allocated_event(store, "evt-allocated-001")
+    second = append_allocated_event(store, "evt-allocated-002")
+    rows_before = stored_event_count(database_path)
+
+    retry = append_allocated_event(store, "evt-allocated-002")
+
+    assert (first.sequence_no, second.sequence_no) == (1, 2)
+    assert retry == second
+    assert retry.sequence_no == 2
+    assert stored_event_count(database_path) == rows_before == 2
+    assert store.list_run("run-allocated") == [first, second]
+
+    with pytest.raises(EventStoreIntegrityError, match="event_id"):
+        append_allocated_event(store, "evt-allocated-002", payload={"outcome": "failed"})
+
+    assert stored_event_count(database_path) == rows_before
+    store.close()
+
+
+def test_allocated_retry_refuses_another_run_and_a_changed_event_type(tmp_path: Path) -> None:
+    """The sequence is excluded from the comparison; nothing else is."""
+
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+    database_path = tmp_path / "events.sqlite"
+    original = append_allocated_event(store, "evt-allocated-001")
+
+    with pytest.raises(EventStoreIntegrityError, match=r"run 'run-allocated', not 'run-other'"):
+        append_allocated_event(store, "evt-allocated-001", run_id="run-other")
+
+    with pytest.raises(EventStoreIntegrityError, match="different canonical event content"):
+        store.append_allocated(
+            event_id="evt-allocated-001",
+            run_id="run-allocated",
+            event_type=WorldEventType.VERIFICATION,
+            occurred_at="2026-08-04T10:00:01Z",
+            payload=original.payload,
+            evidence_refs=list(original.evidence_refs),
+        )
+
+    assert stored_event_count(database_path) == len(store.list_run("run-allocated")) == 1
+    assert store.get_event("evt-allocated-001") == original
+    store.close()
+
+
 def test_get_event_returns_exact_event_or_none(tmp_path: Path) -> None:
     store = SQLiteEventStore(tmp_path / "events.sqlite")
     stored = append_allocated_event(store, "evt-lookup")
