@@ -1,0 +1,58 @@
+{
+  "issue": 441,
+  "human_owner": "Quchaosheng",
+  "objective": "Refuse a World Model append that would take a run past the read model's 10,000-event ceiling, so the write boundary never reports a durable stream the Dashboard reader rejects, using one declared ceiling instead of two copies of the number.",
+  "allowed_paths": [
+    "services/world_model/workbench_world_model/event_store.py",
+    "services/backend/workbench_backend/read_model.py",
+    "tests/unit/test_world_event_store.py",
+    "tests/unit/test_dashboard_backend.py",
+    "docs/architecture/observability-contract-v1.md",
+    "docs/task_packets/world-model-append-read-model-bound.json"
+  ],
+  "read_only_paths": [
+    "libs/kernel/workbench/kernel/event_store.py",
+    "libs/contracts/workbench_contracts/**",
+    "interfaces/**"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "services/agent_runtime/**",
+    "services/backend/workbench_backend/server.py"
+  ],
+  "input_refs": [
+    "services/backend/workbench_backend/read_model.py",
+    "services/world_model/workbench_world_model/event_store.py",
+    "libs/kernel/workbench/kernel/event_store.py"
+  ],
+  "acceptance": [
+    "exactly 10000 valid events remain storable and readable",
+    "the append that would make it 10001 is refused before it becomes durable, with a stable reason naming the run, the current count and the limit",
+    "the refusal leaves the stored run unchanged and replayable at 10000 events, with no truncation, merge or silent drop",
+    "an exact retry of an already-stored event remains a no-op and does not count as a new event, even at the ceiling",
+    "the reader and the writer use one declared ceiling: the World Model store imports MAX_EVENTS_PER_RUN from the read model instead of restating the number",
+    "a regression test demonstrates the current over-limit success and the fixed refusal"
+  ],
+  "commands": [
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/unit/test_world_event_store.py tests/unit/test_dashboard_backend.py",
+    "python3 -m ruff check services/world_model/workbench_world_model/event_store.py services/backend/workbench_backend/read_model.py tests/unit/test_world_event_store.py tests/unit/test_dashboard_backend.py",
+    "python3 -m ruff format --check services/world_model/workbench_world_model/event_store.py services/backend/workbench_backend/read_model.py tests/unit/test_world_event_store.py tests/unit/test_dashboard_backend.py",
+    "python3 tools/scripts/check_task_packet.py --all --base 3737d308de936d9d3b55de7fa6309ec59b3afd88",
+    "python3 tools/scripts/check_context.py"
+  ],
+  "evidence": [
+    "row counts before and after the refused append: 10000 stored, 10001 attempted, 10000 stored after",
+    "the append refusal message naming the run, the count and the ceiling",
+    "a replay of the unchanged 10000-event run through SQLiteEventStore.list_run",
+    "the read model accepting the 10000-event stream and rejecting the 10001-event stream",
+    "pytest, Ruff and Task Packet boundary output"
+  ],
+  "stop_conditions": [
+    "the fix would delete or truncate an existing event",
+    "a larger supported ceiling requires a read-model resource design that is out of scope",
+    "event schema, robot-control or hardware behaviour would have to change",
+    "the read model would have to be duplicated to make the number shared"
+  ]
+}
