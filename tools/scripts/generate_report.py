@@ -36,6 +36,34 @@ def decimal(value: float | None) -> str:
     return "无数据" if value is None else f"{value:.2f}"
 
 
+def require_evidence_indexes(metrics: list[dict[str, Any]]) -> None:
+    """Refuse to publish a report from aggregates no run index can explain.
+
+    A total alone is not evidence, so this is called before a report is written.
+    It is a separate function rather than a check inside ``release_reasons``
+    because the thresholds are a pure calculation; the refusal belongs to the
+    step that publishes.
+    """
+    from collect_metrics import verify_evidence_index
+
+    for item in metrics:
+        verify_evidence_index(item)
+
+
+def evidence_index_line(metrics: dict[str, Any]) -> str:
+    """Name the evidence index behind a column, without printing the run list.
+
+    The report is a page a reviewer reads, so the index is a bounded count plus
+    the digest and the path to the metrics file the runs are listed in. Printing
+    every run id here would make the report grow with the run set and would still
+    not be the record a reviewer recomputes the digest from.
+    """
+    records = metrics["runs"]
+    digest = metrics.get("evidence_index_sha256")
+    digest = digest[:12] if isinstance(digest, str) else "缺失"
+    return f"{len(records)} 次运行, 索引 {digest}"
+
+
 def gate(mark: bool | None) -> str:
     if mark is None:
         return "待审核"
@@ -125,10 +153,13 @@ def release_reasons(metrics: dict[str, Any]) -> list[str]:
 
 
 def generate(metrics: list[dict[str, Any]], labels: list[str], commit: str, seed_base: int) -> str:
+    # Refused before any row is formatted: a report is a published artifact, and
+    # a total without a rebuildable run index is not something to publish.
+    require_evidence_indexes(metrics)
     columns = " | ".join(labels)
     eligibility_rows = "\n".join(
         f"| {label} | {item.get('runner', 'unknown')} | {item.get('run_count', 0)} | "
-        f"{'是' if item.get('release_eligible') else '否'} |"
+        f"{'是' if item.get('release_eligible') else '否'} | {evidence_index_line(item)} |"
         for label, item in zip(labels, metrics, strict=True)
     )
 
@@ -176,9 +207,12 @@ def generate(metrics: list[dict[str, Any]], labels: list[str], commit: str, seed
 
 ## 数据资格
 
-| 版本 | Runner | 运行数 | 可用于发布 |
-|---|---|---:|---|
+| 版本 | Runner | 运行数 | 可用于发布 | 证据索引 |
+|---|---|---:|---|---|
 {eligibility_rows}
+
+证据索引 (逐次运行的 run id、日志与清单哈希、最终结论及其对每个聚合的贡献) 随指标文件一同发布;
+本页只显示有界运行数与索引摘要, 完整列表见 `runs[]`。
 
 脚本化数据只验证归档、回放和界面链路,不代表 Gazebo 或真机性能。
 

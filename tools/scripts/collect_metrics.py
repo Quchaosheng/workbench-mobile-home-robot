@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Extract reproducible metrics from one version's JSON Lines event logs."""
+"""Extract reproducible metrics from one version's JSON Lines event logs.
+
+Every published aggregate carries the run records it was computed from
+(``runs``), the run ids behind each numerator (``metric_contributors``) and a
+digest over both (``evidence_index_sha256``), because a total alone is not
+evidence: a reviewer has to be able to name the runs, and to recompute them.
+"""
 
 import argparse
 import json
@@ -12,10 +18,16 @@ from typing import Any
 from _jsonio import JsonInputError, load_json, load_jsonl
 from _paths import enable_local_packages
 from release_eligibility import (
+    ELIGIBLE_RUNNER,
+    SCRIPTED_RUNNERS,
     discover_manifests,
     evaluate_eligibility,
+    event_log_sha256,
+    file_sha256,
     load_provenance,
     manifest_search_dirs,
+    resolve_recorded_path,
+    sha256_bytes,
 )
 
 enable_local_packages()
@@ -24,6 +36,64 @@ from workbench_contracts import WorldEvent, WorldEventType
 from workbench_world_model import create_world_state_snapshot
 
 ALLOWED_ACTIONS = {"ask_confirm", "express", "grasp", "observe", "place", "stop"}
+# The per-run index is published inside the metrics record, so it is bounded: a
+# run set that does not fit is refused rather than truncated, because a truncated
+# index cannot cover the same run set as the aggregate it is meant to explain.
+MAX_INDEXED_RUNS = 256
+MAX_RUN_EVIDENCE_REFS = 8
+EVIDENCE_INDEX_FORMAT = "workbench-evaluation-evidence-index"
+EVIDENCE_INDEX_FORMAT_VERSION = 1
+BASELINE_TASK_FAMILY = "task-place-red-block"
+# How a published aggregate is rebuilt from the per-run contributions:
+# ``sum`` adds the numerators, ``ratio`` divides the summed numerators by the
+# summed denominators, and ``sample`` is a percentile over the contributed
+# measurements. Each run contributes at most once to each metric.
+METRIC_AGGREGATION = {
+    "collision_count": "sum",
+    "complex_task_rate": "ratio",
+    "evidence_coverage": "ratio",
+    "false_completion_count": "sum",
+    "goal_condition_coverage": "ratio",
+    "local_planning_coverage": "ratio",
+    "mean_observed_entities": "ratio",
+    "observation_completeness": "ratio",
+    "policy_violation_count": "sum",
+    "recovery_rate": "ratio",
+    "replay_success_rate": "ratio",
+    "state_hash_consistency": "ratio",
+    "task_family_count": "distinct",
+    "task_duration_p50_s": "sample",
+    "task_duration_p95_s": "sample",
+    "tool_call_validity": "ratio",
+    "vtcr": "ratio",
+}
+AGGREGATE_METRICS = tuple(METRIC_AGGREGATION)
+# A sample metric is a percentile over the runs that measured it.
+SAMPLE_QUANTILE = {"task_duration_p50_s": 0.5, "task_duration_p95_s": 0.95}
+DURATION_METRICS = tuple(SAMPLE_QUANTILE)
+# The value published when no run contributes anything. An absent measurement is
+# not a zero: without an audit there is no false-completion count, and without a
+# recoverable run there is no recovery rate. A ratio metric with no declared
+# entry fails the self-check rather than silently publishing a invented zero.
+NO_CONTRIBUTOR_VALUE = {
+    "evidence_coverage": 0.0,
+    "false_completion_count": None,
+    "goal_condition_coverage": 0.0,
+    "local_planning_coverage": 0.0,
+    "mean_observed_entities": 0.0,
+    "observation_completeness": 1.0,
+    "recovery_rate": None,
+    "task_duration_p50_s": None,
+    "task_duration_p95_s": None,
+    "tool_call_validity": 1.0,
+    "vtcr": 0.0,
+}
+# Fields that are labels on the index rather than part of the digest: ``run_dir``
+# is a local path, and the rest is the index the digest describes.
+DIGEST_EXCLUDED_KEYS = frozenset(
+    {"runs", "metric_contributors", "metric_exclusions", "evidence_index_sha256", "run_dir"}
+)
+OBSERVATION_FIELDS = ("observation_id", "run_id", "entity_id", "pose", "confidence")
 # The evaluation log envelope field. It is log provenance owned by the runner,
 # not event state: ``WorldEvent`` forbids extra fields, so replay drops it and
 # the other metrics keep reading it from the untrusted record.
@@ -234,15 +304,15 @@ def _measured_elapsed(run_id: str, events: list[dict[str, Any]]) -> float | None
     return None
 
 
-def durations(runs: dict[str, list[dict[str, Any]]]) -> list[float]:
-    """Return per-run task durations, failing closed on unusable clocks.
+def run_durations(runs: dict[str, list[dict[str, Any]]]) -> dict[str, float]:
+    """Return each run's task duration, failing closed on unusable clocks.
 
     Runner-measured monotonic elapsed time is preferred, because subtracting
     ``occurred_at`` values across two clock domains can invent or hide time. A
     run that cannot produce a finite, non-negative duration is invalid
     evidence: silently skipping it would bias the percentile metrics upward.
     """
-    result: list[float] = []
+    result: dict[str, float] = {}
     for run_id, events in runs.items():
         if len(events) < 2:
             continue
@@ -250,8 +320,13 @@ def durations(runs: dict[str, list[dict[str, Any]]]) -> list[float]:
         duration = _wall_clock_duration(run_id, events) if measured is None else measured
         if not math.isfinite(duration) or duration < 0:
             raise RuntimeError(f"run {run_id!r} has an invalid task duration: {duration}")
-        result.append(duration)
+        result[run_id] = duration
     return result
+
+
+def durations(runs: dict[str, list[dict[str, Any]]]) -> list[float]:
+    """Return per-run task durations in run order."""
+    return list(run_durations(runs).values())
 
 
 def duration_sources(runs: dict[str, list[dict[str, Any]]]) -> dict[str, str]:
@@ -355,6 +430,337 @@ def audit_false_completions(
     return false_completions, complete, attributed or None
 
 
+def _evaluation_of(events: list[dict[str, Any]]) -> dict[str, Any]:
+    return next((event.get("evaluation") for event in events if isinstance(event.get("evaluation"), dict)), {})
+
+
+def source_class(runner: str | None) -> str:
+    """Name the evidence class a run belongs to, in a closed vocabulary."""
+    if not runner:
+        return "unknown"
+    if runner.casefold() in SCRIPTED_RUNNERS:
+        return "scripted"
+    return ELIGIBLE_RUNNER if runner == ELIGIBLE_RUNNER else "unknown"
+
+
+def _final_verification(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return next((event for event in reversed(events) if event.get("event_type") == "verification"), None)
+
+
+def _payload_status(event: dict[str, Any] | None) -> str | None:
+    payload = (event or {}).get("payload", {})
+    status = payload.get("status") if isinstance(payload, dict) else None
+    return status if isinstance(status, str) else None
+
+
+def _evidence_refs(event: dict[str, Any] | None) -> list[str]:
+    """Return a bounded list of the evidence references behind a run's outcome.
+
+    Only reference strings leave the run directory. Frames, payloads and camera
+    content stay where they are: the index names evidence, it does not copy it.
+    """
+    payload = (event or {}).get("payload", {})
+    refs = payload.get("evidence_refs") if isinstance(payload, dict) else None
+    if not isinstance(refs, list):
+        return []
+    return sorted({ref for ref in refs if isinstance(ref, str) and ref})[:MAX_RUN_EVIDENCE_REFS]
+
+
+def _manifest_sha256(
+    run_id: str,
+    events: list[dict[str, Any]],
+    provenance: dict[str, Any] | None,
+    manifests: dict[str, Path],
+) -> str | None:
+    """Bind a run to the manifest hash recorded for it, or report no binding.
+
+    The provenance record is the binding this index exists to preserve once the
+    metrics file is separated from the run directory, so its hash is preferred.
+    A run with no record falls back to the manifest its own log declares, and a
+    run that resolves neither reports no binding instead of borrowing another
+    run's manifest.
+    """
+    entries = (provenance or {}).get("runs")
+    entry = entries.get(run_id) if isinstance(entries, dict) else None
+    entry = entry if isinstance(entry, dict) else {}
+    if isinstance(entry.get("manifest_sha256"), str):
+        return entry["manifest_sha256"]
+    recorded = resolve_recorded_path(entry.get("manifest_path"))
+    if recorded is not None and recorded.is_file():
+        return file_sha256(recorded)
+    manifest_path = manifests.get(str(_evaluation_of(events).get("scenario_id")))
+    return file_sha256(manifest_path) if manifest_path is not None else None
+
+
+def _ratio(numerator: int, denominator: int) -> dict[str, int]:
+    return {"numerator": numerator, "denominator": denominator}
+
+
+def _collision_count(events: list[dict[str, Any]]) -> int:
+    return sum(
+        event.get("event_type") == "fault" and event.get("payload", {}).get("fault_type") == "collision"
+        for event in events
+    )
+
+
+def run_contributions(
+    events: list[dict[str, Any]],
+    *,
+    run_family: str,
+    duration: float | None,
+    replay: tuple[str, str],
+    audit_supplied: bool,
+    audit_decision: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Return one run's contribution to every aggregate, and why one is absent.
+
+    A metric this run cannot participate in is named with a reason, so a run
+    present in the directory is reported as excluded rather than silently
+    missing. The aggregates are rebuilt from these contributions, which is what
+    makes "which run ids produced this number" answerable at all.
+    """
+    statuses = verification_statuses(events)
+    final = _final_verification(events)
+    payload = (final or {}).get("payload", {})
+    payload = payload if isinstance(payload, dict) else {}
+    contributions: dict[str, Any] = {}
+    excluded: dict[str, str] = {}
+
+    if statuses:
+        contributions["vtcr"] = _ratio(int(statuses[-1] == "confirmed"), 1)
+    else:
+        excluded["vtcr"] = "no verification record"
+    if audit_supplied:
+        decision = audit_decision if isinstance(audit_decision, dict) else {}
+        claimed = bool(statuses and statuses[-1] == "confirmed")
+        contributions["false_completion_count"] = {
+            "count": int(claimed and decision.get("oracle_status") != "confirmed")
+        }
+    else:
+        excluded["false_completion_count"] = "no human false-completion audit was supplied"
+    if len(statuses) > 1 and "refuted" in statuses[:-1]:
+        contributions["recovery_rate"] = _ratio(int(statuses[-1] == "confirmed"), 1)
+    else:
+        excluded["recovery_rate"] = "no intermediate refuted verification"
+    for metric in DURATION_METRICS:
+        if duration is None:
+            excluded[metric] = "fewer than two events, so no duration was measured"
+        else:
+            contributions[metric] = {"value": duration}
+
+    requests = [event for event in events if event.get("event_type") == "action_request"]
+    if requests:
+        contributions["tool_call_validity"] = _ratio(
+            sum(event.get("payload", {}).get("action_type") in ALLOWED_ACTIONS for event in requests), len(requests)
+        )
+    else:
+        excluded["tool_call_validity"] = "no action_request"
+    plans = [event for event in events if event.get("event_type") == "task_graph"]
+    if plans:
+        contributions["local_planning_coverage"] = _ratio(
+            sum(event.get("payload", {}).get("model_route") in {"local", "template"} for event in plans), len(plans)
+        )
+    else:
+        excluded["local_planning_coverage"] = "no task_graph"
+    observations = [event for event in events if event.get("event_type") == "observation"]
+    if observations:
+        contributions["observation_completeness"] = _ratio(
+            sum(all(field in event.get("payload", {}) for field in OBSERVATION_FIELDS) for event in observations),
+            len(observations),
+        )
+    else:
+        excluded["observation_completeness"] = "no observation"
+    verifications = [event for event in events if event.get("event_type") == "verification"]
+    if verifications:
+        contributions["evidence_coverage"] = _ratio(
+            sum(bool(event.get("payload", {}).get("evidence_refs")) for event in verifications), len(verifications)
+        )
+    else:
+        excluded["evidence_coverage"] = "no verification"
+    required = payload.get("required_conditions", [])
+    evaluated = payload.get("evaluated_conditions", [])
+    required_set = set(required) if isinstance(required, list) else set()
+    evaluated_set = set(evaluated) if isinstance(evaluated, list) else set()
+    if required_set:
+        contributions["goal_condition_coverage"] = _ratio(len(required_set & evaluated_set), len(required_set))
+    else:
+        excluded["goal_condition_coverage"] = "the final verification required no condition"
+
+    contributions["collision_count"] = {"count": _collision_count(events)}
+    contributions["policy_violation_count"] = {
+        "count": sum(event.get("event_type") == "policy_violation" for event in events)
+    }
+    contributions["state_hash_consistency"] = _ratio(int(replay[0] == replay[1]), 1)
+    contributions["replay_success_rate"] = _ratio(1, 1)
+    contributions["complex_task_rate"] = _ratio(int(run_family != BASELINE_TASK_FAMILY), 1)
+    contributions["mean_observed_entities"] = _ratio(
+        len(
+            {
+                event.get("payload", {}).get("entity_id")
+                for event in observations
+                if event.get("payload", {}).get("entity_id")
+            }
+        ),
+        1,
+    )
+    contributions["task_family_count"] = {"value": run_family}
+    return contributions, excluded
+
+
+def build_evidence_index(
+    runs: dict[str, list[dict[str, Any]]],
+    *,
+    provenance: dict[str, Any] | None,
+    manifests: dict[str, Path],
+    audit: dict[str, Any] | None,
+    replayed: dict[str, tuple[str, str]],
+) -> tuple[list[dict[str, Any]], dict[str, list[str]], dict[str, dict[str, list[str]]]]:
+    """Build the bounded per-run index, its contributor sets and its exclusions."""
+    if len(runs) > MAX_INDEXED_RUNS:
+        raise RuntimeError(
+            f"{len(runs)} runs exceed the bounded evidence index of {MAX_INDEXED_RUNS}; "
+            "refusing to publish an index that cannot cover the run set it explains"
+        )
+    measured = run_durations(runs)
+    decisions = (audit or {}).get("runs")
+    decisions = decisions if isinstance(decisions, dict) else {}
+    records: list[dict[str, Any]] = []
+    contributors: dict[str, list[str]] = {metric: [] for metric in AGGREGATE_METRICS}
+    exclusions: dict[str, dict[str, list[str]]] = {metric: {} for metric in AGGREGATE_METRICS}
+    for run_id in sorted(runs):
+        events = runs[run_id]
+        final = _final_verification(events)
+        contributions, excluded = run_contributions(
+            events,
+            run_family=task_id(events),
+            duration=measured.get(run_id),
+            replay=replayed[run_id],
+            audit_supplied=audit is not None,
+            audit_decision=decisions.get(run_id),
+        )
+        for metric, contribution in contributions.items():
+            if contributes_to_numerator(metric, contribution):
+                contributors[metric].append(run_id)
+        for metric in AGGREGATE_METRICS:
+            if metric not in contributions:
+                exclusions[metric].setdefault(excluded[metric], []).append(run_id)
+        records.append(
+            {
+                "run_id": run_id,
+                "source_class": source_class(_evaluation_of(events).get("runner")),
+                "task_family": task_id(events),
+                "event_log_sha256": event_log_sha256(events),
+                "manifest_sha256": _manifest_sha256(run_id, events, provenance, manifests),
+                "final_outcome": _payload_status(final),
+                "evidence_refs": _evidence_refs(final),
+                "contributions": contributions,
+                "excluded": dict(sorted(excluded.items())),
+            }
+        )
+    return records, contributors, {metric: dict(sorted(reasons.items())) for metric, reasons in exclusions.items()}
+
+
+def contributes_to_numerator(metric: str, contribution: dict[str, Any]) -> bool:
+    """Report whether a run moved the numerator a reviewer would ask about.
+
+    A count only names the runs that produced the event, and a ratio only names
+    the runs that supplied a success: the runs that merely supplied a
+    denominator are still in the rate, but they did not add to its top line.
+    """
+    mode = METRIC_AGGREGATION[metric]
+    if mode == "sum":
+        return bool(contribution.get("count"))
+    if mode == "ratio":
+        return bool(contribution.get("numerator"))
+    return True
+
+
+def aggregate_from_index(metric: str, records: list[dict[str, Any]]) -> Any:
+    """Rebuild one published aggregate from the per-run contributions alone.
+
+    This is the recomputation a reviewer performs: reading only ``runs[]``, the
+    aggregate must come back identical, or the index does not explain it.
+    """
+    contributions = [record["contributions"][metric] for record in records if metric in record["contributions"]]
+    if not contributions:
+        # An explicit zero-contributor state: no run could evaluate this metric,
+        # which is a missing measurement rather than a measured zero.
+        if metric not in NO_CONTRIBUTOR_VALUE:
+            raise RuntimeError(f"metric {metric!r} has no contributing run and no declared empty value")
+        return NO_CONTRIBUTOR_VALUE[metric]
+    mode = METRIC_AGGREGATION[metric]
+    if mode == "sum":
+        return sum(item["count"] for item in contributions)
+    if mode == "ratio":
+        denominator = sum(item["denominator"] for item in contributions)
+        if not denominator:
+            raise RuntimeError(f"metric {metric!r} rebuilds to an empty denominator")
+        return sum(item["numerator"] for item in contributions) / denominator
+    if mode == "sample":
+        return percentile([item["value"] for item in contributions], SAMPLE_QUANTILE[metric])
+    if mode == "distinct":
+        return len({item["value"] for item in contributions})
+    raise RuntimeError(f"metric {metric!r} declares an unknown aggregation {mode!r}")
+
+
+def _same_aggregate(published: Any, rebuilt: Any) -> bool:
+    if isinstance(published, bool) or isinstance(rebuilt, bool):
+        return published is rebuilt
+    if published is None or rebuilt is None:
+        return published is None and rebuilt is None
+    return published == rebuilt
+
+
+def evidence_index_sha256(metrics: dict[str, Any]) -> str:
+    """Digest the aggregates together with the canonically sorted run records.
+
+    Reordering the input run files cannot change the digest, because the records
+    are sorted by ``run_id`` and every key is sorted; editing a run id, a log
+    hash, a manifest hash or a contribution does change it.
+    """
+    payload = {
+        "format": EVIDENCE_INDEX_FORMAT,
+        "format_version": EVIDENCE_INDEX_FORMAT_VERSION,
+        "aggregates": {key: value for key, value in metrics.items() if key not in DIGEST_EXCLUDED_KEYS},
+        "metric_contributors": metrics.get("metric_contributors", {}),
+        "metric_exclusions": metrics.get("metric_exclusions", {}),
+        "runs": sorted(metrics.get("runs", []), key=lambda record: record["run_id"]),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    return sha256_bytes(canonical.encode("utf-8"))
+
+
+def verify_evidence_index(metrics: dict[str, Any]) -> None:
+    """Refuse an aggregate the per-run index cannot reproduce.
+
+    A total without a run index is not evidence, so a consumer runs this before
+    trusting a metrics file: an index that disagrees with its aggregate, names a
+    contributor it does not hold, or carries a stale digest raises instead of
+    being reported as a number.
+    """
+    records = metrics.get("runs")
+    if not isinstance(records, list) or not records:
+        raise RuntimeError("refusing to publish aggregate metrics without a per-run evidence index")
+    run_ids = [record.get("run_id") for record in records]
+    if run_ids != sorted(set(run_ids)):
+        raise RuntimeError("evidence index run records are not uniquely and canonically ordered")
+    for metric in AGGREGATE_METRICS:
+        rebuilt = aggregate_from_index(metric, records)
+        if not _same_aggregate(rebuilt, metrics.get(metric)):
+            raise RuntimeError(
+                f"metric {metric!r} is {metrics.get(metric)!r} but its per-run index rebuilds to {rebuilt!r}"
+            )
+        expected = [
+            record["run_id"]
+            for record in records
+            if metric in record["contributions"] and contributes_to_numerator(metric, record["contributions"][metric])
+        ]
+        if metrics.get("metric_contributors", {}).get(metric) != expected:
+            raise RuntimeError(f"metric {metric!r} names contributors its run records do not support")
+    if evidence_index_sha256(metrics) != metrics.get("evidence_index_sha256"):
+        raise RuntimeError("evidence index digest does not match its own content")
+
+
 def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
     runs = load_runs(run_dir)
     if not runs:
@@ -425,14 +831,11 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
 
     summary_path = run_dir.parent / "summary.json"
     summary = _load_summary(summary_path)
+    audit = load_human_audit(audit_path)
+    manifests = discover_manifests(manifest_search_dirs(run_dir))
     # Eligibility is recomputed from the logs and the provenance record. The
     # summary is consulted only to detect a disagreement, never to grant a pass.
-    verdict = evaluate_eligibility(
-        runs=runs,
-        provenance=provenance,
-        manifests=discover_manifests(manifest_search_dirs(run_dir)),
-        audit=load_human_audit(audit_path),
-    )
+    verdict = evaluate_eligibility(runs=runs, provenance=provenance, manifests=manifests, audit=audit)
     summary_claims = bool(summary.get("release_eligible", False))
     if summary_claims and not verdict["eligible"]:
         verdict = {
@@ -445,7 +848,19 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
             "reasons": sorted([*verdict["reasons"], "summary does not claim the eligibility the evidence supports"]),
             "eligible": False,
         }
-    return {
+    # The aggregates above are computed from the events directly; the index
+    # below recomputes each of them from its own per-run contributions. The two
+    # are then compared by ``verify_evidence_index``, so a contribution table
+    # that does not reproduce the published number is refused rather than
+    # published as an explanation of it.
+    records, contributors, exclusions = build_evidence_index(
+        runs,
+        provenance=provenance,
+        manifests=manifests,
+        audit=audit,
+        replayed=replayed,
+    )
+    metrics = {
         "false_completion_count": false_completions,
         "false_completion_reviewed": audit_complete,
         "false_completion_reviewed_by": reviewed_by,
@@ -504,7 +919,15 @@ def collect(run_dir: Path, audit_path: Path | None = None) -> dict[str, Any]:
         "provenance_present": provenance is not None,
         "release_eligible": bool(verdict["eligible"]),
         "eligibility_reasons": verdict["reasons"],
+        "run_index_format": EVIDENCE_INDEX_FORMAT,
+        "run_index_format_version": EVIDENCE_INDEX_FORMAT_VERSION,
+        "runs": records,
+        "metric_contributors": contributors,
+        "metric_exclusions": exclusions,
     }
+    metrics["evidence_index_sha256"] = evidence_index_sha256(metrics)
+    verify_evidence_index(metrics)
+    return metrics
 
 
 def main() -> int:

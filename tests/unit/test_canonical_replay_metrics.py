@@ -8,6 +8,7 @@ rejection, and a metric computed from a log that never produced a WorldState.
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -22,7 +23,16 @@ sys.path[:0] = [
 ]
 
 from _jsonio import load_jsonl
-from collect_metrics import STATE_EVENT_TYPES, canonical_replay, collect, load_runs
+from collect_metrics import (
+    AGGREGATE_METRICS,
+    STATE_EVENT_TYPES,
+    aggregate_from_index,
+    canonical_replay,
+    collect,
+    evidence_index_sha256,
+    load_runs,
+    verify_evidence_index,
+)
 from run_evaluation import scripted_events, write_jsonl
 from workbench_contracts import WorldEvent
 from workbench_world_model import create_world_state_snapshot
@@ -268,3 +278,125 @@ class TestReplaySuccessMetric:
         assert metrics["run_count"] == 1
         assert metrics["replay_success_rate"] == 1.0
         assert load_jsonl(version_dir / "normal-001.jsonl")[0]["evaluation"]["runner"] == "scripted"
+
+
+class TestEvidenceIndex:
+    """``runs[]`` is the per-run evidence behind every published aggregate.
+
+    Each test states the question a reviewer could not answer from a total: which
+    run ids produced a numerator, whether reordering the inputs changes the
+    digest, whether editing a run changes it, and whether a run that could not
+    contribute is reported instead of dropped.
+    """
+
+    def _metrics(self, tmp_path: Path, manifests: list[dict], *, audit: Path | None = None) -> dict:
+        for manifest in manifests:
+            write_jsonl(
+                tmp_path / f"{manifest['scenario_id']}.jsonl",
+                scripted_events("v-test", manifest, "abc123", 1000),
+            )
+        return collect(tmp_path, audit)
+
+    def _manifest(self, relative: str) -> dict:
+        return json.loads((ROOT / "sim" / "scenarios" / relative).read_text(encoding="utf-8"))
+
+    def test_every_aggregate_names_its_contributing_run_ids(self, tmp_path: Path) -> None:
+        metrics = self._metrics(tmp_path, [self._manifest("frozen/grasp-failure-001.json")])
+
+        for metric in AGGREGATE_METRICS:
+            assert metric in metrics["metric_contributors"]
+            assert aggregate_from_index(metric, metrics["runs"]) == metrics[metric]
+
+    def test_a_nonzero_recovery_names_the_run_that_recovered_it(self, tmp_path: Path) -> None:
+        metrics = self._metrics(tmp_path, [self._manifest("frozen/grasp-failure-001.json")])
+
+        assert metrics["recovery_rate"] == 1.0
+        run_id = metrics["metric_contributors"]["recovery_rate"][0]
+        record = next(run for run in metrics["runs"] if run["run_id"] == run_id)
+        assert record["contributions"]["recovery_rate"] == {"numerator": 1, "denominator": 1}
+        assert record["event_log_sha256"] and record["manifest_sha256"]
+
+    def test_reordering_the_input_run_files_keeps_the_digest(self, tmp_path: Path) -> None:
+        manifests = [
+            self._manifest("frozen/normal-001.json"),
+            self._manifest("frozen/grasp-failure-001.json"),
+        ]
+        forward = tmp_path / "forward"
+        reverse = tmp_path / "reverse"
+        forward.mkdir()
+        reverse.mkdir()
+
+        first = self._metrics(forward, manifests)
+        for manifest in reversed(manifests):
+            write_jsonl(
+                reverse / f"{manifest['scenario_id']}.jsonl",
+                scripted_events("v-test", manifest, "abc123", 1000),
+            )
+        second = collect(reverse)
+
+        assert [run["run_id"] for run in first["runs"]] == sorted(run["run_id"] for run in first["runs"])
+        assert first["evidence_index_sha256"] == second["evidence_index_sha256"]
+
+    def test_editing_an_indexed_field_changes_the_digest(self, tmp_path: Path) -> None:
+        metrics = self._metrics(tmp_path, [self._manifest("frozen/normal-001.json")])
+        baseline = metrics["evidence_index_sha256"]
+
+        def digest_after(**edits: object) -> str:
+            edited = copy.deepcopy(metrics)
+            edited["runs"][0].update(edits)
+            return evidence_index_sha256(edited)
+
+        for field, value in (
+            ("run_id", "v-test--renamed"),
+            ("event_log_sha256", "0" * 64),
+            ("manifest_sha256", "1" * 64),
+        ):
+            assert digest_after(**{field: value}) != baseline, f"editing {field} must change the digest"
+
+        contribution = copy.deepcopy(metrics)
+        contribution["runs"][0]["contributions"]["vtcr"] = {"numerator": 0, "denominator": 1}
+        assert evidence_index_sha256(contribution) != baseline
+
+        aggregate = copy.deepcopy(metrics)
+        aggregate["vtcr"] = 0.5
+        assert evidence_index_sha256(aggregate) != baseline
+
+        # The run directory is a local label, not evidence: moving the run set to
+        # another machine must not invalidate a digest a reviewer already checked.
+        moved = {**metrics, "run_dir": "/somewhere/else"}
+        assert evidence_index_sha256(moved) == baseline
+
+    def test_a_run_that_cannot_contribute_is_reported_as_excluded(self, tmp_path: Path) -> None:
+        metrics = self._metrics(tmp_path, [self._manifest("frozen/normal-001.json")])
+
+        assert metrics["false_completion_count"] is None
+        assert metrics["metric_contributors"]["false_completion_count"] == []
+        excluded = metrics["metric_exclusions"]["false_completion_count"]
+        assert excluded["no human false-completion audit was supplied"] == ["v-test--normal-001"]
+        assert metrics["runs"][0]["excluded"]["false_completion_count"]
+
+    def test_a_count_metric_names_only_the_runs_that_contributed(self, tmp_path: Path) -> None:
+        clean = self._metrics(tmp_path, [self._manifest("frozen/normal-001.json")])
+
+        # A zero count is a measured zero, and no run supplied a collision, so the
+        # contributor set is explicit and empty rather than an unexplained total.
+        assert clean["collision_count"] == 0
+        assert clean["metric_contributors"]["collision_count"] == []
+        assert clean["metric_contributors"]["vtcr"] == ["v-test--normal-001"]
+
+    def test_a_drifted_index_is_refused_instead_of_published(self, tmp_path: Path) -> None:
+        metrics = self._metrics(tmp_path, [self._manifest("frozen/normal-001.json")])
+
+        tampered = copy.deepcopy(metrics)
+        tampered["vtcr"] = 0.0
+        with pytest.raises(RuntimeError, match="rebuilds to"):
+            verify_evidence_index(tampered)
+
+        stale = copy.deepcopy(metrics)
+        stale["evidence_index_sha256"] = "0" * 64
+        with pytest.raises(RuntimeError, match="digest does not match"):
+            verify_evidence_index(stale)
+
+        indexless = {key: value for key, value in metrics.items() if key != "runs"}
+        with pytest.raises(RuntimeError, match="without a per-run evidence index"):
+            verify_evidence_index(indexless)
