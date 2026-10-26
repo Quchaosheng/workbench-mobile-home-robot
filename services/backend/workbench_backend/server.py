@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+from .assurance_view import AssuranceUnavailable
+from .assurance_view import project as project_assurance
 from .health import HealthHistoryError, HealthReadModel
 from .inbound_http import InboundHttpConfigurationError, InboundHttpPolicy
 from .logging import StructuredLogger
@@ -190,6 +192,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # artifact families from colliding.
     health_model = HealthReadModel(Path(DEFAULT_DATA_DIR) / "health" / "health.jsonl")
     static_dir = DEFAULT_STATIC_DIR
+    # Where the assurance register is read from. Separate from ``static_dir`` so a
+    # test can point at an empty directory and assert the 503 path.
+    assurance_root: Path | None = None
     logger = StructuredLogger("workbench-backend")
     data_source = "dashboard-fixtures"
     inbound_policy = InboundHttpPolicy()
@@ -474,6 +479,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(payload, api_version=api_version)
             return
+        if route in {"/api/assurance", "/api/v1/assurance"}:
+            try:
+                payload = project_assurance(self.assurance_root)
+            except AssuranceUnavailable as exc:
+                # Unavailable is not empty: a register that cannot be read must not
+                # render as "the runtime claims nothing".
+                self._send_json(
+                    {"error": "assurance_unavailable", "message": str(exc), "read_only": True},
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    api_version=api_version,
+                )
+                return
+            self._send_json(payload, api_version=api_version)
+            return
         if route in {"/api/expression-states", "/api/v1/expression-states"}:
             self._send_json(self.read_model.expression_contract(), api_version=api_version)
             return
@@ -630,6 +649,7 @@ def create_server(
     *,
     data_dir: str | Path = DEFAULT_DATA_DIR,
     static_dir: str | Path = DEFAULT_STATIC_DIR,
+    assurance_root: str | Path | None = None,
     event_source_url: str | None = None,
     event_source_allowlist: str | None = None,
     health_path: str | Path | None = None,
@@ -656,6 +676,7 @@ def create_server(
     else:
         configured_read_model = DashboardReadModel(data_dir)
     configured_static_dir = Path(static_dir)
+    configured_assurance_root = Path(assurance_root) if assurance_root is not None else None
     configured_health_model = HealthReadModel(
         health_path if health_path is not None else Path(data_dir) / "health" / "health.jsonl"
     )
@@ -664,6 +685,7 @@ def create_server(
         read_model = configured_read_model
         health_model = configured_health_model
         static_dir = configured_static_dir
+        assurance_root = configured_assurance_root
         data_source = configured_read_model.data_source if event_source_url else "dashboard-fixtures"
         inbound_policy = configured_inbound_policy
 
