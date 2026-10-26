@@ -1,0 +1,32 @@
+ai_model_adapter:
+  ros__parameters:
+    mode: disabled
+    api_style: chat_completions
+    request: Go to dock_a.
+    request_id: model_demo_1
+    task_id: model_task_1
+    model_endpoint: https://api.openai.com/v1/chat/completions
+    model_name: gpt-4.1-mini
+    api_key_env: OPENAI_API_KEY
+    model_timeout_sec: 10.0
+    observation_timestamp_ns: 0
+    observation_ttl_ms: 3000
+    inference_deadline_ms: 2500
+    model_output_version: workflow-plan/v1
+    model_record_path: ""
+    model_replay_path: ""
+    model_metrics_path: ""
+    model_fault_mode: none
+    model_dedup_window_ms: 5000
+    model_failure_window_ms: 30000
+    model_failure_storm_count: 3
+    observation_max_future_skew_ms: 100
+    mock_response: '{"workflow_id":"single_task","target_id":"dock_a","duration_ms":1000}'
+    action_result_timeout_sec: 15.0
+    max_duration_ms: 5000
+    workflow_ids:
+      - single_task
+      - ready_then_task
+    targets:
+      - dock_a
+      - home

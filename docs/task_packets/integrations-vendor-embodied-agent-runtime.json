@@ -1,0 +1,53 @@
+{
+  "issue": 397,
+  "human_owner": "Quchaosheng",
+  "objective": "Vendor the embodied-agent-runtime repository into this one as the ROS 2 execution plane, so the evidence plane and the execution plane are reviewable in a single diff without merging their claims.",
+  "allowed_paths": [
+    "integrations/embodied_agent_runtime/**",
+    ".github/workflows/ros2-runtime.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "pyproject.toml",
+    "docs/task_packets/integrations-vendor-embodied-agent-runtime.json"
+  ],
+  "read_only_paths": [
+    "integrations/ros2_runtime/**",
+    "Makefile",
+    ".github/workflows/ci.yml"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "interfaces/**",
+    "services/**",
+    "libs/**"
+  ],
+  "acceptance": [
+    "the eleven ROS 2 packages are vendored with no source changes",
+    "the runtime's own docs, history and Dockerfile/Makefile move with it",
+    "ros2-ci.yml becomes ros2-runtime.yml, path-filtered to the runtime directory",
+    "the root READMEs and pyproject explain the two planes",
+    "ruff excludes the vendored tree because colcon/ament_lint governs its style",
+    "a Python-only change does not build the ROS 2 runtime",
+    "the full pytest suite matches the pre-existing environmental baseline with no new failures"
+  ],
+  "commands": [
+    "python3 -m pytest -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 tools/scripts/check_context.py",
+    "python3 -m mkdocs build --strict"
+  ],
+  "evidence": [
+    "12 failed, 2695 passed, 5 skipped — byte-identical to the origin/main baseline, all environmental",
+    "ruff check: All checks passed!",
+    "ruff format --check: 572 files already formatted",
+    "check_context.py: context validation passed",
+    "mkdocs build --strict: exit 0"
+  ],
+  "stop_conditions": [
+    "the move would require editing the ROS 2 package sources",
+    "a schema under interfaces/ would have to change",
+    "a Python evidence-plane module would have to import the vendored tree"
+  ]
+}
