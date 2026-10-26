@@ -329,18 +329,160 @@ class HealthStoreTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
-class HealthApiTests(unittest.TestCase):
-    def start_server(self, health_document: str | None = None, **options):
+def run_log(run_id: str = "run-ready") -> str:
+    """One contract-valid run log, so readiness has a readable event source."""
+    event = {
+        "event_id": f"{run_id}-evt-0",
+        "run_id": run_id,
+        "sequence_no": 0,
+        "event_type": "task_accepted",
+        "occurred_at": "2026-08-22T00:00:00Z",
+        "payload": {"task_id": "task-1", "goal": "Place the red block in the tray"},
+        "evidence_refs": [],
+    }
+    return json.dumps(event) + "\n"
+
+
+class ReadinessCompositionTests(unittest.TestCase):
+    """Issue #461: readiness composes the monitoring surface, not only events.
+
+    The event read model can be perfectly readable while the configured health
+    document is unusable, and the health API already fails closed for that case.
+    Readiness has to reach the same verdict, name the surface that failed, and
+    still defer to the documented "absent health is unknown" policy.
+    """
+
+    def start_server(
+        self,
+        *,
+        health_fixture_body: str | None = None,
+        events: str | None = None,
+        health_filename: str = "health.jsonl",
+    ):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         data_dir = Path(directory.name)
-        if health_document is not None:
+        if events is not None:
+            data_dir.joinpath("run-ready.jsonl").write_text(events, encoding="utf-8")
+        if health_fixture_body is not None:
+            health_dir = data_dir / "health"
+            health_dir.mkdir(parents=True, exist_ok=True)
+            health_dir.joinpath(health_filename).write_text(health_fixture_body, encoding="utf-8")
+        server = create_server("127.0.0.1", 0, data_dir=data_dir)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def stop() -> None:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.addCleanup(stop)
+        return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+    @staticmethod
+    def read(url: str) -> tuple[int, dict]:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            with error as response:
+                return response.code, json.loads(response.read())
+
+    def test_a_malformed_health_fixture_body_withholds_readiness(self) -> None:
+        # The event source is readable, so only the health document can decide
+        # this verdict. The health API already answers 503 for the same file.
+        _server, base_url = self.start_server(health_fixture_body="{not json}\n", events=run_log())
+        status, payload = self.read(f"{base_url}/readyz")
+        self.assertEqual((status, payload["status"]), (503, "not_ready"))
+        self.assertEqual(payload["reason"], "health_source_invalid")
+        self.assertEqual(payload["data_source"], "dashboard-fixtures")
+
+        health_status, health = self.read(f"{base_url}/api/v1/health")
+        self.assertEqual((health_status, health["error"]), (503, "invalid_health_source"))
+
+    def test_an_absent_health_fixture_body_stays_unknown_and_ready(self) -> None:
+        # A robot that never wrote health has not failed; the documented policy is
+        # "unknown", and readiness must not turn a missing optional file into a
+        # permanent outage.
+        _server, base_url = self.start_server(events=run_log())
+        status, payload = self.read(f"{base_url}/readyz")
+        self.assertEqual((status, payload["status"]), (200, "ready"))
+        self.assertNotIn("reason", payload)
+
+        health_status, health = self.read(f"{base_url}/api/v1/health")
+        self.assertEqual((health_status, health["status"]), (200, "unknown"))
+        self.assertEqual(health["reason"], "no_health_snapshot")
+
+    def test_a_valid_health_fixture_body_keeps_an_instance_ready(self) -> None:
+        _server, base_url = self.start_server(
+            health_fixture_body=json.dumps(snapshot().as_dict()) + "\n",
+            events=run_log(),
+        )
+        status, payload = self.read(f"{base_url}/readyz")
+        self.assertEqual((status, payload["status"]), (200, "ready"))
+        self.assertEqual(set(payload), {"status", "data_source"})
+        health_status, health = self.read(f"{base_url}/api/v1/health")
+        self.assertEqual((health_status, health["status"]), (200, "healthy"))
+
+    def test_a_malformed_event_source_still_names_the_event_surface(self) -> None:
+        # Fail one surface at a time so the reported reason is provably about it.
+        _server, base_url = self.start_server(
+            health_fixture_body=json.dumps(snapshot().as_dict()) + "\n",
+            events="{broken}\n",
+        )
+        status, payload = self.read(f"{base_url}/readyz")
+        self.assertEqual((status, payload["status"]), (503, "not_ready"))
+        self.assertEqual(payload["reason"], "event_source_unavailable")
+
+    def test_draining_wins_over_any_health_state(self) -> None:
+        for label, health_fixture_body in (
+            ("valid", json.dumps(snapshot().as_dict()) + "\n"),
+            ("malformed", "{not json}\n"),
+            ("absent", None),
+        ):
+            with self.subTest(health=label):
+                server, base_url = self.start_server(health_fixture_body=health_fixture_body, events=run_log())
+                status, payload = self.read(f"{base_url}/readyz")
+                if health_fixture_body == "{not json}\n":
+                    self.assertEqual(status, 503)
+                else:
+                    self.assertEqual((status, payload["status"]), (200, "ready"))
+
+                server.begin_drain()
+                status, payload = self.read(f"{base_url}/readyz")
+                self.assertEqual((status, payload["status"]), (503, "not_ready"))
+                # Draining is a deliberate state, so it is named first even when
+                # the health document is also unusable.
+                self.assertEqual(payload["reason"], "draining")
+
+    def test_the_failure_reason_never_echoes_the_document(self) -> None:
+        secret = "do-not-leak-issue-461"
+        # Well-formed JSON that fails validation: the message could otherwise
+        # quote the offending value back at the caller.
+        _server, base_url = self.start_server(
+            health_fixture_body=json.dumps({"collected_at": secret}) + "\n",
+            events=run_log(),
+        )
+        status, payload = self.read(f"{base_url}/readyz")
+        self.assertEqual(status, 503)
+        self.assertEqual(payload["reason"], "health_source_invalid")
+        self.assertNotIn(secret, json.dumps(payload))
+        self.assertNotIn("health.jsonl", json.dumps(payload))
+
+
+class HealthApiTests(unittest.TestCase):
+    def start_server(self, health_fixture_body: str | None = None, **options):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        data_dir = Path(directory.name)
+        if health_fixture_body is not None:
             # The default health path is a subdirectory so that run logs, which
             # are discovered with a top-level *.jsonl glob, cannot pick up the
             # health document as a run.
             health_dir = data_dir / "health"
             health_dir.mkdir(parents=True, exist_ok=True)
-            health_dir.joinpath("health.jsonl").write_text(health_document, encoding="utf-8")
+            health_dir.joinpath("health.jsonl").write_text(health_fixture_body, encoding="utf-8")
         server = create_server("127.0.0.1", 0, data_dir=data_dir, **options)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -380,7 +522,7 @@ class HealthApiTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 400)
         self.assertEqual(json.loads(caught.exception.read())["error"], "invalid_since")
 
-    def test_a_malformed_health_document_returns_503_not_a_partial_projection(self) -> None:
+    def test_a_malformed_health_fixture_body_returns_503_not_a_partial_projection(self) -> None:
         base_url = self.start_server("{not json}\n")
         for path in ("/api/v1/health", "/api/v1/health/history"):
             with self.subTest(path=path), self.assertRaises(urllib.error.HTTPError) as caught:
