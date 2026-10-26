@@ -13,7 +13,8 @@ This module owns the shared rule and nothing else:
 * a finite attempt ceiling and a finite recovery budget, both validated at parse
   time so a malformed policy fails before anything is dispatched;
 * the evidence gate, which refuses an action retry unless a *new* and *fresh*
-  observation arrived after the failed attempt;
+  observation arrived after the failed attempt, and refuses a completion after
+  a failure unless the confirmation cites such an observation;
 * an auditable decision carrying the attempt number and the reason, so retry
   counts are visible in replay.
 
@@ -50,6 +51,7 @@ RECOVERY_POLICY_INVALID_BUDGET = "RECOVERY_POLICY_INVALID_BUDGET"
 RECOVERY_POLICY_ILLEGAL_TRANSITION = "RECOVERY_POLICY_ILLEGAL_TRANSITION"
 RECOVERY_POLICY_BUDGET_EXHAUSTED = "RECOVERY_POLICY_BUDGET_EXHAUSTED"
 RECOVERY_POLICY_EVIDENCE_NOT_FRESH = "RECOVERY_POLICY_EVIDENCE_NOT_FRESH"
+RECOVERY_POLICY_EVIDENCE_UNOBSERVED = "RECOVERY_POLICY_EVIDENCE_UNOBSERVED"
 RECOVERY_POLICY_RUNTIME_OWNED_ACTION = "RECOVERY_POLICY_RUNTIME_OWNED_ACTION"
 RECOVERY_POLICY_TERMINAL = "RECOVERY_POLICY_TERMINAL"
 
@@ -61,6 +63,7 @@ EMITTED_CODES = (
     RECOVERY_POLICY_ILLEGAL_TRANSITION,
     RECOVERY_POLICY_BUDGET_EXHAUSTED,
     RECOVERY_POLICY_EVIDENCE_NOT_FRESH,
+    RECOVERY_POLICY_EVIDENCE_UNOBSERVED,
     RECOVERY_POLICY_RUNTIME_OWNED_ACTION,
     RECOVERY_POLICY_TERMINAL,
 )
@@ -364,6 +367,10 @@ class EvidenceStamp:
     observed. ``observed_at`` is a wall-clock string in the contract's format, so
     it is comparable with ``VerificationResult.verified_at``, and ``sequence_no``
     orders it against the failed attempt without trusting the clock alone.
+
+    ``evidence_refs`` is the identity of the sample: the references the
+    observation itself carries. It is what a confirmation must cite, so a
+    reference the ledger never observed cannot stand in for one.
     """
 
     observed_at: str
@@ -453,9 +460,15 @@ class RecoveryLedger:
         self._ticks = 0
         self._evidence: EvidenceStamp | None = None
         self._failed_at = ""
+        # Two watermarks, because a retry and a completion ask different
+        # questions. ``_failed_sequence`` is the sample a retry has already
+        # consumed, so one fresh observation cannot unlock two retries; it moves
+        # only when a decision is taken. ``_failed_frontier`` is the newest
+        # observation the ledger held when the attempt failed, so a completion
+        # must bring a sample observed *after* that failure rather than one that
+        # already existed and failed to convince anyone.
         self._failed_sequence = -1
-        self._failed_evidence: set[str] = set()
-        self._failed_verification_id: str | None = None
+        self._failed_frontier = -1
         self._completed_by: str | None = None
 
     # -- read-only views -------------------------------------------------- #
@@ -550,9 +563,12 @@ class RecoveryLedger:
 
         self._attempt += 1
         self._ticks += 1
-        self._failed_verification_id = verification_id if isinstance(verification_id, str) else None
         self._failed_at = str(getattr(result, "verified_at", "") or "")
-        self._failed_evidence.update(evidence_refs)
+        # A failed attempt closes the observation frontier whether or not it
+        # asks for a next step: an attempt that requested nothing still must not
+        # be completed by a sample it already knew about.
+        if self._evidence is not None:
+            self._failed_frontier = self._evidence.sequence_no
 
         if self._attempt > self._policy.max_attempts or self._ticks > self._policy.max_recovery_ticks:
             return self._decide(
@@ -623,14 +639,44 @@ class RecoveryLedger:
         return stamp.sequence_no > self._failed_sequence
 
     def _complete(self, verification_id: object, evidence_refs: tuple[str, ...]) -> None:
+        """Complete recovery, but only on evidence the ledger actually observed.
+
+        Before this gate, the only test was that the confirmation named *some*
+        string the failed attempt had not. A caller could therefore complete a
+        recovery after a failure with a reference no observation ever produced.
+        Completion now requires the observation itself: a sample recorded after
+        the failure, declared fresh, with valid provenance, whose identity the
+        confirmation cites. The check is a sequence comparison and a set
+        membership, so it stays deterministic and bounded and takes no clock
+        decision.
+        """
+
         if self._state is RecoveryState.COMPLETE:
             return
-        if self._failed_verification_id is not None and not (set(evidence_refs) - self._failed_evidence):
-            raise RecoveryPolicyError(
-                RECOVERY_POLICY_EVIDENCE_NOT_FRESH,
-                "a confirmed verification after a failed attempt must cite at least one evidence "
-                "reference the failed attempt did not already carry",
-            )
+        # ``attempt`` is the record of a failure, and it is set before any
+        # decision is taken, so a failed attempt that requested no next step is
+        # gated too. A typed verification_id is not required: an untyped result
+        # still fails, and still cannot be laundered into a completion.
+        if self._attempt > 0:
+            stamp = self._evidence
+            if stamp is None or stamp.sequence_no <= self._failed_frontier:
+                raise RecoveryPolicyError(
+                    RECOVERY_POLICY_EVIDENCE_NOT_FRESH,
+                    "a confirmed verification after a failed attempt needs an observation recorded "
+                    "after that failure; none was",
+                )
+            if not (stamp.fresh and stamp.provenance_valid):
+                raise RecoveryPolicyError(
+                    RECOVERY_POLICY_EVIDENCE_NOT_FRESH,
+                    "a confirmed verification after a failed attempt needs a fresh, provenance-valid "
+                    "observation; the newest recorded observation is not one",
+                )
+            if not set(evidence_refs) & set(stamp.evidence_refs):
+                raise RecoveryPolicyError(
+                    RECOVERY_POLICY_EVIDENCE_UNOBSERVED,
+                    "a confirmed verification must cite evidence the recorded observation carries; "
+                    "the cited reference(s) are not attached to any observed sample",
+                )
         self._advance(RecoveryState.COMPLETE)
         self._completed_by = verification_id if isinstance(verification_id, str) else None
 
