@@ -1,0 +1,64 @@
+{
+  "issues": [
+    487
+  ],
+  "human_owner": "Quchaosheng",
+  "objective": "Refuse a scenario manifest whose fault_type is not a declared fault, so an undeclared or misspelled name cannot execute as a fault-free control and be reported as confirmed.",
+  "decision_supported": "Whether the declared fault_type domain is closed at manifest admission, and whether it is pinned in the scenario schema as well as in the Pydantic model.",
+  "allowed_paths": [
+    "tools/scripts/scenario_tools.py",
+    "tests/unit/test_evaluation_tools.py",
+    "interfaces/json_schema/scenario.schema.json",
+    "docs/task_packets/undeclared-fault-type.json"
+  ],
+  "read_only_paths": [
+    "libs/contracts/**",
+    "libs/application/**",
+    "sim/scenarios/**"
+  ],
+  "forbidden": [
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**",
+    "services/backend/**"
+  ],
+  "input_refs": [
+    "sim/scenarios/frozen/normal-001.json",
+    "tools/scripts/validate_scenarios.py"
+  ],
+  "outputs": [
+    "tools/scripts/scenario_tools.py",
+    "interfaces/json_schema/scenario.schema.json",
+    "tests/unit/test_evaluation_tools.py"
+  ],
+  "acceptance": [
+    "an undeclared fault_type is refused by validate_simulation_manifest with the accepted set named",
+    "an undeclared fault_type is refused by load_scenario_manifests, so the runner cannot start a run with it",
+    "every declared fault and the none control are still accepted",
+    "the scenario schema enum and the Python declared set agree, and a test asserts it"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_evaluation_tools.py -q",
+    "python3 tools/scripts/validate_scenarios.py",
+    "python3 tools/scripts/validate_contracts.py"
+  ],
+  "evidence": [
+    "the typo manifest camera_droput was refused with 'unsupported fault_type' instead of reporting confirmed",
+    "validate_scenarios.py: 12 frozen and 24 expanded manifests pass",
+    "validate_contracts.py: contract validation passed"
+  ],
+  "stop_conditions": [
+    "a committed manifest uses a fault name outside the declared set",
+    "closing the domain would require changing the frozen scenario distribution",
+    "the schema enum and the model cannot be kept in one place"
+  ],
+  "max_iterations": 2,
+  "data_classification": "public",
+  "model_policy": "human-reviewed",
+  "risks_and_fallbacks": [
+    "Closing the domain is reject-only for the 36 committed manifests, which were checked first.",
+    "A future fault name must extend FaultType and the schema together in one change.",
+    "Fallback if the enum cannot be kept in one place: keep the schema permissive and rely on the model check, and record that divergence here."
+  ],
+  "issue": 487
+}

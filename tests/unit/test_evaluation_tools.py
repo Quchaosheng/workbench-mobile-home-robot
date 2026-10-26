@@ -35,7 +35,12 @@ from run_evaluation import (
     validate_label,
     write_jsonl,
 )
-from scenario_tools import canonical_hash, materialize_scenario, validate_simulation_manifest
+from scenario_tools import (
+    DECLARED_FAULT_TYPES,
+    canonical_hash,
+    materialize_scenario,
+    validate_simulation_manifest,
+)
 from validate_golden_set import validate, validate_diverse, validate_parcels
 
 
@@ -256,6 +261,28 @@ class EvaluationPipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown simulation manifest fields"):
             validate_simulation_manifest({**manifest, "unreviewed_extension": True})
         self.assertEqual(validate_simulation_manifest(manifest).scenario_id, manifest["scenario_id"])
+
+    def test_undeclared_fault_type_is_refused_by_both_entrypoints(self) -> None:
+        manifest = json.loads((ROOT / "sim" / "scenarios" / "frozen" / "normal-001.json").read_text(encoding="utf-8"))
+        typo = {**manifest, "fault_type": "camera_droput"}
+
+        # An undeclared name used to run as a fault-free control and come back
+        # ``confirmed``, which claims a completion for a fault never injected.
+        with self.assertRaisesRegex(ValueError, "unsupported fault_type"):
+            validate_simulation_manifest(typo)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "typo.json"
+            path.write_text(json.dumps(typo), encoding="utf-8")
+            with self.assertRaisesRegex(EvaluationInputError, "unsupported fault_type"):
+                load_scenario_manifests([path])
+
+        # Every declared fault, including the no-fault control, is still accepted.
+        for name in sorted(DECLARED_FAULT_TYPES):
+            self.assertEqual(
+                validate_simulation_manifest({**manifest, "fault_type": name}).fault_type,
+                name,
+            )
 
     def test_event_log_rejects_bad_json_missing_verification_and_boolean_sequence(self) -> None:
         manifest = json.loads((ROOT / "sim" / "scenarios" / "frozen" / "normal-001.json").read_text(encoding="utf-8"))
