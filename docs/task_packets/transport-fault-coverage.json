@@ -1,0 +1,59 @@
+{
+  "issue": 77,
+  "human_owner": "Quchaosheng",
+  "objective": "Declare the three CAN ACK/STOP transport faults as first-class runtime faults, each bound to the CanDiagnosticCode the shipped adapter already emits, so the fault coverage matches the boundary the platform tests.",
+  "decision_supported": "Whether bus faults belong in the runtime-fault taxonomy rather than in scenario manifests, and whether coverage of them can be claimed without a hardware-tested reference.",
+  "allowed_paths": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/unit/test_transport_fault_coverage.py",
+    "sim/fault_injection/README.md",
+    "docs/task_packets/transport-fault-coverage.json"
+  ],
+  "read_only_paths": [
+    "libs/hardware/**",
+    "interfaces/**",
+    "sim/scenarios/**"
+  ],
+  "forbidden": [
+    "firmware/**",
+    "robot/control/**",
+    "services/**"
+  ],
+  "input_refs": [
+    "libs/hardware/workbench/hardware/can_driver_safe.py",
+    "tests/unit/test_can_transport.py"
+  ],
+  "outputs": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/unit/test_transport_fault_coverage.py",
+    "sim/fault_injection/README.md"
+  ],
+  "acceptance": [
+    "ack_timeout, stop_timeout and stop_rejected are declared RuntimeFault members with a FaultSpec each",
+    "each spec names the CanDiagnosticCode the adapter emits, and a test asserts that name exists",
+    "none of the three is added to P2_FAULT_TYPES, because a bus fault is not a scenario property",
+    "coverage reports them as SIMULATED, never HARDWARE_TESTED, without a hardware evidence reference"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_transport_fault_coverage.py -q",
+    "python3 -m pytest tests/integration/test_fault_injection_coverage.py -q"
+  ],
+  "evidence": [
+    "test_transport_fault_coverage.py: 3 passed",
+    "test_fault_injection_coverage.py: 28 passed",
+    "validate_scenarios.py still reports 12 frozen and 24 expanded manifests"
+  ],
+  "stop_conditions": [
+    "inducing a fault would need a kernel module, a physical interface or privilege",
+    "a fault cannot be asserted against an exact CanDiagnosticCode",
+    "the change would alter can_driver_safe.py wire behaviour"
+  ],
+  "max_iterations": 2,
+  "data_classification": "public",
+  "model_policy": "human-reviewed",
+  "risks_and_fallbacks": [
+    "Adding members to RuntimeFault is additive, but any consumer that iterates it will now see three more values.",
+    "Fallback if a fault turns out not to be reachable from the shipped adapter: demote its spec and record it as NOT_EXECUTED rather than deleting it.",
+    "No replayable scenario manifest is added yet; the coverage status stays SIMULATED and the README says so."
+  ]
+}
