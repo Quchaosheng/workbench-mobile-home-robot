@@ -1,0 +1,60 @@
+{
+  "issue": 460,
+  "human_owner": "Quchaosheng",
+  "objective": "Validate the provider token counters that OllamaModelProvider.route() copies into last_call, so input_tokens and output_tokens are either an absent None or a non-negative integer, and a malformed counter is refused with a bounded LocalModelError instead of reaching model-call telemetry or cost evidence.",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/local_model.py",
+    "tests/unit/test_local_model.py",
+    "tests/unit/test_secret_redaction.py",
+    "docs/task_packets/agent-460-token-counter-validation.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**",
+    "docs/security/hardening.md",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**"
+  ],
+  "acceptance": [
+    "a missing prompt_eval_count or eval_count stays None in last_call and is never recorded as zero",
+    "a present counter is recorded exactly when it is a non-negative integer, including zero",
+    "a negative, fractional, boolean or string counter is refused as an invalid model response",
+    "a refused counter leaves last_call empty, so no partially accepted telemetry record survives",
+    "the refusal message names the offending field with a stable bounded text and never echoes the provider body or the offending value",
+    "absent, zero, positive, negative, fractional, boolean and string values are covered independently for both counters",
+    "redaction preserves an unavailable None counter and a zero counter without inventing a value or a marker",
+    "routing, endpoint policy, response bounds and the accepted-response telemetry fields are unchanged"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_local_model.py tests/unit/test_secret_redaction.py -q",
+    "python3 -m ruff check services/agent_runtime/workbench_agent_runtime/local_model.py tests/unit/test_local_model.py tests/unit/test_secret_redaction.py",
+    "python3 -m ruff format --check services/agent_runtime/workbench_agent_runtime/local_model.py tests/unit/test_local_model.py tests/unit/test_secret_redaction.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/agent-460-token-counter-validation.json",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused token-counter test output for absent, zero, positive, negative, fractional, boolean and string values on both counters",
+    "demonstration that the new counter tests fail against the unvalidated implementation and pass against the fix",
+    "valid positive route still records the exact provider counts alongside the unchanged telemetry fields",
+    "targeted pytest, ruff and baseline-aware build/verify.sh output"
+  ],
+  "stop_conditions": [
+    "the fix would invent a token count or convert an unknown value to zero",
+    "the fix requires disabling a counter, which is a telemetry contract change rather than value validation",
+    "an interfaces schema or libs/contracts change is required",
+    "a modification outside allowed_paths is required"
+  ]
+}

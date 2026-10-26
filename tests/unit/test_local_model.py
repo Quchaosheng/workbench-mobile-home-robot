@@ -333,8 +333,94 @@ class ResponseBoundaryTests(unittest.TestCase):
             self.assertEqual(decision.task_family, "parcel_sorting")
             self.assertEqual(provider.last_call["provider"], "ollama")
             self.assertEqual(provider.last_call["endpoint_host"], "127.0.0.1")
+            self.assertEqual(provider.last_call["input_tokens"], 32)
+            self.assertEqual(provider.last_call["output_tokens"], 12)
         finally:
             self._stop(server, thread)
+
+
+class TokenCounterTests(unittest.TestCase):
+    """Issue #460: a provider count is cost evidence, so it is a count or absent."""
+
+    VALID_ROUTE: ClassVar[dict[str, object]] = {
+        "task_family": "parcel_sorting",
+        "requires_navigation": False,
+        "requires_joint_control": False,
+        "requires_completion_claim": False,
+        "reason": "Parcels are already in the tabletop intake area.",
+    }
+    COUNTERS: ClassVar[dict[str, str]] = {"prompt_eval_count": "input_tokens", "eval_count": "output_tokens"}
+    MALFORMED: ClassVar[dict[str, tuple[object, str]]] = {
+        "negative": (-5, r"must be a non-negative integer"),
+        "fractional": (1.5, r"must be a non-negative integer"),
+        "boolean": (True, r"must be a non-negative integer"),
+        "string": ("32", r"must be a non-negative integer"),
+    }
+
+    def _route_with(self, handler) -> tuple[OllamaModelProvider, ThreadingHTTPServer, threading.Thread]:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        provider = OllamaModelProvider("test-model", endpoint=f"http://127.0.0.1:{server.server_address[1]}")
+        return provider, server, thread
+
+    def _stop(self, server: ThreadingHTTPServer, thread: threading.Thread) -> None:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    def _handler(self, **counters):
+        route = self.VALID_ROUTE
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                self.rfile.read(int(self.headers["Content-Length"]))
+                body = json.dumps({"message": {"content": json.dumps(route)}, **counters}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        return Handler
+
+    def test_absent_counters_stay_unavailable_and_never_become_zero(self) -> None:
+        provider, server, thread = self._route_with(self._handler())
+        try:
+            self.assertEqual(provider.route("Sort parcels").task_family, "parcel_sorting")
+            self.assertIsNone(provider.last_call["input_tokens"])
+            self.assertIsNone(provider.last_call["output_tokens"])
+        finally:
+            self._stop(server, thread)
+
+    def test_zero_and_positive_counters_are_recorded_exactly(self) -> None:
+        for value in (0, 7):
+            for field, key in self.COUNTERS.items():
+                with self.subTest(counter=field, value=value):
+                    provider, server, thread = self._route_with(self._handler(**{field: value}))
+                    try:
+                        self.assertEqual(provider.route("Sort parcels").task_family, "parcel_sorting")
+                        self.assertEqual(provider.last_call[key], value)
+                        self.assertIsNone(provider.last_call[next(k for k in self.COUNTERS.values() if k != key)])
+                    finally:
+                        self._stop(server, thread)
+
+    def test_malformed_counter_is_refused_without_a_partial_last_call(self) -> None:
+        for shape, (value, pattern) in self.MALFORMED.items():
+            for field in self.COUNTERS:
+                with self.subTest(counter=field, shape=shape):
+                    provider, server, thread = self._route_with(self._handler(**{field: value}))
+                    try:
+                        with self.assertRaisesRegex(LocalModelError, pattern) as caught:
+                            provider.route("Sort parcels")
+                        self.assertNotIn(str(value), str(caught.exception))
+                        self.assertLessEqual(len(str(caught.exception)), 120)
+                        self.assertEqual(provider.last_call, {})
+                    finally:
+                        self._stop(server, thread)
 
 
 if __name__ == "__main__":

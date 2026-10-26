@@ -163,6 +163,14 @@ class RedactionRuleTests(unittest.TestCase):
         self.assertEqual(details["output_tokens"], 12)
         self.assertEqual(details["token_count"], 44)
 
+    def test_unavailable_counters_stay_unavailable_through_redaction(self) -> None:
+        """Issue #460: an absent provider count is None, never zero and never a marker."""
+        payload = {"details": {"event": "model_call", "input_tokens": None, "output_tokens": 0}}
+        scrubbed, findings = redact_mapping(payload)
+        self.assertEqual(findings, 0)
+        self.assertIsNone(scrubbed["details"]["input_tokens"])
+        self.assertEqual(scrubbed["details"]["output_tokens"], 0)
+
     def test_redaction_preserves_correlation_fields_and_shape(self) -> None:
         record = {
             "timestamp": "2026-09-17T00:00:00+00:00",
