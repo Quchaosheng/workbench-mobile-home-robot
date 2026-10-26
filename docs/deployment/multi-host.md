@@ -99,6 +99,34 @@ Header 绕过来源限制。Docker 或代理网络变化后必须重新核对 Ba
 
 控制端的 `/readyz` 会检查仿真端；仿真端宕机、返回错误或事件源不合法时，控制端明确返回 `503 not_ready`。两个 Compose 项目没有共享卷，便于在不同主机运行。
 
+## 告警去抖策略
+
+告警去抖是控制机的显式配置，不再是构造函数里的隐式常量。Compose 会把下面四个变量透传给 Backend，未设置时保持
+文档化的零策略：
+
+| 环境变量 | 含义 | 默认 | 取值范围 |
+| --- | --- | --- | --- |
+| `WORKBENCH_ALERT_OPEN_AFTER_SECONDS` | 条件持续多久才开启告警 | `0` | `0..3600` |
+| `WORKBENCH_ALERT_CLEAR_AFTER_SECONDS` | 条件消失多久才关闭告警 | `0` | `0..3600` |
+| `WORKBENCH_ALERT_HISTORY_AGE_SECONDS` | 已关闭告警的保留时长 | `86400` | `0..86400` |
+| `WORKBENCH_ALERT_MAX_HISTORY` | 已关闭告警的保留条数 | `512` | `1..512` |
+
+```bash
+export WORKBENCH_ALERT_OPEN_AFTER_SECONDS=2
+export WORKBENCH_ALERT_CLEAR_AFTER_SECONDS=5
+docker compose -f deploy/multi-host/compose.controller.yaml up -d
+curl --fail http://127.0.0.1:8080/api/v1/health
+```
+
+`/api/v1/health` 和 `/api/v1/health/history` 都会返回 `monitoring_policy`，包含生效值、来源（`server-default`、
+`environment`、`command-line` 或 `caller`）和这些值的 `sha256`。两个窗口都为 0 时 `debounce` 报告
+`debounce_disabled`，因此未配置去抖的部署不会被误认为刻意选择了 0。启动日志的 `service_started.monitoring_policy`
+记录同一份内容，便于在发布证据中逐台核对。
+
+格式错误（非数字、负数、超出上界）会让 Backend 在绑定端口前退出，CLI 以状态 2 结束并指明具体变量；空字符串视为
+未设置，因为 Compose 会把未定义变量插值为空串。**具体的生产阈值属于 Operations/Safety 的审批决定**，本文档只定义
+开关与边界，不提供生产阈值。
+
 ## 同机烟测
 
 ```bash

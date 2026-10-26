@@ -28,6 +28,13 @@ services:
       CONTROLLER_BIND_ADDRESS: ${CONTROLLER_BIND_ADDRESS-127.0.0.1}
       WORKBENCH_CONTROLLER_TRUST_MODE: ${WORKBENCH_CONTROLLER_TRUST_MODE-local}
       WORKBENCH_CONTROLLER_TRUSTED_PROXY_ALLOWLIST: ${WORKBENCH_CONTROLLER_TRUSTED_PROXY_ALLOWLIST:-}
+      # Alert debounce policy for this controller. Unset stays the documented
+      # zero policy, which the API labels debounce_disabled. Set either window
+      # (seconds, 0..3600) to enable debounce; a malformed value stops startup.
+      WORKBENCH_ALERT_OPEN_AFTER_SECONDS: ${WORKBENCH_ALERT_OPEN_AFTER_SECONDS:-}
+      WORKBENCH_ALERT_CLEAR_AFTER_SECONDS: ${WORKBENCH_ALERT_CLEAR_AFTER_SECONDS:-}
+      WORKBENCH_ALERT_HISTORY_AGE_SECONDS: ${WORKBENCH_ALERT_HISTORY_AGE_SECONDS:-}
+      WORKBENCH_ALERT_MAX_HISTORY: ${WORKBENCH_ALERT_MAX_HISTORY:-}
     ports:
       - target: 8080
         published: "${CONTROLLER_PORT:-8080}"

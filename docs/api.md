@@ -24,6 +24,16 @@ faulted, stale, missing, or conflicting critical metric. Missing data is
 document returns `503 invalid_health_source` rather than a partial projection,
 and an absent document reports `unknown` with `reason: no_health_snapshot`.
 
+Both routes also carry `monitoring_policy`, the alert debounce and history policy
+that instance actually runs: `open_after_s`, `clear_after_s`, `history_age_s`,
+`max_history`, the `source` the values came from (`server-default`,
+`environment`, `command-line` or `caller`), and a stable `sha256` over those
+values. `debounce` is `debounce_disabled` only when both windows are zero, so an
+unconfigured instance is labelled instead of looking like a deliberate zero.
+The policy is validated before the socket is bound, and a value outside
+`0..3600` seconds (or `0..86400` for `history_age_s`) stops startup with a usage
+error rather than serving an alert path nobody approved.
+
 The compatibility policy is additive within v1. A future v2 must be introduced
 under `/api/v2`; aliases are not silently repointed.
 
