@@ -32,6 +32,8 @@ from .read_model import (
     UnavailableRemoteDashboardReadModel,
     project_run_list,
     project_run_timeline,
+    redact_events,
+    redacted_response,
 )
 from .remote_http import RemoteHttpError
 
@@ -510,7 +512,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             if include_timeline:
                 # Phase-tagged, sequence-ordered evidence: context events are kept
-                # but never presented as verification of anything.
+                # but never presented as verification of anything. Each payload is
+                # scrubbed by the versioned redactor inside the projection.
                 self._send_json(
                     {
                         "run_id": run_id,
@@ -521,9 +524,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     api_version=api_version,
                 )
                 return
-            payload = {"run": self.read_model.summarize(events)}
+            # The event route copies the same payloads, so it clears the same
+            # boundary: the store stays append-only while the response body
+            # carries credentials neither in an event nor in the run summary
+            # derived from one.
+            payload = {"run": redacted_response(self.read_model.summarize(events))}
             if include_events:
-                payload["events"] = events
+                payload["events"] = redact_events(events)
             self._send_json(payload, api_version=api_version)
             return
         static_path = "index.html" if route in {"", "/"} else route.lstrip("/")

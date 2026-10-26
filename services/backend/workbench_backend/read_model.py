@@ -1,9 +1,16 @@
 import json
 import threading
 import urllib.parse
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from workbench.application.redaction import (
+    REDACTION_MARKER_KEY,
+    REDACTION_RULES_VERSION,
+    redact_mapping,
+)
 
 from .expression import ALLOWED_TRANSITIONS, ExpressionState, derive_expression
 from .remote_http import RemoteHttpClient, RemoteHttpError, RemoteHttpResponseTooLarge
@@ -298,25 +305,64 @@ def timeline_phase(event_type: object) -> str:
     return "context"
 
 
+def redacted_response(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Scrub one object on its way into a response body.
+
+    This is the read API's use of the one versioned redactor
+    (``workbench.application.redaction``), not a second scheme: the same rule
+    table, the same markers, and the same marker shape every other artifact
+    carries. Identifier and correlation fields are copied through, so a scrubbed
+    item still joins to its run.
+
+    The source event store is append-only, so the input is never mutated; the
+    return value is a sanitized deep copy. When something was changed the copy
+    carries ``{"redaction": {"rules": <version>, "redacted_values": <count>}}``;
+    a clean record is returned equal to its input and grows no marker.
+    """
+    sanitized, redacted_values = redact_mapping(record)
+    if redacted_values:
+        sanitized[REDACTION_MARKER_KEY] = {"rules": REDACTION_RULES_VERSION, "redacted_values": redacted_values}
+    return sanitized
+
+
 def run_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Project a run into a sequence-ordered, phase-tagged timeline.
 
     The order is the committed ``sequence_no`` order the stream was validated in,
     so ties and recovery events are never reordered into a narrative the run did
     not have. The result is bounded by the same event ceiling as the stream.
+
+    Every response projection is an artifact boundary: a producer-controlled
+    payload may carry a credential or raw camera/prompt text, so each item's
+    payload passes through the versioned redactor before serialization. The
+    correlation fields survive unchanged, so a scrubbed item is still joinable to
+    its run, and a clean payload keeps its exact value.
     """
     return [
-        {
-            "event_id": event["event_id"],
-            "sequence_no": event["sequence_no"],
-            "event_type": event["event_type"],
-            "phase": timeline_phase(event["event_type"]),
-            "occurred_at": event["occurred_at"],
-            "payload": event["payload"],
-            "evidence_refs": list(event.get("evidence_refs", [])),
-        }
+        redacted_response(
+            {
+                "event_id": event["event_id"],
+                "sequence_no": event["sequence_no"],
+                "event_type": event["event_type"],
+                "phase": timeline_phase(event["event_type"]),
+                "occurred_at": event["occurred_at"],
+                "payload": event["payload"],
+                "evidence_refs": list(event.get("evidence_refs", [])),
+            }
+        )
         for event in events[:MAX_EVENTS_PER_RUN]
     ]
+
+
+def redact_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a scrubbed deep copy of one run's event stream for a response.
+
+    This is the ``/events`` counterpart of :func:`run_timeline`: the same
+    versioned redactor over each payload, the same rule-version marker when a
+    value was changed, and the same untouched correlation fields. The stored
+    event and its source file are never modified.
+    """
+    return [redacted_response(event) for event in events]
 
 
 def project_runs(

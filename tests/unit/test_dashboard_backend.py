@@ -15,9 +15,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services" / "backend"))
 
+from workbench.application.redaction import (
+    EVIDENCE_REDACTED,
+    REDACTED,
+    REDACTION_MARKER_KEY,
+    REDACTION_RULES_VERSION,
+)
 from workbench_backend.expression import ExpressionMachine, ExpressionState, derive_expression
 from workbench_backend.logging import StructuredLogger
-from workbench_backend.read_model import DashboardReadModel, ReadModelError
+from workbench_backend.read_model import (
+    DashboardReadModel,
+    ReadModelError,
+    redact_events,
+    redacted_response,
+    run_timeline,
+)
 from workbench_backend.server import (
     MAX_CONCURRENT_REQUESTS,
     MAX_REJECTED_REQUEST_BODY_BYTES,
@@ -396,6 +408,169 @@ class NonFiniteJsonBoundaryTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+
+class TimelineRedactionTests(unittest.TestCase):
+    """Issue #430: a response projection must not serve a payload secret verbatim.
+
+    The source event store is append-only and stays unmodified; only the copy the
+    API serializes is scrubbed by the versioned redactor. Synthetic values only.
+    """
+
+    CREDENTIAL = "sk-live-abcdefghijklmnop"
+    RAW_FRAME = "raw-frame-sentinel-pixels"
+
+    @staticmethod
+    def _event(run_id: str = "run-secret", sequence_no: int = 0, payload: dict | None = None) -> dict:
+        event = stored_event(run_id, sequence_no, "task_accepted")
+        event["payload"] = {"task_id": "task-clean", "goal": "Place the red block in the tray"}
+        if payload is not None:
+            event["payload"] = payload
+        event["evidence_refs"] = ["camera-frame-0007"]
+        return event
+
+    def test_a_timeline_payload_is_scrubbed_and_states_the_rules_that_did_it(self) -> None:
+        event = self._event(payload={"api_key": self.CREDENTIAL, "raw_frame": self.RAW_FRAME})
+        item = run_timeline([event])[0]
+
+        self.assertEqual(item["payload"]["api_key"], REDACTED)
+        self.assertEqual(item["payload"]["raw_frame"], EVIDENCE_REDACTED)
+        self.assertNotIn(self.CREDENTIAL, json.dumps(item))
+        self.assertNotIn(self.RAW_FRAME, json.dumps(item))
+        self.assertEqual(item[REDACTION_MARKER_KEY], {"rules": REDACTION_RULES_VERSION, "redacted_values": 2})
+        # Correlation survives the scrub so the item is still joinable to its run.
+        self.assertEqual(
+            (item["event_id"], item["sequence_no"], item["event_type"], item["occurred_at"], item["evidence_refs"]),
+            (event["event_id"], 0, "task_accepted", event["occurred_at"], ["camera-frame-0007"]),
+        )
+
+    def test_a_clean_payload_is_returned_unchanged_and_grows_no_marker(self) -> None:
+        event = self._event()
+        item = run_timeline([event])[0]
+
+        self.assertEqual(item["payload"], event["payload"])
+        self.assertNotIn(REDACTION_MARKER_KEY, item)
+        self.assertNotIn(REDACTION_MARKER_KEY, item["payload"])
+
+    def test_scrubbing_a_response_never_mutates_the_source_event(self) -> None:
+        event = self._event(payload={"api_key": self.CREDENTIAL, "raw_frame": self.RAW_FRAME})
+        before = json.dumps(event, sort_keys=True)
+
+        run_timeline([event])
+        redact_events([event])
+
+        self.assertEqual(json.dumps(event, sort_keys=True), before)
+        self.assertEqual(event["payload"], {"api_key": self.CREDENTIAL, "raw_frame": self.RAW_FRAME})
+
+    def test_the_events_projection_scrubs_payloads_and_survives_clean_ones(self) -> None:
+        events = [
+            self._event(payload={"api_key": self.CREDENTIAL}),
+            self._event(sequence_no=1),
+            self._event(sequence_no=2, payload={"raw_frame": self.RAW_FRAME}),
+        ]
+        sanitized = redact_events(events)
+
+        self.assertEqual(sanitized[0]["payload"]["api_key"], REDACTED)
+        self.assertEqual(sanitized[1]["payload"], events[1]["payload"])
+        self.assertNotIn(REDACTION_MARKER_KEY, sanitized[1])
+        self.assertEqual(sanitized[2]["payload"]["raw_frame"], EVIDENCE_REDACTED)
+        self.assertEqual([event["sequence_no"] for event in sanitized], [0, 1, 2])
+        self.assertEqual(sanitized[0][REDACTION_MARKER_KEY]["rules"], REDACTION_RULES_VERSION)
+        self.assertNotIn(self.CREDENTIAL, json.dumps(sanitized))
+        self.assertNotIn(self.RAW_FRAME, json.dumps(sanitized))
+
+    def test_a_run_summary_is_an_artifact_boundary_of_its_own(self) -> None:
+        summary = {"run_id": "run-secret", "goal": f"use {self.CREDENTIAL}", "task_id": "task-clean"}
+        sanitized = redacted_response(summary)
+
+        self.assertEqual(sanitized["run_id"], "run-secret")
+        self.assertEqual(sanitized["task_id"], "task-clean")
+        self.assertNotIn(self.CREDENTIAL, json.dumps(sanitized))
+        self.assertEqual(sanitized[REDACTION_MARKER_KEY]["rules"], REDACTION_RULES_VERSION)
+
+        clean = {"run_id": "run-clean", "goal": "Place the red block in the tray"}
+        self.assertEqual(redacted_response(clean), clean)
+        self.assertNotIn(REDACTION_MARKER_KEY, redacted_response(clean))
+
+
+class TimelineRedactionApiTests(unittest.TestCase):
+    """Issue #430: the HTTP body must not carry the sentinels on either route."""
+
+    CREDENTIAL = "sk-live-synthetic-abcdefghijklmnop"
+    RAW_FRAME = "raw-frame-http-sentinel"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.mkdtemp()
+        events = []
+        for sequence_no, payload in enumerate(
+            (
+                {"task_id": "task-clean", "goal": "Place the red block in the tray"},
+                {"api_key": cls.CREDENTIAL, "raw_frame": cls.RAW_FRAME},
+                {"status": "confirmed", "evidence_refs_present": True},
+            )
+        ):
+            event = stored_event("run-redaction", sequence_no, "task_accepted")
+            event["payload"] = payload
+            event["evidence_refs"] = ["camera-frame-0007"]
+            events.append(event)
+        events[2]["event_type"] = "verification"
+        events[2]["payload"] = {"status": "confirmed"}
+        Path(cls.directory, "run-redaction.jsonl").write_text(
+            "".join(json.dumps(event) + "\n" for event in events),
+            encoding="utf-8",
+        )
+        cls.source_before = Path(cls.directory, "run-redaction.jsonl").read_bytes()
+        cls.server = create_server("127.0.0.1", 0, data_dir=cls.directory)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base_url = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+
+    def read_body(self, path: str) -> tuple[int, str, dict]:
+        with urllib.request.urlopen(f"{self.base_url}{path}", timeout=2) as response:
+            body = response.read().decode("utf-8")
+            return response.status, body, json.loads(body)
+
+    def test_the_timeline_route_never_serves_the_sentinels(self) -> None:
+        status, body, payload = self.read_body("/api/v1/runs/run-redaction/timeline")
+        self.assertEqual(status, 200)
+        self.assertNotIn(self.CREDENTIAL, body)
+        self.assertNotIn(self.RAW_FRAME, body)
+
+        scrubbed = payload["timeline"][1]
+        self.assertEqual(scrubbed["payload"]["api_key"], REDACTED)
+        self.assertEqual(scrubbed["payload"]["raw_frame"], EVIDENCE_REDACTED)
+        self.assertEqual(scrubbed[REDACTION_MARKER_KEY]["rules"], REDACTION_RULES_VERSION)
+        self.assertEqual(payload["timeline"][0]["payload"]["goal"], "Place the red block in the tray")
+        self.assertNotIn(REDACTION_MARKER_KEY, payload["timeline"][0])
+        self.assertEqual([item["sequence_no"] for item in payload["timeline"]], [0, 1, 2])
+        self.assertEqual(payload["timeline"][1]["evidence_refs"], ["camera-frame-0007"])
+
+    def test_the_event_route_never_serves_the_sentinels(self) -> None:
+        status, body, payload = self.read_body("/api/v1/runs/run-redaction/events")
+        self.assertEqual(status, 200)
+        self.assertNotIn(self.CREDENTIAL, body)
+        self.assertNotIn(self.RAW_FRAME, body)
+
+        scrubbed = payload["events"][1]
+        self.assertEqual(scrubbed["payload"]["api_key"], REDACTED)
+        self.assertEqual(scrubbed[REDACTION_MARKER_KEY]["rules"], REDACTION_RULES_VERSION)
+        self.assertEqual(scrubbed["run_id"], "run-redaction")
+        self.assertEqual(payload["events"][0]["payload"]["task_id"], "task-clean")
+        self.assertNotIn(REDACTION_MARKER_KEY, payload["events"][0])
+        self.assertEqual(payload["run"]["run_id"], "run-redaction")
+        self.assertEqual(payload["run"]["event_count"], 3)
+
+    def test_the_source_event_log_is_never_rewritten(self) -> None:
+        self.read_body("/api/v1/runs/run-redaction/timeline")
+        self.read_body("/api/v1/runs/run-redaction/events")
+        self.assertEqual(Path(self.directory, "run-redaction.jsonl").read_bytes(), self.source_before)
 
 
 class LoggingTests(unittest.TestCase):
