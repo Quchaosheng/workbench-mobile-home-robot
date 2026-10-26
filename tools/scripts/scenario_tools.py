@@ -24,6 +24,10 @@ P2_FAULT_TYPES = {
     "occlusion",
     "stale_observation",
 }
+# ``none`` is the declared no-fault control the frozen distribution uses. Any other
+# undeclared name used to run as a fault-free control and report ``confirmed``, so
+# the accepted set is closed here and in the schema.
+DECLARED_FAULT_TYPES = P2_FAULT_TYPES | {"none"}
 
 SCENE_TASKS = {
     "low_light": "task-inspect-workpieces",
@@ -144,6 +148,13 @@ def validate_simulation_manifest(payload: dict[str, Any]) -> ScenarioManifest:
 
     canonical_payload = {field: payload[field] for field in canonical_fields if field in payload}
     manifest = ScenarioManifest.model_validate(canonical_payload, strict=True)
+
+    # An undeclared fault name runs as a fault-free control and the verifier then
+    # reports ``confirmed``, so it has to be refused at admission.
+    if manifest.fault_type not in DECLARED_FAULT_TYPES:
+        raise ValueError(
+            f"unsupported fault_type {manifest.fault_type!r}; expected one of {sorted(DECLARED_FAULT_TYPES)}"
+        )
 
     scene_variant = payload.get("scene_variant")
     if scene_variant is not None and (type(scene_variant) is not str or scene_variant not in P2_SCENE_VARIANTS):
