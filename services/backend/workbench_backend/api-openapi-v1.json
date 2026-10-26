@@ -16,9 +16,11 @@
     "/readyz": {
       "get": {
         "operationId": "readiness",
+        "summary": "Whether every configured read surface is usable, and whether the instance is draining.",
+        "description": "Read-only. Readiness composes the event source and the health document: a readable event source alone does not make an instance ready. A present but unusable health document withholds readiness with 503 and names the failed surface in a bounded reason token; an absent health document is the documented unknown state and does not withhold readiness by itself. The body reports exactly one of event_source_unavailable, health_source_invalid, health_source_unavailable or draining, and never echoes document contents or filesystem paths.",
         "responses": {
-          "200": {"description": "Event source is readable.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Readiness"}}}},
-          "503": {"description": "Not ready: the event source is unavailable or malformed, or the instance is draining.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+          "200": {"description": "Every configured read surface is usable and the instance is not draining.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Readiness"}}}},
+          "503": {"description": "Not ready: a configured read surface is unavailable or malformed, or the instance is draining.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Readiness"}}}}
         }
       }
     },
@@ -189,7 +191,14 @@
       "Readiness": {
         "type": "object",
         "required": ["status", "data_source"],
-        "properties": {"status": {"enum": ["ready", "not_ready"]}, "data_source": {"type": "string"}}
+        "properties": {
+          "status": {"enum": ["ready", "not_ready"]},
+          "data_source": {"type": "string"},
+          "reason": {
+            "description": "Which configured surface withheld readiness. Present only on not_ready; never contains document contents, filesystem paths or credentials.",
+            "enum": ["event_source_unavailable", "health_source_invalid", "health_source_unavailable", "draining"]
+          }
+        }
       },
       "Event": {
         "type": "object",

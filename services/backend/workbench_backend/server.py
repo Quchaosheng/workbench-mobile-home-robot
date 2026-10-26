@@ -377,6 +377,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _server_is_draining(self) -> bool:
         return bool(getattr(self.server, "draining", False))
 
+    def _health_readiness_reason(self) -> str | None:
+        """Name the monitoring surface when it cannot be trusted.
+
+        Readiness composes every configured read surface, so a present but
+        unusable health document withholds readiness even while the event read
+        model is fine. A missing document stays the documented ``unknown`` and
+        does not by itself make an otherwise valid instance unready, which is
+        what ``HealthReadModel.ready()`` already encodes.
+        """
+        health_model = getattr(self, "health_model", None)
+        if health_model is None:
+            # No monitoring surface is configured, so readiness omits nothing.
+            return None
+        try:
+            readable = health_model.ready()
+        except Exception:  # noqa: BLE001 - an unavailable probe must fail closed, never 500
+            return "health_source_unavailable"
+        return None if readable else "health_source_invalid"
+
+    def _readiness_reason(self) -> str | None:
+        """Why this instance is not ready, or ``None`` when it is.
+
+        Draining is decided first because it is a deliberate state rather than a
+        fault, so the body names the shutdown instead of the data surface.
+        """
+        if self._server_is_draining():
+            return "draining"
+        if not self.read_model.ready():
+            return "event_source_unavailable"
+        return self._health_readiness_reason()
+
     def _reject_if_draining(self) -> bool:
         """Refuse new work once shutdown began, before any read model access."""
         if not self._server_is_draining():
@@ -425,13 +456,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "ok", "service": "workbench-backend", "version": "0.2.0"})
             return
         if route == "/readyz":
-            # Readiness flips to NOT_READY as soon as shutdown begins, so a load
-            # balancer stops sending work before the process stops accepting it.
-            ready = self.read_model.ready() and not self._server_is_draining()
-            self._send_json(
-                {"status": "ready" if ready else "not_ready", "data_source": self.data_source},
-                HTTPStatus.OK if ready else HTTPStatus.SERVICE_UNAVAILABLE,
-            )
+            # Readiness composes both configured read surfaces: the event source
+            # and the health document. A load balancer stops sending work before
+            # the process stops accepting it, and the body names the surface that
+            # withheld readiness without echoing any file contents.
+            reason = self._readiness_reason()
+            payload: dict[str, Any] = {
+                "status": "not_ready" if reason else "ready",
+                "data_source": self.data_source,
+            }
+            if reason is not None:
+                payload["reason"] = reason
+            self._send_json(payload, HTTPStatus.OK if reason is None else HTTPStatus.SERVICE_UNAVAILABLE)
             return
         if route in {"/api/openapi.json", "/api/v1/openapi.json"}:
             try:
