@@ -1,0 +1,76 @@
+{
+  "issue": 464,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the monitoring alert live region tell the truth when the health view is unavailable: a failed refresh announces that monitoring is unavailable instead of the 当前没有活动告警 all-clear, a genuine empty successful alert set still announces no active alerts, a recovery announces the recovered alert state once, and the visible alert panel never contradicts what assistive technology hears.",
+  "decision_supported": "Whether an operator using a screen reader can tell a monitoring outage from a healthy robot with no active alerts, and whether the alert panel and the live region ever describe different states.",
+  "allowed_paths": [
+    "apps/dashboard/app.js",
+    "tests/unit/test_dashboard_accessibility.py",
+    "docs/task_packets/dashboard-464-monitoring-unavailable-announcement.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "Makefile",
+    "apps/dashboard/index.html",
+    "apps/dashboard/styles.css",
+    "apps/dashboard/data",
+    "apps/dashboard/vendor",
+    "docs/user-guide/monitoring.md",
+    "services/backend/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "tests/unit/test_dashboard_backend.py",
+    "tests/unit/test_dashboard_multiscenario.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/safety/**",
+    "services/backend/**",
+    "interfaces/**",
+    "libs/contracts/**"
+  ],
+  "acceptance": [
+    "an unavailable monitoring view announces monitoring unavailability, never no active alerts",
+    "a genuine empty successful alert set still announces 当前没有活动告警",
+    "a transition from unavailable back to healthy announces the recovered alert state exactly once",
+    "the unavailable announcement is not repeated on every poll because the live-region key is written before the visible panel is updated",
+    "the regression tests drive the real renderMonitoringAlerts with unavailable, empty-success, alert-present and recovery views and assert both the spoken text and the panel hidden state",
+    "the visible alert panel is no longer hidden while the live region reports a state, so the panel text and the announcement agree",
+    "the dashboard stays read-only: no button, write verb, health schema or API contract is added"
+  ],
+  "commands": [
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/unit/test_dashboard_accessibility.py",
+    "python3 -m pytest -q --no-header -p no:cacheprovider",
+    "python3 -m ruff check tests/unit/test_dashboard_accessibility.py",
+    "python3 -m ruff format --check tests/unit/test_dashboard_accessibility.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/dashboard-464-monitoring-unavailable-announcement.json",
+    "python3 tools/scripts/check_task_packet.py --all --base 3737d308de936d9d3b55de7fa6309ec59b3afd88",
+    "make dashboard-test",
+    "git diff --check",
+    "git diff"
+  ],
+  "evidence": [
+    "pytest transcript for tests/unit/test_dashboard_accessibility.py with the passed count",
+    "the live-region output and the panel hidden state for an unavailable poll, a repeated unavailable poll, a genuine empty success and an alert-present view, captured by driving the real renderMonitoringAlerts under a DOM stub",
+    "the recovery output showing 监控已恢复。当前没有活动告警 announced once and not repeated by the following poll",
+    "the pre-fix run of the same tests showing the four announcement tests fail with 当前没有活动告警 on the unavailable view",
+    "node --check output for apps/dashboard/app.js, or the recorded absence of a node gate in Makefile and tools/scripts when none is wired up",
+    "the final line of build/verify.sh and the Task Packet validation exit code"
+  ],
+  "stop_conditions": [
+    "a backend health schema, alert-clear path, API contract or error-code change is required",
+    "the fix would remove the monitoring live region or suppress every failure announcement",
+    "the unavailable state could only be announced by leaving the last healthy message in place",
+    "a modification outside allowed_paths is required",
+    "the change would introduce a write or control path, a runtime dependency or a Node package"
+  ],
+  "data_classification": "public repository source, documentation and committed scripted fixtures; no secrets, personal data or physical measurement data",
+  "model_policy": "AI may write the monitoring announcement helper, the alert renderer branch that consumes it and the regression tests; a named human Owner accepts the accessibility review of the announced text",
+  "risks_and_fallbacks": [
+    "announcing unavailability could be mistaken for an empty alert set if the sentence is vague; fallback is that the text names the unreadable state explicitly and a test forbids the no-alert sentence on an unavailable view",
+    "showing the alert panel during an outage adds a visible element to the tab; fallback is that it reuses the existing .monitoring-empty styling, states the outage, and still renders no stale alert",
+    "the recovered prefix could be spoken on every poll; fallback is the announcement key, which changes only on a state transition and leaves an unchanged poll silent",
+    "rollback is a revert of this commit; the change is confined to the monitoring announcement path and adds no API or schema surface"
+  ]
+}
