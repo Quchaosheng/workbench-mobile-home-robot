@@ -1,48 +1,179 @@
 name: container-full-stack
 
+# Issue #432: `static-and-cpu-image` is one of the required checks declared in
+# .github/rulesets/main-protection.json, so the workflow that produces it has to
+# be created for every pull request that targets `main`. A trigger `paths:`
+# filter does the opposite: GitHub creates no run at all when the filter does not
+# match, so a documentation-only, tools-only, dashboard-only or ruleset-only pull
+# request never reported the required context. It was not a skipped job; the run
+# did not exist.
+#
+# The fifteen filters now live inside the workflow as the `IMAGE_PATH_PATTERNS`
+# data of the always-running `static-image-applicability` job, which records an
+# explicit applicable/not-applicable result and the reason for it. Do not put a
+# `paths:` or `paths-ignore:` filter back here: it needs owner review and a Task
+# Packet, because it silently removes a required check from release evidence.
+
 on:
   pull_request:
-    paths:
-      - Dockerfile
-      - compose.yaml
-      - requirements-mujoco.txt
-      - requirements*.txt
-      - pyproject.toml
-      - Makefile
-      - .dockerignore
-      - libs/**
-      - services/**
-      - firmware/**
-      - robot/**
-      - docker/**
-      - .devcontainer/**
-      - tests/unit/test_container_*.py
-      - .github/workflows/container-full-stack.yml
   push:
     branches: [main]
-    paths:
-      - Dockerfile
-      - compose.yaml
-      - requirements-mujoco.txt
-      - requirements*.txt
-      - pyproject.toml
-      - Makefile
-      - .dockerignore
-      - libs/**
-      - services/**
-      - firmware/**
-      - robot/**
-      - docker/**
-      - .devcontainer/**
-      - tests/unit/test_container_*.py
-      - .github/workflows/container-full-stack.yml
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  static-and-cpu-image:
+  # Issue #432: the always-running decision job. It answers "does the full-stack
+  # image policy select any path this change touched?" and records the answer.
+  # It is deliberately not path-filtered: it must run on every pull request so
+  # the required context below can always report a result.
+  static-image-applicability:
+    runs-on: ubuntu-24.04
+    outputs:
+      applicable: ${{ steps.decide.outputs.applicable }}
+      reason: ${{ steps.decide.outputs.reason }}
+    env:
+      # The fifteen trigger filters from before Issue #432, verbatim, as data.
+      # `**` crosses directories and `*` does not, matching GitHub's `paths:`.
+      IMAGE_PATH_PATTERNS: |
+        Dockerfile
+        compose.yaml
+        requirements-mujoco.txt
+        requirements*.txt
+        pyproject.toml
+        Makefile
+        .dockerignore
+        libs/**
+        services/**
+        firmware/**
+        robot/**
+        docker/**
+        .devcontainer/**
+        tests/unit/test_container_*.py
+        .github/workflows/container-full-stack.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: decide
+        name: Decide whether the full-stack image applies to this change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+
+          ZERO = "0" * 40
+
+
+          def revisions():
+              """Return (base, head) for this run, or None when there is no comparison."""
+              event = os.environ.get("EVENT_NAME", "")
+              if event == "pull_request":
+                  base = os.environ.get("PULL_REQUEST_BASE", "")
+                  head = os.environ.get("PULL_REQUEST_HEAD", "")
+              elif event == "push":
+                  base = os.environ.get("PUSH_BEFORE", "")
+                  head = os.environ.get("PUSH_AFTER", "")
+              else:
+                  return None
+              if not re.fullmatch(r"[0-9a-f]{40}", base or "") or not re.fullmatch(r"[0-9a-f]{40}", head or ""):
+                  return None
+              # A brand-new branch has no predecessor; there is nothing to compare.
+              if base == ZERO:
+                  return None
+              return base, head
+
+
+          def changed_paths(base, head):
+              """Paths the pull request or push introduces, relative to the merge base."""
+              diff = subprocess.run(
+                  ["git", "diff", "--name-only", f"{base}...{head}"],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              if diff.returncode != 0:
+                  raise SystemExit("cannot list the changed paths: " + diff.stderr.strip())
+              return [line for line in diff.stdout.splitlines() if line]
+
+
+          def pattern_regex(pattern):
+              """Translate one `paths:` pattern the way GitHub matches it."""
+              out = []
+              index = 0
+              while index < len(pattern):
+                  if pattern.startswith("**", index):
+                      out.append(".*")
+                      index += 2
+                  elif pattern[index] == "*":
+                      out.append("[^/]*")
+                      index += 1
+                  elif pattern[index] == "?":
+                      out.append("[^/]")
+                      index += 1
+                  else:
+                      out.append(re.escape(pattern[index]))
+                      index += 1
+              return "^" + "".join(out) + "$"
+
+
+          def emit(applicable, reason):
+              summary = "applicable=" + ("true" if applicable else "false")
+              output = os.environ.get("GITHUB_OUTPUT")
+              if not output:
+                  raise SystemExit("GITHUB_OUTPUT is not set; the decision cannot be recorded, so it is not a pass")
+              with open(output, "a", encoding="utf-8") as handle:
+                  handle.write(summary + "\n")
+                  handle.write("reason=" + " ".join(reason.split())[:900] + "\n")
+              print(summary + " reason=" + reason)
+              sys.exit(0)
+
+
+          patterns = [line.strip() for line in os.environ.get("IMAGE_PATH_PATTERNS", "").splitlines() if line.strip()]
+          # An empty policy would classify every change as irrelevant. Treat the
+          # missing policy as a failure rather than as a not-applicable result.
+          if not patterns:
+              raise SystemExit("IMAGE_PATH_PATTERNS is empty; a missing policy is a failure, not a not-applicable")
+
+          revisions_to_compare = revisions()
+          if revisions_to_compare is None:
+              emit(True, "no comparable base revision (manual run or new branch), so the image is built")
+          base, head = revisions_to_compare
+          paths = changed_paths(base, head)
+          matched = sorted({path for path in paths for pattern in patterns if re.match(pattern_regex(pattern), path)})
+          if matched:
+              emit(
+                  True,
+                  str(len(matched))
+                  + " changed path(s) selected by the image path policy: "
+                  + ", ".join(matched[:10]),
+              )
+          emit(
+              False,
+              "none of the "
+              + str(len(patterns))
+              + " image path patterns match the "
+              + str(len(paths))
+              + " changed path(s) of "
+              + head[:12],
+          )
+          PY
+
+  # The expensive job. It keeps the whole build, CPU smoke, SBOM and scan on
+  # image-relevant changes only; it no longer owns the required check name,
+  # because a job that is skipped never reports a usable result.
+  static-image-build:
+    needs: static-image-applicability
+    if: needs.static-image-applicability.outputs.applicable == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -107,3 +238,71 @@ jobs:
             workbench-1-full-stack.spdx.json
             workbench-1-grype.json
           if-no-files-found: warn
+
+  # Issue #432: `static-and-cpu-image` is the name declared as a required check
+  # in .github/rulesets/main-protection.json, so this job must always run and
+  # always report. It reports one of three documented outcomes:
+  #
+  #   * success         -- the build job ran and every expensive step passed;
+  #   * failure         -- the build job ran and a step failed, or the
+  #                        applicability decision did not run at all;
+  #   * not-applicable  -- the decision ran and selected no changed path.
+  #
+  # "Skipped" is never passed through: `if: always()` makes this job run even
+  # when the build is skipped, which is exactly the case the old trigger path
+  # filter hid by never creating the workflow at all. "not-applicable" is a
+  # truthful gate result, not a passing image check: the release checker still
+  # refuses anything other than `success` on a tagged commit, so a release that
+  # touches the image must carry a real build. It also exits 0 so the required
+  # check turns green for an irrelevant change instead of blocking the merge.
+  static-and-cpu-image:
+    needs:
+      - static-image-applicability
+      - static-image-build
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report the required check conclusion
+        env:
+          BUILD_RESULT: ${{ needs.static-image-build.result }}
+          APPLY_RESULT: ${{ needs.static-image-applicability.result }}
+          APPLY_REASON: ${{ needs.static-image-applicability.outputs.reason }}
+        run: |
+          case "$BUILD_RESULT" in
+            success)
+              conclusion="success"
+              detail="the full-stack image was built and the CPU smoke, SBOM and vulnerability scan passed"
+              ;;
+            failure)
+              conclusion="failure"
+              detail="the full-stack image job ran and reported a failing step"
+              ;;
+            skipped)
+              if [ "$APPLY_RESULT" = "success" ]; then
+                conclusion="not-applicable"
+                detail="${APPLY_REASON:-no changed path is selected by the image path policy}"
+              else
+                conclusion="failure"
+                detail="the applicability decision did not run ($APPLY_RESULT), so the image cannot be shown to be irrelevant"
+              fi
+              ;;
+            cancelled)
+              conclusion="cancelled"
+              detail="the full-stack image job was cancelled, which proves nothing"
+              ;;
+            *)
+              conclusion="failure"
+              detail="the full-stack image job reported no usable result ($BUILD_RESULT)"
+              ;;
+          esac
+          {
+            echo "### static-and-cpu-image"
+            echo ""
+            echo "- conclusion: \`$conclusion\`"
+            echo "- build job result: \`$BUILD_RESULT\`"
+            echo "- $detail"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "static-and-cpu-image: $conclusion ($detail)"
+          if [ "$conclusion" != "success" ] && [ "$conclusion" != "not-applicable" ]; then
+            exit 1
+          fi
