@@ -18,7 +18,10 @@
     "mkdocs.yml",
     "README.md",
     "docs/qa/killed-run-staging-residue.md",
-    "tests/unit/test_sim_cli.py"
+    "tests/unit/test_sim_cli.py",
+    "docs/security/functional-safety-boundary.md",
+    "docs/deployment/hazard-analysis-cancel-then-stop.md",
+    "tests/unit/test_safety_docs_resolve.py"
   ],
   "read_only_paths": [
     "interfaces/**",
@@ -38,7 +41,8 @@
     "the generated page is byte-identical to the document the register generates",
     "an unresolvable scenario is refused before a runner starts and leaves no output directory",
     "existing scenario, controller and CAN tests keep passing",
-    "a stale `.partial` staging directory from a killed run is removed by the next run, and a fresh one is left alone"
+    "a stale `.partial` staging directory from a killed run is removed by the next run, and a fresh one is left alone",
+    "no page in this slice claims a safety function, performance level or certification; the sayable column of the boundary page is gated"
   ],
   "commands": [
     "python -m pytest tests/unit/test_assurance_matrix.py tests/unit/test_sim_cli.py -v",

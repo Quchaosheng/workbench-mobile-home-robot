@@ -56,10 +56,10 @@ INVARIANT_STATUSES: tuple[str, ...] = ("ENFORCED", "NOT_IMPLEMENTED")
 COVERAGE_CLASSES: tuple[str, ...] = ("SIMULATED", "HARDWARE_TESTED", "NOT_EXECUTED")
 VERDICTS: tuple[str, ...] = ("confirmed", "refuted", "insufficient_evidence")
 
-INVARIANT_KEYS = frozenset({"id", "statement", "boundary", "enforced_by", "evidence", "gap", "status"})
-INVARIANT_REQUIRED = frozenset({"id", "statement", "boundary", "status"})
+INVARIANT_KEYS = frozenset({"id", "statement", "runtime_boundary", "enforced_by", "evidence", "gap", "status"})
+INVARIANT_REQUIRED = frozenset({"id", "statement", "runtime_boundary", "status"})
 INVARIANTS_DOC_KEYS = frozenset(
-    {"invariants_version", "status", "issue", "decision_record", "verdicts", "statuses", "invariants"}
+    {"invariants_version", "status", "issue", "decision_record", "verdicts", "statuses", "invariants", "claim_scope"}
 )
 
 ROW_KEYS = frozenset(
@@ -509,7 +509,7 @@ def rows_to_markdown(documents: AssuranceDocuments) -> str:
         "",
         "## Invariants",
         "",
-        "| ID | Statement | Boundary | Status | Enforced at | Evidence |",
+        "| ID | Statement | Runtime boundary | Status | Enforced at | Evidence |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
     for entry in sorted(invariants, key=lambda item: item["id"]):
@@ -519,7 +519,7 @@ def rows_to_markdown(documents: AssuranceDocuments) -> str:
                 [
                     f"`{entry['id']}`",
                     entry["statement"],
-                    entry["boundary"],
+                    entry["runtime_boundary"],
                     entry["status"],
                     f"`{entry['enforced_by']}`" if entry.get("enforced_by") else f"gap: {entry.get('gap', '-')}",
                     "<br>".join(f"`{item}`" for item in entry.get("evidence") or []) or "-",
@@ -582,6 +582,10 @@ def generated_document(documents: AssuranceDocuments) -> str:
             "It does **not** claim a functional-safety certification. No row here is a SIL, ASIL or",
             "ISO 26262 claim, and no row is physical evidence: every current row is `SIMULATED`.",
             "A scripted or unit-level fault proves the rule, not the machine.",
+            "",
+            "The position against ISO 12100, ISO 13849-1, ISO 13849-2 and ISO 13482 is recorded",
+            "line by line in `docs/security/functional-safety-boundary.md`. Nothing in this",
+            "register is a safety function and nothing here carries a performance level.",
             "",
             "## How to read a row",
             "",

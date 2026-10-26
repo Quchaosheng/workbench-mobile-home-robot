@@ -34,6 +34,7 @@ nav:
   - Release provenance: security/release-provenance.md
   - Branch protection: security/branch-protection.md
   - Reproducible Python lock: security/reproducible-python-lock.md
+  - Standard positioning: security/functional-safety-boundary.md
   - System architecture: architecture/system.md
   - Scenario registry contract: decisions/ADR-0006-scenario-registry-contract.md
   - Scenario capability matrix: architecture/scenario-capability-matrix.md
@@ -54,6 +55,7 @@ nav:
       - Wiring: hardware/wiring.md
       - Bring-up and debugging: hardware/bringup.md
   - Event evidence recovery: deployment/event-evidence-recovery.md
+  - Hazard analysis (cancel during motion): deployment/hazard-analysis-cancel-then-stop.md
   - Data governance: deployment/data-governance.md
   - Multi-scenario readiness: evaluation/multi-scenario-readiness.md
   - Phase gates: releases/phase-gates.md
