@@ -61,13 +61,19 @@ class FaultType(StrEnum):
 class RuntimeFault(StrEnum):
     """Faults on the runtime boundary rather than in a scenario manifest.
 
-    Neither of these belongs in a scenario manifest: a lost link and a process
-    restart are conditions of the runtime, not properties of one scenario. They
-    are declared here so the coverage report can account for them too.
+    None of these belongs in a scenario manifest: a lost link, a process restart or
+    a CAN ACK that never arrives are conditions of the runtime and the bus, not
+    properties of one scenario. They are declared here so the coverage report can
+    account for them too.
     """
 
     LINK_LOSS = "link_loss"
     PROCESS_RESTART = "process_restart"
+    # CAN transport faults. They are conditions of the bus, not of one scenario,
+    # so they live here rather than in a scenario manifest's fault_type.
+    ACK_TIMEOUT = "ack_timeout"
+    STOP_TIMEOUT = "stop_timeout"
+    STOP_REJECTED = "stop_rejected"
 
 
 class SafeBehavior(StrEnum):
@@ -179,6 +185,27 @@ FAULT_SPECS: tuple[FaultSpec, ...] = (
         expected_safe_behaviour=SafeBehavior.INVALIDATE_RUN_CORRELATION,
         evidence_requirement="the gate's RESTART_INVALIDATED_RUN reason for every later step of that run",
         declared_by="runtime boundary (#151)",
+    ),
+    FaultSpec(
+        RuntimeFault.ACK_TIMEOUT,
+        trigger="the device never acknowledges a command and the retry budget is exhausted",
+        expected_safe_behaviour=SafeBehavior.MCU_SAFE_STATE,
+        evidence_requirement="CanDiagnosticCode.ACK_TIMEOUT and a bounded safe-stop with its stop correlation",
+        declared_by="libs/hardware/workbench/hardware/can_driver_safe.py",
+    ),
+    FaultSpec(
+        RuntimeFault.STOP_TIMEOUT,
+        trigger="a STOP is sent and no STOP ACK arrives inside the stop timeout",
+        expected_safe_behaviour=SafeBehavior.MCU_SAFE_STATE,
+        evidence_requirement="CanDiagnosticCode.STOP_TIMEOUT and the unfailed link state reported separately",
+        declared_by="libs/hardware/workbench/hardware/can_driver_safe.py",
+    ),
+    FaultSpec(
+        RuntimeFault.STOP_REJECTED,
+        trigger="the device answers a STOP with a rejection instead of a STOP ACK",
+        expected_safe_behaviour=SafeBehavior.MCU_SAFE_STATE,
+        evidence_requirement="CanDiagnosticCode.STOP_REJECTED and the retained rejected STOP correlation",
+        declared_by="libs/hardware/workbench/hardware/can_driver_safe.py",
     ),
 )
 
