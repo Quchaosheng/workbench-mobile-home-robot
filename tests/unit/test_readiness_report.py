@@ -17,7 +17,9 @@ start a simulator or claim a physical validation.
 
 from __future__ import annotations
 
+import itertools
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -32,17 +34,24 @@ sys.path[:0] = [
     str(ROOT / "services/world_model"),
 ]
 
+import readiness_report as rr_module
 from readiness_report import (
     AUTHORITY,
     EVIDENCE_CLASSES,
     GENERATED_BY,
+    LEFT_UNCHANGED,
+    PUBLISHED,
     README_BEGIN,
     README_END,
     REPORT_VERSION,
+    GeneratedArtifactSetError,
     apply_readme_block,
     build_report,
+    find_staging_residue,
     markdown_page,
     readme_block,
+    render_outputs,
+    stabilize_volatile,
     write_outputs,
 )
 
@@ -359,11 +368,330 @@ def test_write_outputs_is_the_only_writer(tmp_path: Path):
         page_path=page_path,
         readme_path=readme_path,
         readme_zh_path=zh_path,
+        locks_dir=tmp_path / "locks",
     )
     assert json.loads(report_path.read_text(encoding="utf-8"))["report_version"] == REPORT_VERSION
     assert page_path.read_text(encoding="utf-8") == markdown_page(report)
     assert README_BEGIN in readme_path.read_text(encoding="utf-8")
     assert README_BEGIN in zh_path.read_text(encoding="utf-8")
+
+
+# --- the four artifacts publish as one set (Issue #465) ----------------------
+
+
+def _outputs(tmp_path: Path) -> dict:
+    """A complete pre-run artifact set to fail against."""
+
+    readme_path = tmp_path / "README.md"
+    readme_path.write_text("# Title\n\nintroduction\n", encoding="utf-8")
+    zh_path = tmp_path / "README.zh-CN.md"
+    zh_path.write_text("# 标题\n", encoding="utf-8")
+    return {
+        "report_path": tmp_path / "docs" / "report.json",
+        "page_path": tmp_path / "docs" / "page.md",
+        "readme_path": readme_path,
+        "readme_zh_path": zh_path,
+        "locks_dir": tmp_path / "locks",
+    }
+
+
+def _snapshot(paths: list[Path]) -> dict[Path, bytes]:
+    return {path: path.read_bytes() for path in paths}
+
+
+def test_a_successful_run_publishes_every_target_as_one_set(tmp_path: Path):
+    outputs = _outputs(tmp_path)
+    report = build_report()
+    outcomes = write_outputs(report, **outputs)
+
+    assert {outcome.action for outcome in outcomes} == {PUBLISHED}
+    assert {outcome.target for outcome in outcomes} == {
+        outputs["report_path"],
+        outputs["page_path"],
+        outputs["readme_path"],
+        outputs["readme_zh_path"],
+    }
+    assert (
+        json.loads(outputs["report_path"].read_text(encoding="utf-8"))["configuration_hash"]
+        == report["configuration_hash"]
+    )
+    assert outputs["page_path"].read_text(encoding="utf-8") == markdown_page(report)
+    expected_readme = apply_readme_block("# Title\n\nintroduction\n", readme_block(report))
+    assert outputs["readme_path"].read_text(encoding="utf-8") == expected_readme
+    assert find_staging_residue("readiness", [tmp_path, tmp_path / "docs"]) == []
+
+
+def test_a_mid_write_failure_leaves_every_target_byte_identical(tmp_path: Path):
+    """The Issue #465 regression: die after the first write, keep the whole set."""
+
+    outputs = _outputs(tmp_path)
+    write_outputs(build_report(), **outputs)
+    targets = [outputs["report_path"], outputs["page_path"], outputs["readme_path"], outputs["readme_zh_path"]]
+    before = _snapshot(targets)
+
+    changed = build_report()
+    changed["limitations"] = ["this generation must never reach the disk"]
+
+    def die_after_first_write(written: int) -> None:
+        assert written == 1
+        raise OSError("injected failure after the first staged write")
+
+    with pytest.raises(GeneratedArtifactSetError) as failure:
+        write_outputs(changed, on_staged=die_after_first_write, **outputs)
+
+    assert failure.value.artifact_set == "readiness"
+    assert "injected failure after the first staged write" in failure.value.reason
+    assert _snapshot(targets) == before
+    assert find_staging_residue("readiness", [tmp_path, tmp_path / "docs"]) == []
+
+
+def test_a_failure_before_anything_is_written_leaves_no_target(tmp_path: Path):
+    outputs = _outputs(tmp_path)
+    before = _snapshot([outputs["readme_path"], outputs["readme_zh_path"]])
+
+    def die_immediately(written: int) -> None:
+        raise OSError(f"injected failure after {written} staged write(s)")
+
+    with pytest.raises(GeneratedArtifactSetError):
+        write_outputs(build_report(), on_staged=die_immediately, **outputs)
+
+    assert not outputs["report_path"].exists()
+    assert not outputs["page_path"].exists()
+    assert _snapshot([outputs["readme_path"], outputs["readme_zh_path"]]) == before
+
+
+def test_the_cli_publishes_the_set_in_one_step(tmp_path: Path):
+    outputs = _outputs(tmp_path)
+    outputs["report_path"].parent.mkdir(parents=True)
+    result = _run(
+        [
+            str(GENERATOR),
+            "--output",
+            str(outputs["report_path"]),
+            "--page",
+            str(outputs["page_path"]),
+            "--readme",
+            str(outputs["readme_path"]),
+            "--readme-zh",
+            str(outputs["readme_zh_path"]),
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    assert "4 of 4 artifact(s) published as one set" in result.stdout
+
+
+def test_a_failure_during_the_renames_restores_the_targets_already_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Renaming is the last step; a failure there still leaves the set intact."""
+
+    outputs = _outputs(tmp_path)
+    write_outputs(build_report(), **outputs)
+    targets = [outputs["report_path"], outputs["page_path"], outputs["readme_path"], outputs["readme_zh_path"]]
+    before = _snapshot(targets)
+
+    changed = build_report()
+    changed["limitations"] = ["this generation must not survive a failed rename"]
+    real_replace = os.replace
+    calls = {"count": 0}
+
+    def fail_second_rename(source, destination):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise OSError("injected failure during publication")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(rr_module.os, "replace", fail_second_rename)
+    with pytest.raises(GeneratedArtifactSetError) as failure:
+        write_outputs(changed, **outputs)
+
+    assert "injected failure during publication" in failure.value.reason
+    assert _snapshot(targets) == before
+    assert find_staging_residue("readiness", [tmp_path, tmp_path / "docs"]) == []
+
+
+def test_a_staging_failure_publishes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The disable path: refuse generation, never fall back to sequential writes."""
+
+    outputs = _outputs(tmp_path)
+    before = _snapshot([outputs["readme_path"], outputs["readme_zh_path"]])
+
+    def refuse(*_args, **_kwargs):
+        raise OSError("the staging area is not writable")
+
+    monkeypatch.setattr(rr_module.tempfile, "mkdtemp", refuse)
+    with pytest.raises(GeneratedArtifactSetError) as failure:
+        write_outputs(build_report(), **outputs)
+
+    assert "cannot create a staging directory" in failure.value.reason
+    assert not outputs["report_path"].exists()
+    assert not outputs["page_path"].exists()
+    assert _snapshot([outputs["readme_path"], outputs["readme_zh_path"]]) == before
+
+
+def test_the_gate_reports_incomplete_rather_than_a_torn_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A named failure keeps every target byte-identical, so the gate still passes."""
+
+    outputs = _outputs(tmp_path)
+    write_outputs(build_report(), **outputs)
+    targets = [outputs["report_path"], outputs["page_path"], outputs["readme_path"], outputs["readme_zh_path"]]
+    before = _snapshot(targets)
+
+    def die(written: int) -> None:
+        raise OSError(f"injected failure after {written} staged write(s)")
+
+    with pytest.raises(GeneratedArtifactSetError):
+        write_outputs(build_report(), on_staged=die, **outputs)
+
+    assert _snapshot(targets) == before
+
+
+def test_a_successful_run_produces_the_bytes_the_sequential_writer_produced(tmp_path: Path):
+    """Issue #465: only publication is atomic; the content must not change.
+
+    The pre-change writer spliced the same blocks into the same files with
+    sequential writes. Replaying that splice here proves the atomic path changed
+    *when* the bytes land, not *which* bytes they are.
+    """
+
+    outputs = _outputs(tmp_path)
+    report = build_report()
+    before = outputs["readme_path"].read_text(encoding="utf-8")
+    before_zh = outputs["readme_zh_path"].read_text(encoding="utf-8")
+
+    write_outputs(report, **outputs)
+
+    assert outputs["report_path"].read_text(encoding="utf-8") == json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    assert outputs["page_path"].read_text(encoding="utf-8") == markdown_page(report)
+    assert outputs["readme_path"].read_text(encoding="utf-8") == apply_readme_block(before, readme_block(report))
+    assert outputs["readme_zh_path"].read_text(encoding="utf-8") == apply_readme_block(
+        before_zh, readme_block(report, language="zh")
+    )
+
+
+def test_a_generation_with_no_change_does_not_rewrite_tracked_artifacts(tmp_path: Path):
+    """Regenerating an up-to-date checkout must not dirty the evidence files."""
+
+    outputs = _outputs(tmp_path)
+    first = write_outputs(build_report(), **outputs)
+    targets = [outcome.target for outcome in first]
+    before = _snapshot(targets)
+
+    second = write_outputs(build_report(), **outputs)
+
+    assert {outcome.action for outcome in second} == {LEFT_UNCHANGED}
+    assert _snapshot(targets) == before
+
+
+def test_a_changed_field_republishes_the_set_with_fresh_stamps(tmp_path: Path):
+    outputs = _outputs(tmp_path)
+    write_outputs(build_report(), **outputs)
+    changed = build_report(generated_at="2026-01-01T00:00:00+00:00", source_commit="0" * 40)
+    changed["limitations"] = ["a changed input"]
+
+    outcomes = write_outputs(changed, **outputs)
+
+    published = json.loads(outputs["report_path"].read_text(encoding="utf-8"))
+    assert published["limitations"] == ["a changed input"]
+    assert published["generated_at"] == "2026-01-01T00:00:00+00:00"
+    # The page carries the revision, so it moves with the report; the README
+    # blocks state no stamps, so their bytes do not change.
+    by_target = {outcome.target: outcome.action for outcome in outcomes}
+    assert by_target[outputs["report_path"]] == PUBLISHED
+    assert by_target[outputs["page_path"]] == PUBLISHED
+    assert by_target[outputs["readme_path"]] == LEFT_UNCHANGED
+
+
+def test_stabilize_volatile_keeps_the_stamps_only_when_nothing_else_changed():
+    committed = {"generated_at": "old", "source_commit": "old", "summary": {"a": 1}}
+    same = {"generated_at": "new", "source_commit": "new", "summary": {"a": 1}}
+    assert stabilize_volatile(same, committed) == committed
+    changed = {"generated_at": "new", "source_commit": "new", "summary": {"a": 2}}
+    assert stabilize_volatile(changed, committed) == changed
+    assert stabilize_volatile(changed, None) == changed
+
+
+def test_render_outputs_reads_the_readme_and_never_writes_it(tmp_path: Path):
+    outputs = _outputs(tmp_path)
+    before = _snapshot([outputs["readme_path"], outputs["readme_zh_path"]])
+    artifacts = render_outputs(build_report(), **{k: v for k, v in outputs.items() if k != "locks_dir"})
+    assert len(artifacts) == 4
+    assert _snapshot([outputs["readme_path"], outputs["readme_zh_path"]]) == before
+    assert not outputs["report_path"].exists()
+    assert not outputs["page_path"].exists()
+
+
+def test_concurrent_generation_of_the_same_targets_is_serialised(tmp_path: Path):
+    """Issue #465: no two generations may publish the same set at once.
+
+    Three processes generate the same four targets. Each records when it entered
+    and left the publish step; if the lock works those intervals never overlap,
+    so no set can be interleaved with another.
+    """
+
+    outputs = _outputs(tmp_path)
+    outputs["report_path"].parent.mkdir(parents=True)
+    log = tmp_path / "publish.log"
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        "import sys, time\n"
+        f"sys.path[:0] = [{str(ROOT / 'tools/scripts')!r}, {str(ROOT / 'libs/kernel')!r}, "
+        f"{str(ROOT / 'libs/contracts')!r}, {str(ROOT / 'services/world_model')!r}]\n"
+        "from pathlib import Path\n"
+        "import readiness_report as rr\n"
+        "log, output_dir, readme, readme_zh, locks = (Path(value) for value in sys.argv[1:6])\n"
+        "original = rr.publish_artifact_set\n"
+        "def traced(name, artifacts, *, on_staged=None):\n"
+        "    started = time.monotonic_ns()\n"
+        "    time.sleep(0.05)\n"
+        "    outcomes = original(name, artifacts, on_staged=on_staged)\n"
+        "    with log.open('a', encoding='utf-8') as stream:\n"
+        "        stream.write(f'{started} {time.monotonic_ns()}\\n')\n"
+        "    return outcomes\n"
+        "rr.publish_artifact_set = traced\n"
+        "rr.write_outputs(rr.build_report(), report_path=output_dir / 'report.json',\n"
+        "    page_path=output_dir / 'page.md', readme_path=readme, readme_zh_path=readme_zh,\n"
+        "    locks_dir=locks)\n",
+        encoding="utf-8",
+    )
+    processes = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(worker),
+                str(log),
+                str(outputs["report_path"].parent),
+                str(outputs["readme_path"]),
+                str(outputs["readme_zh_path"]),
+                str(outputs["locks_dir"]),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(3)
+    ]
+    for process in processes:
+        _, stderr = process.communicate(timeout=120)
+        assert process.returncode == 0, stderr
+
+    intervals = sorted(tuple(int(value) for value in line.split()) for line in log.read_text().splitlines())
+    assert len(intervals) == 3
+    for (_, previous_end), (next_start, _) in itertools.pairwise(intervals):
+        assert previous_end <= next_start, f"two generations published at once: {intervals}"
+
+    assert (outputs["readme_path"].read_text(encoding="utf-8")).count(README_BEGIN) == 1
+    assert json.loads(outputs["report_path"].read_text(encoding="utf-8"))["report_version"] == REPORT_VERSION
+    assert find_staging_residue("readiness", [tmp_path, outputs["report_path"].parent]) == []
+
+
+def test_the_gate_refuses_a_checkout_left_with_staging_residue(tmp_path: Path):
+    residue = tmp_path / ".readiness.abc123.staging"
+    residue.mkdir()
+    (residue / "00-report.json").write_text("{}", encoding="utf-8")
+    result = _run([str(GATE), "--report", str(COMMITTED), "--page", str(tmp_path / "page.md")])
+    assert result.returncode == 1
+    assert "staging residue" in result.stderr
 
 
 def test_generator_writes_nothing_outside_its_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
