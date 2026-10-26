@@ -14,6 +14,8 @@ It is now an adapter. All storage, transaction and conflict handling belongs to
   so an event is checked before it can reach a database;
 * renders an event to canonical JSON, so two structurally equal events compare
   equal regardless of key order;
+* refuses an append that would take a run past the read model's event ceiling,
+  so a durable append is always a stream the Dashboard can serve;
 * translates the Kernel store's ``EventStoreError`` into the typed
   ``EventStoreIntegrityError`` that World Model callers already catch.
 
@@ -31,6 +33,20 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
+# The append and read boundaries must agree on one ceiling, so the number is
+# imported rather than restated: a second copy is how the two drifted apart in
+# Issue #441, where the writer accepted a stream the reader refused.
+#
+# The Backend package lives in the ``services/backend`` source tree, which is on
+# the path in every runtime entry point but not necessarily when this module is
+# imported directly in a focused test. The path is derived from this file rather
+# than from the working directory, so the shared declaration resolves the same
+# way from a script, a container entry point and a test subprocess.
+_BACKEND_ROOT = Path(__file__).resolve().parents[2] / "backend"
+if _BACKEND_ROOT.is_dir() and str(_BACKEND_ROOT) not in sys.path:
+    sys.path.append(str(_BACKEND_ROOT))
+
+from workbench_backend.read_model import MAX_EVENTS_PER_RUN
 from workbench_contracts import WorldEvent, WorldEventType
 
 from .event_payloads import normalize_world_event
@@ -142,6 +158,23 @@ class SQLiteEventStore:
 
         return normalize_world_event(WorldEvent.model_validate_json(event_json))
 
+    def _refuse_stream_overflow(self, run_id: str) -> None:
+        """Refuse an append the read model would reject as an oversized stream.
+
+        The ceiling is the reader's own ``MAX_EVENTS_PER_RUN``, imported rather
+        than restated. It is checked before the event becomes durable, so a
+        producer learns about the limit at the append instead of when a Dashboard
+        or evaluation read refuses the whole run. Nothing is truncated or
+        dropped: the run keeps every event it already had.
+        """
+
+        count = len(self._read(lambda: self._store.raw_run_rows(run_id)))
+        if count >= MAX_EVENTS_PER_RUN:
+            raise EventStoreIntegrityError(
+                f"run {run_id!r} already holds {count} events, the read ceiling of {MAX_EVENTS_PER_RUN}; "
+                "refusing the append that would exceed it"
+            )
+
     def append(self, event: WorldEvent) -> None:
         """Append one event, idempotently when the retry is exact."""
 
@@ -161,6 +194,7 @@ class SQLiteEventStore:
             raise EventStoreIntegrityError(
                 f"event_id {event.event_id!r} already exists with different canonical event content"
             )
+        self._refuse_stream_overflow(event.run_id)
         try:
             self._store.append(json.loads(event_json))
         except EventStoreError as error:
@@ -217,6 +251,9 @@ class SQLiteEventStore:
             return record
 
         def build(sequence_no: int) -> dict[str, Any]:
+            # Checked inside the allocation transaction, so two writers racing
+            # for the last slot cannot both pass a ceiling check made outside it.
+            self._refuse_stream_overflow(run_id)
             event = WorldEvent(
                 event_id=event_id,
                 run_id=run_id,
