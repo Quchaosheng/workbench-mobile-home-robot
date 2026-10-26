@@ -21,7 +21,18 @@
     "tests/unit/test_sim_cli.py",
     "docs/security/functional-safety-boundary.md",
     "docs/deployment/hazard-analysis-cancel-then-stop.md",
-    "tests/unit/test_safety_docs_resolve.py"
+    "tests/unit/test_safety_docs_resolve.py",
+    "apps/dashboard/assurance.html",
+    "apps/dashboard/assurance.js",
+    "apps/dashboard/assurance.css",
+    "apps/dashboard/index.html",
+    "apps/dashboard/styles.css",
+    "apps/dashboard/README.md",
+    "services/backend/workbench_backend/assurance_view.py",
+    "services/backend/workbench_backend/server.py",
+    "tests/unit/test_assurance_view.py",
+    "tests/unit/test_dashboard_backend.py",
+    "pyproject.toml"
   ],
   "read_only_paths": [
     "interfaces/**",
@@ -42,7 +53,8 @@
     "an unresolvable scenario is refused before a runner starts and leaves no output directory",
     "existing scenario, controller and CAN tests keep passing",
     "a stale `.partial` staging directory from a killed run is removed by the next run, and a fresh one is left alone",
-    "no page in this slice claims a safety function, performance level or certification; the sayable column of the boundary page is gated"
+    "no page in this slice claims a safety function, performance level or certification; the sayable column of the boundary page is gated",
+    "the assurance page renders the register read-only and reports an unreadable register as unavailable, never as empty"
   ],
   "commands": [
     "python -m pytest tests/unit/test_assurance_matrix.py tests/unit/test_sim_cli.py -v",

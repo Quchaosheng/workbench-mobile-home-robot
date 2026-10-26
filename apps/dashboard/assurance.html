@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f3f6f7">
+    <title>Workbench 1 · 运行时保障</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="assurance.css">
+    <script defer src="assurance.js"></script>
+  </head>
+  <body class="assurance-page">
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="Workbench 1 任务状态">
+        <span class="brand-mark" aria-hidden="true">W</span>
+        <span>
+          <strong>Workbench 1</strong>
+          <small>运行时保障登记册</small>
+        </span>
+      </a>
+      <div class="header-status" role="status" aria-label="页面状态">
+        <span class="connection-dot"></span>
+        <span>只读</span>
+        <span class="header-divider"></span>
+        <span>登记册快照</span>
+      </div>
+    </header>
+
+    <main class="assurance-shell">
+      <section class="scope-banner" aria-labelledby="scope-heading">
+        <h1 id="scope-heading">运行时保障与验收证据</h1>
+        <p class="scope-line" id="claim-scope">正在读取登记册…</p>
+        <p class="scope-note">
+          本页展示的每一条主张都指向一个可解析的执行点和一份可运行的测试。
+          它不是功能安全认证：没有 ISO 12100 危害识别，没有 ISO 13849 的性能等级，
+          每一项证据的覆盖等级都是<b>仿真</b>。
+        </p>
+        <a class="scope-link" href="/">返回任务状态</a>
+      </section>
+
+      <section class="metric-row" aria-label="登记册统计">
+        <article class="metric-card">
+          <p class="metric-label">不变量</p>
+          <p class="metric-value"><span id="inv-enforced">–</span><span class="metric-of">/ <span id="inv-total">–</span></span></p>
+          <p class="metric-foot" id="inv-foot">已强制执行</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">验收用例</p>
+          <p class="metric-value"><span id="case-executed">–</span><span class="metric-of">/ <span id="case-total">–</span></span></p>
+          <p class="metric-foot" id="case-foot">已执行</p>
+        </article>
+        <article class="metric-card is-gap">
+          <p class="metric-label">未闭合缺口</p>
+          <p class="metric-value"><span id="gap-count">–</span></p>
+          <p class="metric-foot">明示缺口，不是遗漏</p>
+        </article>
+      </section>
+
+      <section class="panel" aria-labelledby="gaps-heading">
+        <div class="panel-head">
+          <h2 id="gaps-heading">缺口</h2>
+          <p class="panel-sub">这些能力当前没有执行点或没有证据。它们被打印出来，而不是被隐藏。</p>
+        </div>
+        <ul class="gap-list" id="gap-list"></ul>
+      </section>
+
+      <section class="panel" aria-labelledby="inv-heading">
+        <div class="panel-head">
+          <h2 id="inv-heading">不变量</h2>
+          <p class="panel-sub">每条主张都绑定一个执行符号和至少一份测试；解析不到就会让门禁失败。</p>
+        </div>
+        <div class="table-wrap">
+          <table class="assurance-table">
+            <thead>
+              <tr>
+                <th scope="col">编号</th>
+                <th scope="col">主张</th>
+                <th scope="col">运行时边界</th>
+                <th scope="col">状态</th>
+                <th scope="col">执行点</th>
+              </tr>
+            </thead>
+            <tbody id="inv-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="case-heading">
+        <div class="panel-head">
+          <h2 id="case-heading">验收矩阵</h2>
+          <p class="panel-sub">每个故障用例都写死终态与期望判定。只有 nominal 允许期望 confirmed。</p>
+        </div>
+        <div class="table-wrap">
+          <table class="assurance-table">
+            <thead>
+              <tr>
+                <th scope="col">用例</th>
+                <th scope="col">故障</th>
+                <th scope="col">期望终态</th>
+                <th scope="col">期望判定</th>
+                <th scope="col">覆盖</th>
+              </tr>
+            </thead>
+            <tbody id="case-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <p class="source-note" id="source-note"></p>
+    </main>
+  </body>
+</html>

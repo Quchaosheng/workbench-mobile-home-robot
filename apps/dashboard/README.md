@@ -93,4 +93,29 @@ process exit.
 
 Vendored UI dependency: Lucide `0.468.0`, ISC license in `vendor/LUCIDE-LICENSE.txt`.
 
-The dashboard follows a three-tab keyboard model: `Left`/`Right` (or `Up`/`Down`) changes views, while `Home` and `End` jump to the first or last view. Filters and run selection expose pressed state, replay exposes playback and position state, and the active mobile run scrolls into view. Nonessential motion is suppressed when the operating system requests reduced motion.
+The dashboard follows a three-tab keyboard model: `Left`/`Right` (or `Up`/`Down`) changes views, while `Home` and `End` jump to the first or last view. Filters and run selection expose pressed state, replay exposes playback and position state, and the active mobile run scrolls into view. Nonessential motion is suppressed when the operating system requests reduced motion.\n
+## Assurance register page
+
+`/assurance.html` is a second, read-only view: the runtime-assurance register from
+`docs/assurance/`, rendered as a table. It is a separate page on purpose — it answers a
+different question from the run list ("which properties does this runtime claim, and
+what proves them") and mixing that into the task view would make a claim look like a
+run outcome.
+
+It reads `/api/assurance`, which is a projection of two committed JSON files that
+`make assurance-check` already validates. The page does not re-derive any rule:
+
+- an invariant renders `已强制执行` only when its enforcement symbol resolves, and
+  `未实现` otherwise, with the gap's own wording underneath;
+- a coverage class of `NOT_EXECUTED` renders red (`未执行`), never as a blank cell —
+  a case that never ran is not a case that passed;
+- if the register cannot be read the API answers `503 assurance_unavailable` and the
+  page says so. An empty table would read as "this runtime claims nothing", which is
+  a different — and false — statement.
+
+The counts on the page (`8 / 9`) are computed by the same projection the tests use, so
+the UI cannot disagree with the gate about what "enforced" means.
+
+Below 720px the tables become stacked cards with the field name beside each value:
+five columns at phone width clipped the status badge and broke every path one
+character per line.

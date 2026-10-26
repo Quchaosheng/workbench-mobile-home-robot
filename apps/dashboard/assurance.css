@@ -1,0 +1,349 @@
+/* Assurance page. Reuses the dashboard's design tokens so the two pages read as one
+   product; everything here is layout for this page only. */
+
+.assurance-shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 24px 64px;
+  display: grid;
+  gap: 20px;
+}
+
+.scope-banner {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--teal);
+  border-radius: 12px;
+  padding: 22px 24px;
+  box-shadow: var(--shadow);
+}
+
+.scope-banner h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  color: var(--ink);
+}
+
+.scope-line {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--teal);
+}
+
+.scope-note {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  max-width: 78ch;
+}
+
+.scope-link {
+  color: var(--blue);
+  font-size: 13px;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.scope-link:hover {
+  border-bottom-color: var(--blue);
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.metric-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.metric-card.is-gap {
+  border-color: var(--amber-soft);
+  background: var(--amber-soft);
+}
+
+.metric-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.metric-value {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 650;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-of {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 6px;
+}
+
+.metric-foot {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.panel-head {
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-head h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.panel-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.gap-list {
+  margin: 0;
+  padding: 8px 20px 18px;
+  list-style: none;
+}
+
+.gap-list li {
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.gap-list li:last-child {
+  border-bottom: 0;
+}
+
+.gap-head {
+  margin: 0 0 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.gap-id {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--amber);
+  background: var(--surface);
+  border: 1px solid var(--amber);
+  border-radius: 4px;
+  padding: 1px 7px;
+}
+
+.gap-label {
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.gap-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+/* The executing symbol is the widest column and the least readable when wrapped
+   mid-path. Let it scroll inside its cell instead of breaking every few characters. */
+.cell-code-nowrap {
+  white-space: nowrap;
+  overflow-x: auto;
+  display: block;
+  max-width: 46ch;
+  scrollbar-width: thin;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.assurance-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.assurance-table th {
+  text-align: left;
+  padding: 10px 16px;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.assurance-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  line-height: 1.6;
+}
+
+.assurance-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.cell-id {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.cell-code {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge.is-enforced {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.badge.is-gap {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.badge.is-simulated {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.badge.is-hardware {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.badge.is-not-executed {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.badge.is-confirmed {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.badge.is-insufficient {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.badge.is-refuted {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.source-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.7;
+}
+
+.unavailable {
+  padding: 20px;
+  color: var(--red);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* Below 720px a five-column table is not readable: the status badge gets clipped at
+   the right edge and every path breaks one character per line. The rows become
+   stacked cards instead, with the field name beside each value so nothing is lost
+   when the column header is gone. */
+@media (max-width: 720px) {
+  .assurance-shell {
+    padding: 18px 14px 48px;
+  }
+
+  .metric-value {
+    font-size: 24px;
+  }
+
+  .assurance-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .assurance-table,
+  .assurance-table tbody,
+  .assurance-table tr,
+  .assurance-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .assurance-table tr {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .assurance-table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .assurance-table td {
+    padding: 3px 0;
+    border-bottom: 0;
+  }
+
+  .assurance-table td[data-label]::before {
+    content: attr(data-label) "：";
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+
+  .cell-code-nowrap {
+    max-width: 100%;
+  }
+}
