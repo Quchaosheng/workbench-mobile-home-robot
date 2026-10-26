@@ -138,6 +138,29 @@ The timeline route tags every event with exactly one phase (`execution`,
 order. Context is the default: an event that is not evidence explains the run but
 is never rendered as verification of anything.
 
+## The event ceiling is one number (Issue #441)
+
+`workbench_backend.read_model.MAX_EVENTS_PER_RUN` (10,000) is the single declared
+ceiling. The read model refuses a stream longer than it, and the World Model
+append path imports the same name rather than restating the number, so the two
+boundaries cannot drift apart again.
+
+A durable append is therefore always a stream the reader can serve:
+
+- 10,000 events are storable and readable.
+- The append that would make it 10,001 is refused before it becomes durable. The
+  refusal is an `EventStoreIntegrityError` naming the run, the count it already
+  holds and the ceiling.
+- The stored run is left unchanged and replayable at 10,000 events: nothing is
+  truncated, merged or silently dropped.
+- An exact retry of an event that is already stored stays a no-op. The ceiling
+  counts distinct events, not attempts, so a producer that cannot tell whether
+  its last write landed can still safely repeat it.
+
+Raising the ceiling is one edit, in the read model, and it moves both boundaries
+together. Raising it past what the reader can serve is a read-model resource
+decision and is outside this contract.
+
 ## Verifying locally
 
 ```bash

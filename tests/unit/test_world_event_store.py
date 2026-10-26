@@ -12,11 +12,13 @@ from pydantic import ValidationError
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "libs/contracts"), str(ROOT / "services/world_model")]
 
+from workbench_backend import read_model
 from workbench_contracts import WorldEvent, WorldEventType
 from workbench_world_model import event_store as event_store_module
 from workbench_world_model.event_payloads import WorldEventPayloadValidationError
 
 SQLiteEventStore = event_store_module.SQLiteEventStore
+MAX_EVENTS_PER_RUN = read_model.MAX_EVENTS_PER_RUN
 EventStoreIntegrityError = event_store_module.EventStoreIntegrityError
 EventStoreMigrationRequiredError = event_store_module.EventStoreMigrationRequiredError
 
@@ -74,6 +76,37 @@ def insert_event_row(database_path: Path, event_json: str) -> None:
             )
     finally:
         connection.close()
+
+
+def fill_run(database_path: Path, count: int, *, run_id: str = "run-001") -> list[WorldEvent]:
+    """Store ``count`` events as one run without 10,000 sequential appends.
+
+    Filling a run through ``append`` would re-read the whole stream on every call,
+    which makes the fixture quadratic and slower than the behaviour it pins. The
+    rows are the exact bytes ``append`` would have written, and they are inserted
+    into the one table the current store owns, so the read path under test is the
+    store's own.
+    """
+
+    events = [make_event(f"evt-{i:05d}", run_id=run_id, sequence_no=i) for i in range(1, count + 1)]
+    connection = sqlite3.connect(database_path)
+    try:
+        with connection:
+            connection.executemany(
+                "INSERT INTO events(event_id, run_id, sequence_no, event_json) VALUES (?, ?, ?, ?)",
+                [
+                    (
+                        event.event_id,
+                        event.run_id,
+                        event.sequence_no,
+                        SQLiteEventStore._canonical_event_json(event),
+                    )
+                    for event in events
+                ],
+            )
+    finally:
+        connection.close()
+    return events
 
 
 def open_legacy_store(database_path: Path, table_sql: str) -> SQLiteEventStore:
@@ -630,6 +663,111 @@ def test_one_database_holds_two_runs_numbered_per_run(tmp_path: Path) -> None:
     assert [(event.run_id, event.sequence_no) for event in reopened.list_run("run-002")] == [("run-002", 1)]
     assert reopened.run_ids() == ["run-001", "run-002"]
     reopened.close()
+
+
+def test_exactly_the_read_ceiling_of_events_stays_readable(tmp_path: Path) -> None:
+    """The last event the reader will serve is storable, and it is served."""
+
+    database_path = tmp_path / "events.sqlite"
+    store = SQLiteEventStore(database_path)
+    fill_run(database_path, MAX_EVENTS_PER_RUN)
+
+    assert len(store.list_run("run-001")) == MAX_EVENTS_PER_RUN
+    assert stored_event_count(database_path) == MAX_EVENTS_PER_RUN
+    store.close()
+
+
+def test_append_past_the_read_ceiling_is_refused_before_it_is_durable(tmp_path: Path) -> None:
+    """Issue #441: an append the reader would refuse must not report success.
+
+    The refusal names the run, the count it already holds and the ceiling, and it
+    leaves the stored run exactly as it was - no truncation and no dropped event,
+    so the 10,000 events that were accepted remain the ones a reader serves.
+    """
+
+    database_path = tmp_path / "events.sqlite"
+    store = SQLiteEventStore(database_path)
+    fill_run(database_path, MAX_EVENTS_PER_RUN)
+    over_limit = make_event(f"evt-{MAX_EVENTS_PER_RUN + 1:05d}", sequence_no=MAX_EVENTS_PER_RUN + 1)
+
+    with pytest.raises(EventStoreIntegrityError) as refusal:
+        store.append(over_limit)
+
+    message = str(refusal.value)
+    assert "'run-001'" in message
+    assert str(MAX_EVENTS_PER_RUN) in message
+    assert stored_event_count(database_path) == MAX_EVENTS_PER_RUN
+    assert store.get_event(over_limit.event_id) is None
+    assert len(store.list_run("run-001")) == MAX_EVENTS_PER_RUN
+    store.close()
+
+
+def test_exact_retry_at_the_ceiling_is_still_a_no_op(tmp_path: Path) -> None:
+    """The ceiling counts new events, not retries of ones already stored.
+
+    A producer that cannot tell whether its last write landed must be able to
+    repeat it even when the run is full; refusing the retry would report a durable
+    event as unsaved and lose the idempotency the append contract promises.
+    """
+
+    database_path = tmp_path / "events.sqlite"
+    store = SQLiteEventStore(database_path)
+    fill_run(database_path, MAX_EVENTS_PER_RUN)
+    last = make_event(f"evt-{MAX_EVENTS_PER_RUN:05d}", sequence_no=MAX_EVENTS_PER_RUN)
+
+    store.append(last)
+
+    assert len(store.list_run("run-001")) == MAX_EVENTS_PER_RUN
+    store.close()
+
+
+def test_ceiling_is_per_run_and_leaves_the_full_run_replayable(tmp_path: Path) -> None:
+    """One full run refuses, a different run still appends, and replay is intact."""
+
+    database_path = tmp_path / "events.sqlite"
+    store = SQLiteEventStore(database_path)
+    fill_run(database_path, MAX_EVENTS_PER_RUN)
+    store.append(make_event("evt-other-run", run_id="run-002", sequence_no=1))
+
+    with pytest.raises(EventStoreIntegrityError, match="run-001"):
+        store.append(make_event("evt-overflow", run_id="run-001", sequence_no=MAX_EVENTS_PER_RUN + 1))
+
+    store.close()
+    reopened = SQLiteEventStore(database_path)
+    assert [event.sequence_no for event in reopened.list_run("run-001")] == list(range(1, MAX_EVENTS_PER_RUN + 1))
+    assert reopened.list_run("run-002") == [make_event("evt-other-run", run_id="run-002", sequence_no=1)]
+    reopened.close()
+
+
+def test_allocated_append_at_the_ceiling_does_not_consume_a_sequence(tmp_path: Path) -> None:
+    """The refusal happens inside the allocation transaction, so nothing lands."""
+
+    database_path = tmp_path / "events.sqlite"
+    store = SQLiteEventStore(database_path)
+    fill_run(database_path, MAX_EVENTS_PER_RUN, run_id="run-allocated")
+
+    with pytest.raises(EventStoreIntegrityError, match="run-allocated"):
+        append_allocated_event(store, "evt-allocated-overflow")
+
+    assert len(store.list_run("run-allocated")) == MAX_EVENTS_PER_RUN
+    assert store.get_event("evt-allocated-overflow") is None
+    store.close()
+
+
+def test_the_writer_ceiling_is_the_one_declared_by_the_read_model() -> None:
+    """Issue #441: the append path imports the reader's ceiling, never restates it."""
+
+    assert event_store_module.MAX_EVENTS_PER_RUN is read_model.MAX_EVENTS_PER_RUN
+
+    source = (ROOT / "services/world_model/workbench_world_model/event_store.py").read_text(encoding="utf-8")
+    imported = {
+        alias.name: node.module
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert imported.get("MAX_EVENTS_PER_RUN") == "workbench_backend.read_model"
+    assert "10_000" not in source, "the World Model store keeps its own copy of the read ceiling"
 
 
 @pytest.mark.parametrize(

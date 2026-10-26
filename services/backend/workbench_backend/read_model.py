@@ -80,6 +80,10 @@ RECOVERY_EVENT_TYPES = frozenset({"recovery_started", "recovery_complete"})
 TIMELINE_PHASES = ("execution", "observation", "verification", "recovery", "context")
 
 MAX_EVENT_LOG_BYTES = 10 * 1024 * 1024
+# The one event ceiling. This is the declaration the World Model append path
+# imports, so a stream the reader would refuse can never become durable first;
+# see ``workbench_world_model.event_store``. Raising it here is what changes the
+# write boundary too (Issue #441).
 MAX_EVENTS_PER_RUN = 10_000
 MAX_READ_ATTEMPTS = 2
 MAX_EVIDENCE_REFS = 256

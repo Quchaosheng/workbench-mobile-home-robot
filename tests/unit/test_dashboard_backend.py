@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "services" / "backend"))
 
 from workbench_backend.expression import ExpressionMachine, ExpressionState, derive_expression
 from workbench_backend.logging import StructuredLogger
-from workbench_backend.read_model import DashboardReadModel, ReadModelError
+from workbench_backend.read_model import MAX_EVENTS_PER_RUN, DashboardReadModel, ReadModelError
 from workbench_backend.server import (
     MAX_CONCURRENT_REQUESTS,
     MAX_REJECTED_REQUEST_BODY_BYTES,
@@ -273,6 +273,35 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(summary["status"], "future_status")
         self.assertEqual(summary["status_label"], "未知状态")
         self.assertEqual(summary["missing_evidence"], [])
+
+    def test_a_run_at_the_event_ceiling_is_served_and_one_past_it_is_not(self) -> None:
+        """Issue #441: the read model's own ceiling, pinned at the exact boundary.
+
+        This is the number the World Model append path imports: 10,000 events are
+        readable, 10,001 are refused. The writer's refusal is asserted in the
+        store's own suite; this is the reader half of the one shared boundary.
+        """
+
+        self.assertEqual(MAX_EVENTS_PER_RUN, 10_000)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for count, readable in ((MAX_EVENTS_PER_RUN, True), (MAX_EVENTS_PER_RUN + 1, False)):
+                with self.subTest(event_count=count):
+                    root = Path(temp_dir) / str(count)
+                    root.mkdir()
+                    (root / "run.jsonl").write_text(
+                        "".join(
+                            json.dumps(stored_event("run-full", index, "observation")) + "\n" for index in range(count)
+                        ),
+                        encoding="utf-8",
+                    )
+                    model = DashboardReadModel(root)
+                    if readable:
+                        self.assertEqual(len(model.list_events("run-full")), MAX_EVENTS_PER_RUN)
+                        self.assertTrue(model.ready())
+                    else:
+                        with self.assertRaisesRegex(ReadModelError, f"exceeds {MAX_EVENTS_PER_RUN} events"):
+                            model.list_events("run-full")
+                        self.assertFalse(model.ready())
 
 
 class NonFiniteJsonBoundaryTests(unittest.TestCase):
