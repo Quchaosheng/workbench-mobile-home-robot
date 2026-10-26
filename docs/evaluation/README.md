@@ -8,6 +8,7 @@ separate rather than one report that guesses:
 | [`multi-scenario-readiness.md`](multi-scenario-readiness.md) | What is the committed software ready for, per registered scenario identity? | Release / QA |
 | [`readiness-report-v1.json`](readiness-report-v1.json) | The machine-generated artifact behind that page, with the configuration hash it was built from | Release / QA |
 | [`release-eligibility.md`](release-eligibility.md) | May a run be published as release evidence? | Release / QA |
+| [`evidence-index.md`](evidence-index.md) | Which run ids and evidence hashes produced each aggregate? | Release / QA |
 | [`failure-cases.md`](failure-cases.md) | Which failure paths are covered, and by which test? | World Model |
 | [`cold-start-test.md`](cold-start-test.md) | How external cold start is measured and recorded | Product Owner |
 | [`status-understanding-test.md`](status-understanding-test.md) | Whether an operator can tell confirmed from insufficient evidence | Product Owner |

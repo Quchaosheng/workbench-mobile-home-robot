@@ -21,8 +21,9 @@ from collect_metrics import (
     run_metadata,
 )
 from compare_evaluations import compare, wilson_interval
+from generate_report import generate as generate_report
 from generate_report import load as load_metrics
-from generate_report import release_reasons
+from generate_report import release_reasons, require_evidence_indexes
 from run_evaluation import (
     EXTERNAL_STARTUP_GRACE_SECONDS,
     EvaluationInputError,
@@ -657,6 +658,73 @@ class EvaluationPipelineTests(unittest.TestCase):
             durations({"run": [{"occurred_at": "2026-01-01T00:00:00Z"}, {"occurred_at": "2026-01-01T00:00:10Z"}]}),
             [10.0],
         )
+
+
+class EvidenceIndexConsumerTests(unittest.TestCase):
+    """The report and the comparison must consume the index, not just the total.
+
+    Both consumers published a numerator with no way to name the runs behind it.
+    These tests cover what each one now carries: a bounded run count plus a
+    digest reference in the report, the run ids behind VTCR in a comparison, and
+    a refusal to publish either from a metrics file whose index does not rebuild.
+    """
+
+    def _metrics(self, root: Path, manifests: list[str]) -> dict:
+        version_dir = root / "v-index"
+        version_dir.mkdir(parents=True, exist_ok=True)
+        for relative in manifests:
+            manifest = json.loads((ROOT / "sim" / "scenarios" / relative).read_text(encoding="utf-8"))
+            write_jsonl(
+                version_dir / f"{manifest['scenario_id']}.jsonl",
+                scripted_events("v-index", manifest, "abc123", 1000),
+            )
+        return collect(version_dir)
+
+    def _manifests(self) -> list[str]:
+        return ["frozen/normal-001.json", "frozen/grasp-failure-001.json"]
+
+    def test_report_shows_a_bounded_run_count_and_the_index_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metrics = self._metrics(Path(temp_dir), self._manifests())
+        report = generate_report([metrics] * 3, ["A", "B", "C"], "abc123", 1000)
+
+        self.assertNotIn("v-index--normal-001", report)
+        self.assertIn("2 次运行", report)
+        self.assertIn(metrics["evidence_index_sha256"][:12], report)
+        self.assertIn("证据索引", report)
+
+    def test_report_refuses_a_metrics_file_without_a_rebuildable_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metrics = self._metrics(Path(temp_dir), self._manifests())
+
+        no_index = {key: value for key, value in metrics.items() if key != "runs"}
+        with self.assertRaisesRegex(RuntimeError, "without a per-run evidence index"):
+            generate_report([metrics, metrics, no_index], ["A", "B", "C"], "abc123", 1000)
+
+        tampered = {**metrics, "vtcr": 0.0}
+        with self.assertRaisesRegex(RuntimeError, "rebuilds to"):
+            require_evidence_indexes([metrics, metrics, tampered])
+
+    def test_comparison_carries_the_run_ids_behind_vtcr(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metrics = self._metrics(Path(temp_dir), self._manifests())
+        report = compare([metrics] * 3, ["A", "B", "C"])
+
+        evidence = report["versions"][0]["evidence_index"]
+        self.assertEqual(evidence["recomputed_evidence_index_sha256"], metrics["evidence_index_sha256"])
+        self.assertEqual(evidence["vtcr_contributors"], metrics["metric_contributors"]["vtcr"])
+        self.assertEqual(evidence["run_count"], 2)
+        self.assertTrue(report["evidence_indexes_match"])
+        self.assertTrue(report["every_version_has_an_evidence_index"])
+
+    def test_comparison_reports_a_missing_index_instead_of_inventing_one(self) -> None:
+        report = compare([{"run_count": 30, "vtcr": 0.8}] * 3, ["A", "B", "C"])
+
+        self.assertIsNone(report["versions"][0]["evidence_index"])
+        self.assertFalse(report["every_version_has_an_evidence_index"])
+        self.assertFalse(report["evidence_indexes_match"])
+        # The percentile math is unchanged: the index is additive information.
+        self.assertFalse(any(item["statistically_significant"] for item in report["pairwise"]))
 
 
 class ExternalRunnerBoundTests(unittest.TestCase):
