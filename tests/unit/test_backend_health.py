@@ -3,11 +3,17 @@
 The backend consumes health documents produced by the monitoring layer, so these
 tests build real snapshots with a fixed monotonic clock and then check that the
 backend re-validates them instead of trusting the serialized status.
+
+Issue #449 adds the second half: the debounce policy is explicit configuration.
+Its tests build the policy from untyped settings, prove a malformed value stops
+startup before the socket exists, and feed transient samples through a real
+server to show the configured windows are the ones actually enforced.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import unittest
@@ -15,6 +21,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "libs" / "application"))
@@ -23,14 +30,23 @@ sys.path.insert(0, str(ROOT / "services" / "backend"))
 from workbench.application.alerts import AlertPolicy
 from workbench.application.monitoring import HealthSnapshotCollector
 from workbench_backend.health import (
+    DEFAULT_ALERT_CLEAR_AFTER_S,
+    DEFAULT_ALERT_OPEN_AFTER_S,
     HEALTH_HISTORY_VERSION,
+    MAX_ALERT_DEBOUNCE_S,
     MAX_SNAPSHOTS,
+    MONITORING_POLICY_VERSION,
+    POLICY_ENVIRONMENT,
     HealthHistoryError,
     HealthStore,
+    MonitoringPolicyError,
+    alert_policy_digest,
+    build_alert_policy,
     load_health_documents,
     snapshot_from_document,
+    validate_alert_policy,
 )
-from workbench_backend.server import create_server
+from workbench_backend.server import _alert_policy_source, create_server, main
 
 BASE = 1000.0
 
@@ -329,6 +345,132 @@ class HealthStoreTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+class AlertPolicyConfigurationTests(unittest.TestCase):
+    """Issue #449: the debounce policy is validated configuration, not a constant."""
+
+    def test_the_default_policy_is_explicit_and_labelled_disabled(self) -> None:
+        # A default is still a decision, so it is named rather than implied by a
+        # bare AlertPolicy(). Zero/zero is reported as debounce_disabled so nobody
+        # can mistake a deployment that never configured debounce for one that did.
+        store = HealthStore()
+        self.assertEqual((store.policy.open_after_s, store.policy.clear_after_s), (0.0, 0.0))
+        policy = store.current_payload()["monitoring_policy"]
+        self.assertEqual(policy["version"], MONITORING_POLICY_VERSION)
+        self.assertEqual(policy["source"], "server-default")
+        self.assertEqual(policy["debounce"], "debounce_disabled")
+        self.assertEqual(policy["open_after_s"], DEFAULT_ALERT_OPEN_AFTER_S)
+        self.assertEqual(policy["clear_after_s"], DEFAULT_ALERT_CLEAR_AFTER_S)
+
+    def test_a_configured_policy_is_visible_with_its_source_and_digest(self) -> None:
+        store = HealthStore(
+            policy=AlertPolicy(open_after_s=2.0, clear_after_s=5.0),
+            policy_source="command-line",
+        )
+        policy = store.current_payload()["monitoring_policy"]
+        self.assertEqual((policy["open_after_s"], policy["clear_after_s"]), (2.0, 5.0))
+        self.assertEqual(policy["source"], "command-line")
+        self.assertEqual(policy["debounce"], "debounce_enabled")
+        self.assertEqual(policy["sha256"], alert_policy_digest(store.policy))
+        self.assertRegex(policy["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_changing_a_value_changes_the_payload_and_its_digest(self) -> None:
+        # A configuration change must be visible in the evidence, not just in the
+        # process environment a reviewer cannot see.
+        base = HealthStore(policy=AlertPolicy(open_after_s=2.0, clear_after_s=5.0))
+        changed = HealthStore(policy=AlertPolicy(open_after_s=3.0, clear_after_s=5.0))
+        base_payload = base.current_payload()["monitoring_policy"]
+        changed_payload = changed.current_payload()["monitoring_policy"]
+        self.assertNotEqual(base_payload["open_after_s"], changed_payload["open_after_s"])
+        self.assertNotEqual(base_payload["sha256"], changed_payload["sha256"])
+        # The same values in a different source are a different provenance, but
+        # the values are what the digest commits to.
+        same_values = HealthStore(policy=AlertPolicy(open_after_s=2.0, clear_after_s=5.0))
+        self.assertEqual(base_payload["sha256"], same_values.current_payload()["monitoring_policy"]["sha256"])
+
+    def test_build_alert_policy_accepts_environment_strings(self) -> None:
+        policy = build_alert_policy(open_after_s="2.5", clear_after_s="7", history_age_s="600", max_history="64")
+        self.assertEqual((policy.open_after_s, policy.clear_after_s), (2.5, 7.0))
+        self.assertEqual((policy.history_age_s, policy.max_history), (600.0, 64))
+
+    def test_a_blank_value_means_unset_because_compose_interpolates_to_empty(self) -> None:
+        policy = build_alert_policy(open_after_s="", clear_after_s="   ")
+        self.assertEqual((policy.open_after_s, policy.clear_after_s), (0.0, 0.0))
+
+    def test_invalid_policy_values_are_refused_before_anything_listens(self) -> None:
+        cases = (
+            ("open_after_s", "not-a-number"),
+            ("open_after_s", "-1"),
+            ("open_after_s", "nan"),
+            ("open_after_s", "inf"),
+            ("clear_after_s", True),
+            ("clear_after_s", -0.5),
+            ("history_age_s", 90000),
+            ("max_history", "0"),
+            ("max_history", "9999"),
+            ("max_history", 1.5),
+        )
+        for setting, value in cases:
+            with self.subTest(setting=setting, value=value):
+                with self.assertRaises(MonitoringPolicyError):
+                    build_alert_policy(**{setting: value})
+
+    def test_a_policy_object_outside_the_bounds_is_refused_at_the_boundary(self) -> None:
+        # AlertPolicy permits any non-negative float; the server additionally
+        # refuses a window longer than an hour, which would hold an alert open
+        # long after the evidence that opened it stopped being current.
+        with self.assertRaises(MonitoringPolicyError):
+            validate_alert_policy(AlertPolicy(open_after_s=MAX_ALERT_DEBOUNCE_S + 1))
+        with self.assertRaises(MonitoringPolicyError):
+            validate_alert_policy(AlertPolicy(clear_after_s=MAX_ALERT_DEBOUNCE_S + 1))
+        with (
+            mock.patch("workbench_backend.server.BoundedThreadingHTTPServer") as listener,
+            self.assertRaises(MonitoringPolicyError),
+        ):
+            create_server("127.0.0.1", 0, alert_policy=AlertPolicy(open_after_s=MAX_ALERT_DEBOUNCE_S + 1))
+        # Fail-closed means "no listening socket was ever created", not just
+        # "an exception was raised somewhere in startup".
+        listener.assert_not_called()
+        with (
+            mock.patch("workbench_backend.server.BoundedThreadingHTTPServer") as listener,
+            self.assertRaises(MonitoringPolicyError),
+        ):
+            create_server("127.0.0.1", 0, alert_policy="2.0")  # type: ignore[arg-type]
+        listener.assert_not_called()
+
+    def test_the_environment_variable_names_are_the_documented_ones(self) -> None:
+        self.assertEqual(
+            POLICY_ENVIRONMENT,
+            {
+                "open_after_s": "WORKBENCH_ALERT_OPEN_AFTER_SECONDS",
+                "clear_after_s": "WORKBENCH_ALERT_CLEAR_AFTER_SECONDS",
+                "history_age_s": "WORKBENCH_ALERT_HISTORY_AGE_SECONDS",
+                "max_history": "WORKBENCH_ALERT_MAX_HISTORY",
+            },
+        )
+
+    def test_the_cli_reports_where_the_policy_came_from(self) -> None:
+        open_option = "--alert-open-after-s"
+        clear_variable = POLICY_ENVIRONMENT["clear_after_s"]
+        self.assertEqual(_alert_policy_source([open_option, "2"], {}), "command-line")
+        self.assertEqual(_alert_policy_source([f"{open_option}=2"], {}), "command-line")
+        self.assertEqual(_alert_policy_source([], {clear_variable: "5"}), "environment")
+        self.assertEqual(_alert_policy_source([], {clear_variable: "  "}), "server-default")
+        self.assertEqual(_alert_policy_source([], {}), "server-default")
+
+    def test_the_cli_refuses_a_malformed_debounce_value(self) -> None:
+        fake_server = mock.Mock()
+        fake_server.serve_forever.side_effect = KeyboardInterrupt
+        argv = ["workbench-backend", "--alert-open-after-s", "soon"]
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch("workbench_backend.server.create_server", return_value=fake_server) as factory,
+            self.assertRaises(SystemExit) as caught,
+        ):
+            main()
+        self.assertEqual(caught.exception.code, 2)
+        factory.assert_not_called()
+
+
 class HealthApiTests(unittest.TestCase):
     def start_server(self, health_document: str | None = None, **options):
         directory = TemporaryDirectory()
@@ -420,10 +562,87 @@ class HealthApiTests(unittest.TestCase):
         faulted = json.dumps(snapshot(at=BASE + 1, faults={"can.link_ok": False}).as_dict()) + "\n"
         # Advance the mtime so the size/mtime cache key changes even on a fast disk.
         health_path.write_text(faulted, encoding="utf-8")
-        import os
-
         os.utime(health_path, (BASE + 10, BASE + 10))
         self.assertEqual(self.read_json(f"{base_url}/api/v1/health")[1]["status"], "fault")
+
+    def test_the_endpoint_reports_the_configured_policy_and_its_change(self) -> None:
+        # The evidence a reviewer needs: which values this instance runs, where
+        # they came from, and a stable hash that changes with the values.
+        document = json.dumps(snapshot().as_dict()) + "\n"
+        default_url = self.start_server(document)
+        default_policy = self.read_json(f"{default_url}/api/v1/health")[1]["monitoring_policy"]
+        self.assertEqual(default_policy["source"], "server-default")
+        self.assertEqual(default_policy["debounce"], "debounce_disabled")
+
+        configured_url = self.start_server(
+            document,
+            alert_policy=AlertPolicy(open_after_s=2.0, clear_after_s=5.0),
+            alert_policy_source="command-line",
+        )
+        configured_policy = self.read_json(f"{configured_url}/api/v1/health")[1]["monitoring_policy"]
+        self.assertEqual(configured_policy["source"], "command-line")
+        self.assertEqual(configured_policy["debounce"], "debounce_enabled")
+        self.assertEqual((configured_policy["open_after_s"], configured_policy["clear_after_s"]), (2.0, 5.0))
+        self.assertNotEqual(default_policy["sha256"], configured_policy["sha256"])
+        history_policy = self.read_json(f"{configured_url}/api/v1/health/history")[1]["monitoring_policy"]
+        self.assertEqual(history_policy["sha256"], configured_policy["sha256"])
+
+    def test_a_transient_single_sample_fault_cannot_open_a_debounced_alert(self) -> None:
+        # The deployed defect Issue #449 reports: the constructor used the
+        # implicit zero policy, so one bad sample opened an alert and one healthy
+        # sample closed it. With a configured window, neither is possible.
+        document = "".join(
+            json.dumps(built.as_dict()) + "\n"
+            for built in (
+                snapshot(at=BASE),
+                snapshot(at=BASE + 1, faults={"safety.estop_channels_ok": False}),
+                snapshot(at=BASE + 2),
+            )
+        )
+        base_url = self.start_server(
+            document,
+            alert_policy=AlertPolicy(open_after_s=5.0, clear_after_s=5.0),
+            alert_policy_source="command-line",
+        )
+        payload = self.read_json(f"{base_url}/api/v1/health")[1]
+        self.assertEqual(payload["alerts"]["active"], [])
+        self.assertEqual(payload["alerts"]["summary"]["total"], 0)
+        self.assertNotEqual(payload["status"], "fault")
+        self.assertEqual(payload["monitoring_policy"]["open_after_s"], 5.0)
+
+    def test_a_transient_healthy_sample_cannot_clear_a_debounced_alert(self) -> None:
+        # Open the alert, feed one healthy sample inside the clear window, then
+        # confirm it is still active. The same document served with the zero
+        # policy clears immediately, which is the behavior being replaced.
+        document = "".join(
+            json.dumps(built.as_dict()) + "\n"
+            for built in (
+                snapshot(at=BASE, faults={"safety.estop_channels_ok": False}),
+                snapshot(at=BASE + 10),
+            )
+        )
+        debounced = self.start_server(
+            document,
+            alert_policy=AlertPolicy(open_after_s=0.0, clear_after_s=30.0),
+            alert_policy_source="command-line",
+        )
+        payload = self.read_json(f"{debounced}/api/v1/health")[1]
+        self.assertEqual([alert["condition"] for alert in payload["alerts"]["active"]], ["estop_unavailable"])
+        self.assertEqual(payload["status"], "fault")
+
+        immediate = self.start_server(document)
+        cleared = self.read_json(f"{immediate}/api/v1/health")[1]
+        self.assertEqual(cleared["alerts"]["active"], [])
+        self.assertEqual(cleared["monitoring_policy"]["debounce"], "debounce_disabled")
+
+    def test_a_malformed_policy_stops_startup_before_the_socket_is_bound(self) -> None:
+        with self.assertRaises(MonitoringPolicyError):
+            create_server("127.0.0.1", 0, alert_policy=AlertPolicy(open_after_s=MAX_ALERT_DEBOUNCE_S + 1))
+        # And the CLI turns a malformed value into a usage error with the setting.
+        argv = ["workbench-backend", "--alert-clear-after-s", "-5"]
+        with mock.patch.object(sys, "argv", argv), self.assertRaises(SystemExit) as caught:
+            main()
+        self.assertEqual(caught.exception.code, 2)
 
 
 if __name__ == "__main__":

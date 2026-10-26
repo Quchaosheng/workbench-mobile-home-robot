@@ -6,9 +6,10 @@ import os
 import re
 import signal
 import socket
+import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
@@ -16,7 +17,22 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .health import HealthHistoryError, HealthReadModel
+from workbench.application.alerts import AlertPolicy
+
+from .health import (
+    POLICY_ENVIRONMENT,
+    POLICY_SOURCE_ARGUMENT,
+    POLICY_SOURCE_CLI,
+    POLICY_SOURCE_DEFAULT,
+    POLICY_SOURCE_ENVIRONMENT,
+    HealthHistoryError,
+    HealthReadModel,
+    MonitoringPolicyError,
+    build_alert_policy,
+    default_alert_policy,
+    describe_alert_policy,
+    validate_alert_policy,
+)
 from .inbound_http import InboundHttpConfigurationError, InboundHttpPolicy
 from .logging import StructuredLogger
 from .read_model import (
@@ -638,12 +654,25 @@ def create_server(
     trusted_proxy_allowlist: str | None = None,
     max_concurrent_requests: int = MAX_CONCURRENT_REQUESTS,
     drain_timeout: float = DEFAULT_DRAIN_TIMEOUT_SECONDS,
+    alert_policy: AlertPolicy | None = None,
+    alert_policy_source: str | None = None,
 ) -> BoundedThreadingHTTPServer:
     inbound_policy = InboundHttpPolicy(
         published_host=published_host,
         trust_mode=trust_mode,
         trusted_proxy_allowlist=trusted_proxy_allowlist,
     )
+    # The monitoring policy is resolved and validated before the socket is
+    # bound: a bad debounce value must stop startup, not leave an alert path that
+    # silently runs a policy nobody approved. The recorded source names where the
+    # values came from, so the payload can distinguish an operator's setting from
+    # the documented default.
+    if alert_policy is None:
+        configured_alert_policy = default_alert_policy()
+        configured_policy_source = POLICY_SOURCE_DEFAULT
+    else:
+        configured_alert_policy = validate_alert_policy(alert_policy)
+        configured_policy_source = POLICY_SOURCE_ARGUMENT if alert_policy_source is None else alert_policy_source
     configured_inbound_policy = inbound_policy
     if event_source_url:
         try:
@@ -657,7 +686,9 @@ def create_server(
         configured_read_model = DashboardReadModel(data_dir)
     configured_static_dir = Path(static_dir)
     configured_health_model = HealthReadModel(
-        health_path if health_path is not None else Path(data_dir) / "health" / "health.jsonl"
+        health_path if health_path is not None else Path(data_dir) / "health" / "health.jsonl",
+        policy=configured_alert_policy,
+        policy_source=configured_policy_source,
     )
 
     class ConfiguredHandler(DashboardHandler):
@@ -673,6 +704,31 @@ def create_server(
         max_concurrent_requests=max_concurrent_requests,
         drain_timeout=drain_timeout,
     )
+
+
+ALERT_POLICY_CLI_OPTIONS = (
+    "--alert-open-after-s",
+    "--alert-clear-after-s",
+    "--alert-history-age-s",
+    "--alert-max-history",
+)
+
+
+def _alert_policy_source(argv: list[str], environ: Mapping[str, str]) -> str:
+    """Name where the effective debounce policy came from.
+
+    The payload claims a source, so it must be able to tell an operator's CLI
+    flag from an environment variable from the documented default. A blank
+    environment value counts as unset, because Compose interpolates an unset
+    variable to the empty string.
+    """
+    if any(argument.split("=", 1)[0] in ALERT_POLICY_CLI_OPTIONS for argument in argv):
+        return POLICY_SOURCE_CLI
+    for name in POLICY_ENVIRONMENT.values():
+        value = environ.get(name)
+        if isinstance(value, str) and value.strip():
+            return POLICY_SOURCE_ENVIRONMENT
+    return POLICY_SOURCE_DEFAULT
 
 
 def main() -> int:
@@ -697,7 +753,47 @@ def main() -> int:
         default=float(os.environ.get("WORKBENCH_DRAIN_TIMEOUT_SECONDS", DEFAULT_DRAIN_TIMEOUT_SECONDS)),
         help="Seconds to let in-flight requests finish after SIGTERM or Ctrl-C before exiting.",
     )
+    # The alert debounce policy is explicit operator surface, not a constant
+    # baked into the constructor. Each option falls back to the documented
+    # WORKBENCH_ALERT_* variable, and the effective policy is reported at startup
+    # and in /api/v1/health so a reviewer can see what a deployment actually ran.
+    parser.add_argument(
+        "--alert-open-after-s",
+        default=os.environ.get("WORKBENCH_ALERT_OPEN_AFTER_SECONDS"),
+        help=(
+            "Seconds a condition must persist before an alert opens "
+            "(env WORKBENCH_ALERT_OPEN_AFTER_SECONDS; default 0 and labelled debounce_disabled)."
+        ),
+    )
+    parser.add_argument(
+        "--alert-clear-after-s",
+        default=os.environ.get("WORKBENCH_ALERT_CLEAR_AFTER_SECONDS"),
+        help=(
+            "Seconds a condition must stay clear before an alert closes "
+            "(env WORKBENCH_ALERT_CLEAR_AFTER_SECONDS; default 0 and labelled debounce_disabled)."
+        ),
+    )
+    parser.add_argument(
+        "--alert-history-age-s",
+        default=os.environ.get("WORKBENCH_ALERT_HISTORY_AGE_SECONDS"),
+        help="Seconds of cleared-alert history to retain (env WORKBENCH_ALERT_HISTORY_AGE_SECONDS).",
+    )
+    parser.add_argument(
+        "--alert-max-history",
+        default=os.environ.get("WORKBENCH_ALERT_MAX_HISTORY"),
+        help="Maximum cleared alerts to retain (env WORKBENCH_ALERT_MAX_HISTORY).",
+    )
     args = parser.parse_args()
+    try:
+        alert_policy = build_alert_policy(
+            open_after_s=args.alert_open_after_s,
+            clear_after_s=args.alert_clear_after_s,
+            history_age_s=args.alert_history_age_s,
+            max_history=args.alert_max_history,
+        )
+    except MonitoringPolicyError as exc:
+        parser.error(str(exc))
+    alert_policy_source = _alert_policy_source(sys.argv[1:], os.environ)
     try:
         server = create_server(
             args.host,
@@ -709,6 +805,8 @@ def main() -> int:
             trust_mode=args.trust_mode,
             trusted_proxy_allowlist=args.trusted_proxy_allowlist,
             drain_timeout=args.drain_timeout,
+            alert_policy=alert_policy,
+            alert_policy_source=alert_policy_source,
         )
     except (InboundHttpConfigurationError, ValueError) as exc:
         parser.error(str(exc))
@@ -721,6 +819,7 @@ def main() -> int:
             "data_source": "remote" if args.event_source_url else "local",
             "published_host": args.published_host,
             "trust_mode": args.trust_mode,
+            "monitoring_policy": describe_alert_policy(alert_policy, source=alert_policy_source),
         },
     )
     previous_sigterm = signal.getsignal(signal.SIGTERM)

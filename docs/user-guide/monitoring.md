@@ -61,3 +61,36 @@ Dashboard costs no requests.
 A critical condition is never hidden by another source reporting healthy. If a
 subsystem is unreachable, the alert says the source is missing rather than
 silently passing.
+
+## Debounce policy
+
+Debounce is server configuration, not a fixed constant. The backend CLI reads one
+setting per window, and each falls back to the environment variable of the same
+meaning:
+
+| CLI option | Environment variable | Default | Bound |
+| --- | --- | --- | --- |
+| `--alert-open-after-s` | `WORKBENCH_ALERT_OPEN_AFTER_SECONDS` | `0` | `0..3600` |
+| `--alert-clear-after-s` | `WORKBENCH_ALERT_CLEAR_AFTER_SECONDS` | `0` | `0..3600` |
+| `--alert-history-age-s` | `WORKBENCH_ALERT_HISTORY_AGE_SECONDS` | `86400` | `0..86400` |
+| `--alert-max-history` | `WORKBENCH_ALERT_MAX_HISTORY` | `512` | `1..512` |
+
+With `open_after_s` set, a condition must persist that long before an alert
+opens, so a single bad sample cannot page anyone. With `clear_after_s` set, a
+condition must stay clear that long before the alert closes, so a single healthy
+sample cannot clear a real fault. Either window may be set on its own.
+
+The default is an explicit zero policy, and it is **labelled**:
+`/api/v1/health` reports `"debounce": "debounce_disabled"`, so a deployment that
+never configured debounce cannot be mistaken for one that chose it. Configuring
+either window reports `"debounce": "debounce_enabled"` with the observed values.
+The same block reports `source` (`server-default`, `environment`, `command-line`
+or `caller`) and a `sha256` over the effective values, so two deployments can be
+compared without reading each host's environment. It is also logged at startup
+as `service_started.monitoring_policy`.
+
+A malformed value stops startup before the port is bound: the CLI exits with
+status 2 and names the offending setting. A blank value counts as unset, because
+Compose interpolates an unset variable to the empty string. The concrete target
+windows are an Operations/Safety decision; this repository documents the knob
+and its bounds and deliberately ships no production threshold.

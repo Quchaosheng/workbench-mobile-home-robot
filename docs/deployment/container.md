@@ -64,6 +64,11 @@ docker compose up dashboard
 浏览器访问 `http://127.0.0.1:8080`。dashboard 不声明 `gpus`、设备映射、DDS LAN、额外 capability 或 host network，
 所以无 NVIDIA 显卡的开发机也可以使用。
 
+告警去抖策略通过 `WORKBENCH_ALERT_OPEN_AFTER_SECONDS`、`WORKBENCH_ALERT_CLEAR_AFTER_SECONDS`、
+`WORKBENCH_ALERT_HISTORY_AGE_SECONDS` 和 `WORKBENCH_ALERT_MAX_HISTORY` 透传到 dashboard 服务。全部未设置时保持文档化的
+零策略，`/api/v1/health` 的 `monitoring_policy.debounce` 报告 `debounce_disabled`；格式错误的值会让容器在绑定端口前退出。
+具体的产线阈值属于 Operations/Safety 的审批决定，详见[分机部署](multi-host.md)。
+
 VS Code / Codex Dev Container 复用根目录 Dockerfile，不存在第二套 Ubuntu/ROS 依赖。源码按当前安全基线只读挂载；在宿主编辑，
 在容器内构建和测试：
 
