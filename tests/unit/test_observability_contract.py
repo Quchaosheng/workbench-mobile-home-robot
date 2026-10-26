@@ -430,6 +430,64 @@ class JsonlSinkTests(unittest.TestCase):
             self.assertFalse(sink.path.exists())
 
 
+# Synthetic only: a timeline and an event response must both stop these sentinels
+# at the API boundary. Nothing here is a live credential or a real camera frame.
+_SYNTHETIC_EVENT = {
+    "event_id": "event-0",
+    "run_id": "run-1",
+    "sequence_no": 0,
+    "event_type": "task_accepted",
+    "occurred_at": "2026-01-01T00:00:00Z",
+    "payload": {"api_key": "sk-live-synthetic-abcdefghijklmnop", "raw_frame": "raw-frame-sentinel"},
+    "evidence_refs": ["camera-frame-0007"],
+}
+
+
+class ResponseRedactionContractTests(unittest.TestCase):
+    """Issue #430: the read API is an artifact boundary too, not a second scheme.
+
+    Timeline and event responses are scrubbed by the same versioned module as the
+    log sink, so the marker a client reads must be the marker every other artifact
+    carries: one rule identity, one shape, no parallel redaction vocabulary.
+    """
+
+    def test_the_response_marker_is_the_marker_the_sink_writes(self) -> None:
+        from workbench.application.redaction import (
+            EVIDENCE_REDACTED,
+            REDACTED,
+            REDACTION_MARKER_KEY,
+            REDACTION_RULES_VERSION,
+        )
+        from workbench_backend.read_model import redact_events, run_timeline
+
+        timeline = run_timeline([_SYNTHETIC_EVENT])[0]
+        events = redact_events([_SYNTHETIC_EVENT])[0]
+
+        with TemporaryDirectory() as directory:
+            sink = JsonlSink(Path(directory) / "evidence.jsonl")
+            sink.write({"component": "backend", "api_key": "exposed-value"})
+            written = sink.read_all()[0]
+
+        for scrubbed in (timeline, events):
+            self.assertEqual(set(scrubbed[REDACTION_MARKER_KEY]), set(written[REDACTION_MARKER_KEY]))
+            self.assertEqual(scrubbed[REDACTION_MARKER_KEY]["rules"], REDACTION_RULES_VERSION)
+            self.assertEqual(scrubbed[REDACTION_MARKER_KEY]["rules"], written[REDACTION_MARKER_KEY]["rules"])
+            self.assertEqual(scrubbed["payload"]["api_key"], REDACTED)
+            self.assertEqual(scrubbed["payload"]["raw_frame"], EVIDENCE_REDACTED)
+            # Evidence by reference, not content: the pointer survives the scrub.
+            self.assertEqual(scrubbed["evidence_refs"], ["camera-frame-0007"])
+
+    def test_a_clean_response_item_is_not_labelled_as_redacted(self) -> None:
+        from workbench.application.redaction import REDACTION_MARKER_KEY
+        from workbench_backend.read_model import redact_events, run_timeline
+
+        clean = {**_SYNTHETIC_EVENT, "payload": {"task_id": "task-clean", "goal": "Place the red block"}}
+
+        self.assertNotIn(REDACTION_MARKER_KEY, run_timeline([clean])[0])
+        self.assertNotIn(REDACTION_MARKER_KEY, redact_events([clean])[0])
+        self.assertEqual(redact_events([clean])[0]["payload"], clean["payload"])
+
+
 def _expected_pairs() -> list[tuple[int, int]]:
     return [(worker, index) for worker in range(6) for index in range(25)]
 
