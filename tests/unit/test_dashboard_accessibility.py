@@ -125,6 +125,55 @@ def _run_node(expression: str, payload: object) -> object:
     return json.loads(completed.stdout)
 
 
+def _run_monitoring_polls(views: list[dict]) -> list[dict]:
+    """Render a sequence of monitoring views and report what the live region said.
+
+    A live region only speaks when its text node is written, so the assertion
+    cannot be a string check on the final DOM: the stub observes every
+    `textContent` assignment and reports whether this poll announced anything.
+    `renderMonitoringAlerts` keeps its "last spoken" key in module state, so the
+    whole sequence must run inside one Node process.
+    """
+    source = SCRIPT.read_text(encoding="utf-8")
+    pure = source[: source.index(BOOTSTRAP)] + EXPORT_TAIL
+    probe = """
+const __words = [];
+const __polls = [];
+const __live = document.getElementById("monitoring-live");
+let __liveText = "";
+Object.defineProperty(__live, "textContent", {
+  get: () => __liveText,
+  set: (value) => {
+    __liveText = String(value);
+    __words.push(__liveText);
+  },
+});
+for (const __view of JSON.parse(process.argv[1])) {
+  const __before = __words.length;
+  module.exports.renderMonitoringAlerts(__view);
+  const __panel = document.getElementById("monitoring-alerts");
+  __polls.push({
+    announced: __words.length > __before,
+    live: __live.textContent,
+    panel_hidden: __panel.hidden,
+    panel_text: __panel.innerHTML,
+  });
+}
+process.stdout.write(JSON.stringify(__polls));
+"""
+    program = "".join([MODULE_PRELUDE, DOM_STUB, pure, probe, MODULE_EPILOGUE])
+    completed = subprocess.run(
+        [NODE, "-e", program, json.dumps(views)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(f"node failed: {completed.stderr}")
+    return json.loads(completed.stdout)
+
+
 def health_payload(**overrides: object) -> dict:
     """A minimal validated health payload with one metric per domain."""
     payload = {
@@ -581,6 +630,113 @@ def test_a_page_never_renders_an_alert_list_with_a_mismatched_tag() -> None:
     # The metric and the evidence reference stay attached to the alert.
     assert "compute.disk_free_bytes" in markup
     assert "alert://compute.disk_free_bytes:disk_pressure:linux.statvfs" in markup
+
+
+def test_an_unavailable_monitoring_view_never_announces_an_all_clear() -> None:
+    # Issue #464: the live region said 当前没有活动告警 before checking
+    # `view.available`, so a failed refresh told a screen reader the robot was
+    # clear while the sighted panel was hidden. The no-alert sentence is a
+    # successful reading of an alert set; a view with no alert set must not
+    # borrow it.
+    unavailable = {"available": False, "alerts": []}
+    polls = _run_monitoring_polls([unavailable, unavailable])
+
+    assert polls[0]["announced"] is True
+    assert "不可用" in polls[0]["live"]
+    assert "没有活动告警" not in polls[0]["live"]
+    # "never" rather than "once": a five-second poll would otherwise repeat the
+    # failure sentence forever.
+    assert polls[1]["announced"] is False
+    assert polls[1]["live"] == polls[0]["live"]
+    # The visible panel says the same thing as the announcement, so a sighted
+    # and a screen-reader user are never told different stories.
+    assert polls[0]["panel_hidden"] is False
+    assert "不可用" in polls[0]["panel_text"]
+    assert "没有活动告警" not in polls[0]["panel_text"]
+
+
+def test_a_genuine_empty_alert_set_still_announces_no_active_alerts() -> None:
+    empty = {"available": True, "alerts": []}
+    polls = _run_monitoring_polls([empty, empty])
+
+    assert polls[0]["announced"] is True
+    assert polls[0]["live"] == "当前没有活动告警"
+    assert polls[0]["panel_hidden"] is False
+    assert "当前没有活动告警" in polls[0]["panel_text"]
+    # A successful poll with an unchanged alert set stays silent.
+    assert polls[1]["announced"] is False
+
+
+def test_an_active_alert_is_announced_and_a_failed_poll_is_not_an_all_clear() -> None:
+    alert = {
+        "alert_id": "can.link_ok:can_link_loss:can",
+        "condition": "can_link_loss",
+        "severity": "critical",
+        "state": "active",
+        "metric": "can.link_ok",
+        "first_seen_at": 12.0,
+        "last_seen_at": 20.0,
+        "count": 3,
+        "evidence_ref": "alert://can.link_ok:can_link_loss:can",
+    }
+    presented = {"available": True, "alerts": [alert]}
+    unavailable = {"available": False, "alerts": []}
+    polls = _run_monitoring_polls([presented, presented, unavailable])
+
+    assert "当前有 1 条活动告警" in polls[0]["live"]
+    assert "严重" in polls[0]["live"] and "CAN 链路中断" in polls[0]["live"]
+    assert polls[0]["panel_hidden"] is False
+    assert "当前有 1 条活动告警" not in polls[0]["panel_text"]
+    assert polls[1]["announced"] is False
+    # An alert that disappears because the poll failed is not an alert set that
+    # cleared, so the transition announces unavailability instead of "no alerts".
+    assert polls[2]["announced"] is True
+    assert "不可用" in polls[2]["live"]
+    assert "没有活动告警" not in polls[2]["live"]
+
+
+def test_recovery_from_unavailable_announces_the_recovered_state_once() -> None:
+    unavailable = {"available": False, "alerts": []}
+    empty = {"available": True, "alerts": []}
+    polls = _run_monitoring_polls([unavailable, unavailable, empty, empty])
+
+    assert polls[1]["announced"] is False
+    recovered = polls[2]
+    assert recovered["announced"] is True
+    assert recovered["live"] == "监控已恢复。当前没有活动告警"
+    assert recovered["panel_hidden"] is False
+    assert "当前没有活动告警" in recovered["panel_text"]
+    # Recovery is announced once; the next healthy poll is silent.
+    assert polls[3]["announced"] is False
+    assert polls[3]["live"] == recovered["live"]
+
+
+def test_a_recovered_alert_set_is_announced_rather_than_swallowed() -> None:
+    # The pre-#464 key was the empty alert signature, so an unavailable view
+    # recorded "" and the next healthy empty poll compared equal and said
+    # nothing: the recovery was never spoken. The key now distinguishes them.
+    alert = {
+        "alert_id": "can.link_ok:can_link_loss:can",
+        "condition": "can_link_loss",
+        "severity": "warning",
+        "state": "active",
+        "metric": "can.link_ok",
+        "count": 1,
+    }
+    polls = _run_monitoring_polls(
+        [
+            {"available": False, "alerts": []},
+            {"available": True, "alerts": [alert]},
+            {"available": True, "alerts": []},
+        ]
+    )
+
+    assert "不可用" in polls[0]["live"]
+    assert polls[1]["announced"] is True
+    assert polls[1]["live"].startswith("监控已恢复。")
+    assert "当前有 1 条活动告警" in polls[1]["live"]
+    assert polls[2]["announced"] is True
+    assert polls[2]["live"] == "当前没有活动告警"
 
 
 def test_the_trend_headers_are_localised_and_the_two_totals_are_distinguished() -> None:

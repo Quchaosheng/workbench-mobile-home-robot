@@ -1280,6 +1280,34 @@ function monitoringAlertSignature(alerts) {
     .join("|");
 }
 
+const MONITORING_ALERTS_UNAVAILABLE_KEY = "unavailable";
+
+// What the live region says, and the key that decides whether it says it at all.
+// Availability is part of the key and part of the text: "no active alerts" is a
+// successful reading of an alert set, while monitoring that could not be read
+// has no alert set to report. An unavailable view therefore announces its own
+// state, and a recovery from it announces the alert state once — the next poll
+// with the same key stays silent.
+function monitoringAnnouncement(view, previousKey) {
+  const alerts = view.alerts || [];
+  if (!view.available) {
+    return {
+      key: MONITORING_ALERTS_UNAVAILABLE_KEY,
+      text: "监控数据不可用，无法确认当前是否有活动告警",
+    };
+  }
+  const recovered = previousKey === MONITORING_ALERTS_UNAVAILABLE_KEY ? "监控已恢复。" : "";
+  if (!alerts.length) {
+    return { key: "alerts:", text: `${recovered}当前没有活动告警` };
+  }
+  return {
+    key: `alerts:${monitoringAlertSignature(alerts)}`,
+    text: `${recovered}当前有 ${alerts.length} 条活动告警，最高等级 ${
+      monitoringSeverityLabels[alerts[0].severity] || alerts[0].severity
+    }：${monitoringAlertLabel(alerts[0])}`,
+  };
+}
+
 function monitoringTrendRows(history) {
   const snapshots = history?.snapshots;
   const list = Array.isArray(snapshots) ? snapshots : [];
@@ -1369,18 +1397,18 @@ function renderMonitoringAlerts(view) {
   const panel = get("monitoring-alerts");
   const alerts = view.alerts || [];
   const live = get("monitoring-live");
-  // The live region speaks only when the alert set actually changes, so a
+  // The live region speaks only when what it would say changes, so a
   // five-second poll does not repeat the same announcement to a screen reader.
-  const signature = monitoringAlertSignature(alerts);
-  if (signature !== state.monitoringAlertKey) {
-    live.textContent = alerts.length
-      ? `当前有 ${alerts.length} 条活动告警，最高等级 ${monitoringSeverityLabels[alerts[0].severity] || alerts[0].severity}：${monitoringAlertLabel(alerts[0])}`
-      : "当前没有活动告警";
-    state.monitoringAlertKey = signature;
+  // The key covers availability as well as the alert set, and it is written
+  // before the panel is redrawn, so the spoken state and the visible one agree.
+  const announcement = monitoringAnnouncement(view, state.monitoringAlertKey);
+  if (announcement.key !== state.monitoringAlertKey) {
+    live.textContent = announcement.text;
+    state.monitoringAlertKey = announcement.key;
   }
   if (!view.available) {
-    panel.innerHTML = "";
-    panel.hidden = true;
+    panel.innerHTML = `<p class="monitoring-empty">监控数据不可用，无法读取活动告警。</p>`;
+    panel.hidden = false;
     return;
   }
   panel.hidden = false;
