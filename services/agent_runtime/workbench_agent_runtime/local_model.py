@@ -161,6 +161,20 @@ def _read_bounded_body(response: object) -> bytes:
     return b"".join(chunks)
 
 
+def _validated_token_count(payload: dict[str, object], field: str) -> int | None:
+    """A provider counter is cost evidence, so it is a count or it is unavailable.
+
+    `bool` is excluded explicitly because it is an `int` subclass, and a missing
+    counter stays `None` rather than becoming a fabricated zero.
+    """
+    value = payload.get(field)
+    if value is None:
+        return None
+    if type(value) is not int or value < 0:
+        raise LocalModelError(f"local model response field {field} must be a non-negative integer")
+    return value
+
+
 def _require_json_content_type(response: object) -> None:
     """Reject a body the endpoint never claimed was JSON.
 
@@ -244,6 +258,12 @@ class OllamaModelProvider:
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise LocalModelError("local model response does not contain valid message JSON") from exc
         decision = RouteDecision.from_mapping(route_payload)
+        # Both counters are validated before `last_call` is touched, so a
+        # malformed one cannot leave a partially accepted telemetry record.
+        tokens = {
+            "input_tokens": _validated_token_count(payload, "prompt_eval_count"),
+            "output_tokens": _validated_token_count(payload, "eval_count"),
+        }
         self.last_call = {
             "provider": self.name,
             "model": self.model,
@@ -251,8 +271,7 @@ class OllamaModelProvider:
             "latency_ms": elapsed_ms,
             "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
             "done_reason": payload.get("done_reason"),
-            "input_tokens": payload.get("prompt_eval_count"),
-            "output_tokens": payload.get("eval_count"),
+            **tokens,
         }
         return decision
 
