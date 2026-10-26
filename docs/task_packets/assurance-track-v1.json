@@ -16,7 +16,9 @@
     "Makefile",
     ".github/workflows/ci.yml",
     "mkdocs.yml",
-    "README.md"
+    "README.md",
+    "docs/qa/killed-run-staging-residue.md",
+    "tests/unit/test_sim_cli.py"
   ],
   "read_only_paths": [
     "interfaces/**",
@@ -35,7 +37,8 @@
     "no fault case expects a confirmed goal verdict",
     "the generated page is byte-identical to the document the register generates",
     "an unresolvable scenario is refused before a runner starts and leaves no output directory",
-    "existing scenario, controller and CAN tests keep passing"
+    "existing scenario, controller and CAN tests keep passing",
+    "a stale `.partial` staging directory from a killed run is removed by the next run, and a fresh one is left alone"
   ],
   "commands": [
     "python -m pytest tests/unit/test_assurance_matrix.py tests/unit/test_sim_cli.py -v",
