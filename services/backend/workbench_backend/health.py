@@ -25,6 +25,7 @@ snapshots, and the HTTP layer only reads.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import threading
@@ -51,10 +52,196 @@ from workbench.application.monitoring import (
 )
 
 HEALTH_HISTORY_VERSION = "backend-health-history-v1"
+MONITORING_POLICY_VERSION = "backend-monitoring-policy-v1"
 
 MAX_SNAPSHOTS = 256
 MAX_HEALTH_DOCUMENT_BYTES = 1024 * 1024
 MAX_METRICS_PER_DOMAIN = 128
+
+# The debounce policy is explicit configuration, never an implicit property of
+# the constructor. Issue #449 depends on Operations/Safety approving the target
+# windows, so no production threshold is invented here. The default therefore
+# keeps the behavior a deployment had before the knob existed -- and labels it
+# ``debounce_disabled`` in the payload instead of leaving the effective value
+# implicit.
+DEFAULT_ALERT_OPEN_AFTER_S = 0.0
+DEFAULT_ALERT_CLEAR_AFTER_S = 0.0
+DEFAULT_ALERT_DEBOUNCE_DISABLED = "debounce_disabled"
+DEFAULT_ALERT_DEBOUNCE_ENABLED = "debounce_enabled"
+
+# A debounce window longer than an hour would hold a condition open long after
+# the evidence that opened it stopped being current, so the configuration is
+# bounded rather than merely non-negative.
+MAX_ALERT_DEBOUNCE_S = 3600.0
+
+POLICY_SOURCE_DEFAULT = "server-default"
+POLICY_SOURCE_ENVIRONMENT = "environment"
+POLICY_SOURCE_CLI = "command-line"
+POLICY_SOURCE_ARGUMENT = "caller"
+
+POLICY_SOURCES = frozenset(
+    {POLICY_SOURCE_DEFAULT, POLICY_SOURCE_ENVIRONMENT, POLICY_SOURCE_CLI, POLICY_SOURCE_ARGUMENT}
+)
+
+# One environment name per policy field, matching the ``WORKBENCH_*`` naming the
+# rest of the backend CLI already reads.
+POLICY_ENVIRONMENT = {
+    "open_after_s": "WORKBENCH_ALERT_OPEN_AFTER_SECONDS",
+    "clear_after_s": "WORKBENCH_ALERT_CLEAR_AFTER_SECONDS",
+    "history_age_s": "WORKBENCH_ALERT_HISTORY_AGE_SECONDS",
+    "max_history": "WORKBENCH_ALERT_MAX_HISTORY",
+}
+
+
+class MonitoringPolicyError(ValueError):
+    """The configured alert policy is not usable monitoring evidence."""
+
+
+def default_alert_policy() -> AlertPolicy:
+    """Return the documented default, which a deployment can always see in the payload."""
+    return AlertPolicy(open_after_s=DEFAULT_ALERT_OPEN_AFTER_S, clear_after_s=DEFAULT_ALERT_CLEAR_AFTER_S)
+
+
+def _provided(value: object) -> object | None:
+    """Treat an absent or blank value as "not configured".
+
+    Compose interpolates an unset variable to an empty string, and a blank
+    numeric setting is not a value an operator meant to supply.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+def _policy_number(value: object, *, setting: str, maximum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise MonitoringPolicyError(f"{setting} must be a number of seconds")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise MonitoringPolicyError(f"{setting} must be a number of seconds") from None
+    if not math.isfinite(number) or not 0 <= number <= maximum:
+        raise MonitoringPolicyError(f"{setting} must be between 0 and {maximum:g} seconds")
+    return number
+
+
+def _policy_count(value: object, *, setting: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise MonitoringPolicyError(f"{setting} must be a whole number")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise MonitoringPolicyError(f"{setting} must be a whole number") from None
+
+
+def validate_policy_source(source: object) -> str:
+    if not isinstance(source, str) or source not in POLICY_SOURCES:
+        raise MonitoringPolicyError(f"alert policy source must be one of {sorted(POLICY_SOURCES)}")
+    return source
+
+
+def build_alert_policy(
+    *,
+    open_after_s: object = None,
+    clear_after_s: object = None,
+    history_age_s: object = None,
+    max_history: object = None,
+) -> AlertPolicy:
+    """Build the policy from untyped settings, refusing anything unusable.
+
+    Every field is parsed and bounded here rather than left to ``AlertPolicy``,
+    because a startup must fail before the socket is bound: a policy that is
+    accepted here is exactly the one the payload will report.
+    """
+    resolved_open = _provided(open_after_s)
+    resolved_clear = _provided(clear_after_s)
+    resolved_age = _provided(history_age_s)
+    resolved_history = _provided(max_history)
+    try:
+        return AlertPolicy(
+            open_after_s=(
+                DEFAULT_ALERT_OPEN_AFTER_S
+                if resolved_open is None
+                else _policy_number(
+                    resolved_open, setting=POLICY_ENVIRONMENT["open_after_s"], maximum=MAX_ALERT_DEBOUNCE_S
+                )
+            ),
+            clear_after_s=(
+                DEFAULT_ALERT_CLEAR_AFTER_S
+                if resolved_clear is None
+                else _policy_number(
+                    resolved_clear, setting=POLICY_ENVIRONMENT["clear_after_s"], maximum=MAX_ALERT_DEBOUNCE_S
+                )
+            ),
+            history_age_s=(
+                MAX_HISTORY_AGE_S
+                if resolved_age is None
+                else _policy_number(
+                    resolved_age, setting=POLICY_ENVIRONMENT["history_age_s"], maximum=MAX_HISTORY_AGE_S
+                )
+            ),
+            max_history=(
+                MAX_HISTORY_ENTRIES
+                if resolved_history is None
+                else _policy_count(resolved_history, setting=POLICY_ENVIRONMENT["max_history"])
+            ),
+        )
+    except AlertError as exc:
+        raise MonitoringPolicyError(f"invalid alert policy: {exc}") from exc
+
+
+def validate_alert_policy(policy: object) -> AlertPolicy:
+    """Reject a policy a caller constructed, before it can reach the socket."""
+    if not isinstance(policy, AlertPolicy):
+        raise MonitoringPolicyError("alert_policy must be an AlertPolicy")
+    for setting, maximum in (
+        ("open_after_s", MAX_ALERT_DEBOUNCE_S),
+        ("clear_after_s", MAX_ALERT_DEBOUNCE_S),
+        ("history_age_s", MAX_HISTORY_AGE_S),
+    ):
+        value = getattr(policy, setting)
+        if not math.isfinite(value) or not 0 <= value <= maximum:
+            raise MonitoringPolicyError(f"{setting} must be between 0 and {maximum:g} seconds")
+    return policy
+
+
+def alert_policy_digest(policy: AlertPolicy) -> str:
+    """A stable hash of the effective values, so an operator can compare deployments."""
+    validated = validate_alert_policy(policy)
+    canonical = json.dumps(
+        {
+            "version": MONITORING_POLICY_VERSION,
+            "open_after_s": validated.open_after_s,
+            "clear_after_s": validated.clear_after_s,
+            "history_age_s": validated.history_age_s,
+            "max_history": validated.max_history,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def describe_alert_policy(policy: AlertPolicy, *, source: str) -> dict[str, Any]:
+    """The payload's honest view of the policy this instance actually runs."""
+    validated = validate_alert_policy(policy)
+    disabled = validated.open_after_s == 0 and validated.clear_after_s == 0
+    return {
+        "version": MONITORING_POLICY_VERSION,
+        "source": validate_policy_source(source),
+        # A zero/zero policy is reported as disabled by name instead of looking
+        # like a deployment that simply forgot to configure debounce.
+        "debounce": DEFAULT_ALERT_DEBOUNCE_DISABLED if disabled else DEFAULT_ALERT_DEBOUNCE_ENABLED,
+        "open_after_s": validated.open_after_s,
+        "clear_after_s": validated.clear_after_s,
+        "history_age_s": validated.history_age_s,
+        "max_history": validated.max_history,
+        "sha256": alert_policy_digest(validated),
+    }
+
 
 _SPECS_BY_NAME = {spec.name: spec for spec in DEFAULT_SPECS}
 # Every validated snapshot carries the full registry, so the expected
@@ -306,15 +493,19 @@ class HealthStore:
         *,
         max_snapshots: int = MAX_SNAPSHOTS,
         policy: AlertPolicy | None = None,
+        policy_source: str = POLICY_SOURCE_DEFAULT,
         source: str = "health-document",
     ) -> None:
         if type(max_snapshots) is not int or not 1 <= max_snapshots <= MAX_SNAPSHOTS:
             raise HealthHistoryError(f"max_snapshots must be between 1 and {MAX_SNAPSHOTS}")
-        resolved = policy if policy is not None else AlertPolicy()
+        # The default is built explicitly rather than by leaving ``AlertPolicy()``
+        # implicit: the store always holds a policy it can name in its payload.
+        resolved = default_alert_policy() if policy is None else policy
         if not isinstance(resolved, AlertPolicy):
             raise HealthHistoryError("policy must be an AlertPolicy")
         self.max_snapshots = max_snapshots
         self.policy = resolved
+        self.policy_source = validate_policy_source(policy_source)
         self.source = source
         self._tracker = AlertTracker(resolved)
         self._lock = threading.RLock()
@@ -398,6 +589,7 @@ class HealthStore:
             "history_version": HEALTH_HISTORY_VERSION,
             "status": overall_status(current, active) if current is not None else "unknown",
             "source": self.source,
+            "monitoring_policy": describe_alert_policy(self.policy, source=self.policy_source),
             "current": current.as_dict() if current is not None else None,
             "alerts": {
                 "summary": summarize_alerts(active),
@@ -407,12 +599,7 @@ class HealthStore:
                 "snapshot_count": len(stored),
                 "oldest_collected_at": stored[0].collected_at if stored else None,
                 "newest_collected_at": stored[-1].collected_at if stored else None,
-                "limits": {
-                    "max_snapshots": self.max_snapshots,
-                    "max_history_entries": MAX_HISTORY_ENTRIES,
-                    "max_history_age_s": MAX_HISTORY_AGE_S,
-                    "max_document_bytes": MAX_HEALTH_DOCUMENT_BYTES,
-                },
+                "limits": self._limits(),
             },
             "integrity": {"malformed_documents": malformed, "source_restarts": restarts},
         }
@@ -431,6 +618,7 @@ class HealthStore:
             "rules_version": ALERT_RULES_VERSION,
             "history_version": HEALTH_HISTORY_VERSION,
             "source": self.source,
+            "monitoring_policy": describe_alert_policy(self.policy, source=self.policy_source),
             "snapshots": [
                 {
                     "collected_at": entry.collected_at,
@@ -441,12 +629,15 @@ class HealthStore:
                 for entry in stored
             ],
             "cleared_alerts": [alert.as_dict() for alert in cleared],
-            "limits": {
-                "max_snapshots": self.max_snapshots,
-                "max_history_entries": MAX_HISTORY_ENTRIES,
-                "max_history_age_s": MAX_HISTORY_AGE_S,
-                "max_document_bytes": MAX_HEALTH_DOCUMENT_BYTES,
-            },
+            "limits": self._limits(),
+        }
+
+    def _limits(self) -> dict[str, Any]:
+        return {
+            "max_snapshots": self.max_snapshots,
+            "max_history_entries": self.policy.max_history,
+            "max_history_age_s": self.policy.history_age_s,
+            "max_document_bytes": MAX_HEALTH_DOCUMENT_BYTES,
         }
 
     def snapshot_count(self) -> int:
@@ -472,13 +663,20 @@ class HealthReadModel:
         path: str | Path | None = None,
         *,
         policy: AlertPolicy | None = None,
+        policy_source: str = POLICY_SOURCE_DEFAULT,
         max_snapshots: int = MAX_SNAPSHOTS,
     ) -> None:
         self.path = Path(path) if path is not None else None
-        self._store = HealthStore(max_snapshots=max_snapshots, policy=policy)
+        self.policy_source = validate_policy_source(policy_source)
+        self._store = HealthStore(max_snapshots=max_snapshots, policy=policy, policy_source=self.policy_source)
         self._lock = threading.RLock()
         self._stat: tuple[int, int] | None = None
         self._loaded = False
+
+    @property
+    def policy(self) -> AlertPolicy:
+        """The effective debounce policy, for a startup log or an operator check."""
+        return self._store.policy
 
     def refresh(self) -> None:
         """Load the document when it exists and has changed since the last read."""
@@ -498,7 +696,11 @@ class HealthReadModel:
             if self._loaded and signature == self._stat:
                 return
             snapshots = load_health_documents(self.path)
-            self._store = HealthStore(max_snapshots=self._store.max_snapshots, policy=self._store.policy)
+            self._store = HealthStore(
+                max_snapshots=self._store.max_snapshots,
+                policy=self._store.policy,
+                policy_source=self.policy_source,
+            )
             self._store.ingest_documents(snapshots, source=self.path.name)
             self._stat = signature
             self._loaded = True
@@ -520,12 +722,27 @@ class HealthReadModel:
 
 
 __all__ = [
+    "DEFAULT_ALERT_CLEAR_AFTER_S",
+    "DEFAULT_ALERT_OPEN_AFTER_S",
     "HEALTH_HISTORY_VERSION",
+    "MAX_ALERT_DEBOUNCE_S",
     "MAX_HEALTH_DOCUMENT_BYTES",
     "MAX_SNAPSHOTS",
+    "MONITORING_POLICY_VERSION",
+    "POLICY_ENVIRONMENT",
+    "POLICY_SOURCE_ARGUMENT",
+    "POLICY_SOURCE_CLI",
+    "POLICY_SOURCE_DEFAULT",
+    "POLICY_SOURCE_ENVIRONMENT",
     "HealthHistoryError",
     "HealthReadModel",
     "HealthStore",
+    "MonitoringPolicyError",
+    "alert_policy_digest",
+    "build_alert_policy",
+    "default_alert_policy",
+    "describe_alert_policy",
     "load_health_documents",
     "snapshot_from_document",
+    "validate_alert_policy",
 ]
