@@ -88,6 +88,9 @@ The register is at [`docs/assurance/`](docs/assurance/) and the readable page is
 [`docs/architecture/assurance-track.md`](docs/architecture/assurance-track.md).
 This track is **runtime assurance, not a functional-safety certification**: no
 row is a SIL, ASIL or ISO 26262 claim, and every current row is `SIMULATED`.
+What that does and does not mean against ISO 12100, ISO 13849-1, ISO 13849-2 and
+ISO 13482 is stated line by line, with a sayable / not-sayable table, in
+[`docs/security/functional-safety-boundary.md`](docs/security/functional-safety-boundary.md).
 
 Default behaviour is unchanged; the assurance mode is opt-in and reads the
 evidence a normal run already writes.

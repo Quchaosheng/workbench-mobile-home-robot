@@ -21,6 +21,10 @@ It does **not** claim a functional-safety certification. No row here is a SIL, A
 ISO 26262 claim, and no row is physical evidence: every current row is `SIMULATED`.
 A scripted or unit-level fault proves the rule, not the machine.
 
+The position against ISO 12100, ISO 13849-1, ISO 13849-2 and ISO 13482 is recorded
+line by line in `docs/security/functional-safety-boundary.md`. Nothing in this
+register is a safety function and nothing here carries a performance level.
+
 ## How to read a row
 
 - **Status** is `ENFORCED` (a resolving enforcement symbol and at least one resolving test)
@@ -38,7 +42,7 @@ A scripted or unit-level fault proves the rule, not the machine.
 
 ## Invariants
 
-| ID | Statement | Boundary | Status | Enforced at | Evidence |
+| ID | Statement | Runtime boundary | Status | Enforced at | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | `INV-01` | A scenario the registry cannot resolve to exactly one identity is refused before a runner starts, and no evidence directory is published. | Scenario registry and run admission | ENFORCED | `tools/scripts/sim_cli.py::_identity_entry` | `tests/unit/test_assurance_matrix.py::test_unregistered_scenario_cannot_start_a_run` |
 | `INV-02` | A PolicyProposal that carries raw joint, velocity or torque parameters is refused before dispatch. | Policy validation | ENFORCED | `services/agent_runtime/workbench_agent_runtime/policy_validator.py::PolicyValidator.check` | `tests/unit/test_policy_validator.py::PolicyValidatorRawControlTests::test_disguised_raw_control_identifiers_are_denied` |
