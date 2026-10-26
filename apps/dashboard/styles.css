@@ -2436,6 +2436,47 @@ svg {
   opacity: 0.4;
 }
 
+/* A failed run-list request hides the rows and their totals; the list states
+   why it is unavailable instead of showing the previous response as current. */
+.run-list-unavailable {
+  padding: 14px;
+  border: 1px dashed var(--red);
+  border-radius: 6px;
+  background: var(--red-soft);
+}
+
+.run-list-unavailable strong {
+  display: block;
+  color: var(--red);
+  font-size: 12px;
+}
+
+.run-list-unavailable p {
+  margin: 4px 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.run-retry {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.count-badge.is-unavailable,
+.pagination-copy.is-unavailable {
+  color: var(--red);
+  font-style: italic;
+  font-variant-numeric: normal;
+}
+
 .phase-timeline {
   display: grid;
   gap: 6px;

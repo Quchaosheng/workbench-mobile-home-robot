@@ -17,6 +17,7 @@ const state = {
   timer: null,
   runRequest: null,
   listRequest: null,
+  listFailure: null,
   requestGeneration: 0,
   toastTimer: null,
   monitoring: null,
@@ -326,18 +327,33 @@ function deriveSummary(events, cursor = events.length - 1) {
 }
 
 function renderRunList() {
+  const failure = state.listFailure;
   const runs = filterRunList(state.runs, state.selection).filter((run) => {
     if (state.filter === "all") return true;
     if (state.filter === "attention") return evidenceReading(run).incomplete;
     return run.status === state.filter;
   });
-  get("run-count").textContent = String(runs.length);
-  get("run-list").innerHTML = runs
-    .map((run) => {
-      const scenario = scenarioReading(run);
-      const evidence = evidenceReading(run);
-      const outcome = outcomeReading(run);
-      return `
+  // A failed request is an unavailable list, not an empty result: the count is
+  // unknown, the rows are dropped so no stale run can be picked, and the reason
+  // stays on screen until a retry or a successful response resolves it.
+  get("run-count").textContent = failure ? "--" : String(runs.length);
+  get("run-count").classList.toggle("is-unavailable", Boolean(failure));
+  if (failure) {
+    const list = get("run-list");
+    list.innerHTML = `
+      <div class="run-list-unavailable" role="alert">
+        <strong>运行列表暂时不可用</strong>
+        <p>${escapeHtml(failure.message)}。此处不显示上一次的总数或分页。</p>
+        <button type="button" class="run-retry">重试</button>
+      </div>`;
+    list.querySelector(".run-retry").addEventListener("click", () => loadRuns(failure.page));
+  } else {
+    get("run-list").innerHTML = runs
+      .map((run) => {
+        const scenario = scenarioReading(run);
+        const evidence = evidenceReading(run);
+        const outcome = outcomeReading(run);
+        return `
         <button class="run-item ${run.run_id === state.currentRun?.run_id ? "is-active" : ""}"
           type="button" data-run-id="${escapeHtml(run.run_id)}"
           aria-pressed="${run.run_id === state.currentRun?.run_id}">
@@ -365,8 +381,9 @@ function renderRunList() {
             <time>${escapeHtml(formatTime(run.updated_at, true))}</time>
           </div>
         </button>`;
-    })
-    .join("");
+      })
+      .join("");
+  }
   document.querySelectorAll(".run-item").forEach((button) => {
     button.addEventListener("click", () => selectRun(button.dataset.runId));
   });
@@ -380,6 +397,20 @@ function renderRunList() {
 function renderRunPagination() {
   const target = get("run-pagination");
   if (!target) return;
+  // A failed request leaves the page unknown, so neither the counts nor the
+  // page controls may describe the previous response any more.
+  if (state.listFailure) {
+    target.innerHTML = `
+    <span class="pagination-copy is-unavailable" aria-live="polite">分页不可用 · 总数与页码未知</span>
+    <span class="pagination-controls">
+      <button type="button" class="icon-button" data-page-step="-1"
+        aria-label="上一页" disabled><i data-lucide="chevron-left"></i></button>
+      <button type="button" class="icon-button" data-page-step="1"
+        aria-label="下一页" disabled><i data-lucide="chevron-right"></i></button>
+    </span>`;
+    refreshIcons();
+    return;
+  }
   const summary = pageSummary({
     total: state.total,
     unfiltered_count: state.unfilteredCount,
@@ -1722,12 +1753,17 @@ async function loadRuns(page = state.page) {
     state.total = Number(payload.total ?? state.runs.length);
     state.unfilteredCount = Number(payload.unfiltered_count ?? state.total);
     state.maxPageSize = Number(payload.max_page_size ?? state.maxPageSize);
+    state.listFailure = null;
     renderRunList();
     return state.runs;
   } catch (error) {
     if (error.name === "AbortError") return state.runs;
-    showToast(`无法读取运行列表：${error.message}`);
-    return state.runs;
+    // A failed request leaves the selection unresolved, so the list and the
+    // pagination are rendered as unavailable instead of reusing the last
+    // successful totals beside a locally filtered list.
+    state.listFailure = { message: error.message || "unavailable", page };
+    renderRunList();
+    return [];
   } finally {
     state.listRequest = null;
   }
