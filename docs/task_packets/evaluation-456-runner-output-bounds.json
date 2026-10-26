@@ -1,0 +1,39 @@
+{
+  "issue": 456,
+  "human_owner": "Quchaosheng",
+  "objective": "Bound an external runner's stdout and stderr instead of capturing them with an unbounded PIPE, so a runaway runner cannot exhaust memory before it is killed.",
+  "allowed_paths": [
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_evaluation_tools.py",
+    "docs/task_packets/evaluation-456-runner-output-bounds.json"
+  ],
+  "read_only_paths": [
+    "tools/scripts/_jsonio.py",
+    "tools/scripts/collect_metrics.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "interfaces/**"
+  ],
+  "acceptance": [
+    "runner stdout and stderr are captured to bounded sinks, not to an unbounded PIPE",
+    "a runner that exceeds the output budget is stopped and reported as blocked rather than truncated into a pass",
+    "the blocked report is typed and bounded, and its detail does not echo unbounded runner output",
+    "a runner that exceeds its time budget is still reported as a timeout, unchanged",
+    "a normal runner's output is still captured in full and its evidence unchanged",
+    "no runner is left running after the budget trips"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_evaluation_tools.py -q"
+  ],
+  "evidence": [
+    "43 passed in tests/unit/test_evaluation_tools.py",
+    "build/verify.sh reports no new failures against the 12-failure environmental baseline"
+  ],
+  "stop_conditions": [
+    "bounding the output would truncate evidence a passing run depends on",
+    "an interface schema under interfaces/ would have to change",
+    "a subprocess would be left orphaned"
+  ]
+}
