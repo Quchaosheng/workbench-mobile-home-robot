@@ -1,0 +1,64 @@
+{
+  "issue": 430,
+  "human_owner": "Quchaosheng",
+  "objective": "Scrub credential-shaped payload keys and raw-evidence fields out of the /timeline and /events response bodies through the versioned redaction module, record the rule version when a value changed, and leave the append-only source event and its correlation fields unmodified.",
+  "decision_supported": "May the read-only backend serve a producer-controlled event payload over /timeline and /events, or must the response copy clear the same artifact boundary every other scrubbed artifact clears?",
+  "allowed_paths": [
+    "services/backend/workbench_backend/read_model.py",
+    "services/backend/workbench_backend/server.py",
+    "services/backend/README.md",
+    "tests/unit/test_dashboard_backend.py",
+    "tests/unit/test_observability_contract.py",
+    "docs/task_packets/issue-430-timeline-response-redaction.json"
+  ],
+  "read_only_paths": [
+    "libs/application/workbench/application/redaction.py",
+    "services/backend/workbench_backend/api-openapi-v1.json",
+    "docs/api-openapi-v1.json",
+    "docs/security/hardening.md",
+    "SECURITY.md",
+    "apps/dashboard/data/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "robot/control/**",
+    "firmware/**",
+    "services/world_model/**",
+    "services/agent_runtime/**",
+    "libs/contracts/**"
+  ],
+  "acceptance": [
+    "/timeline response payloads scrub credential-shaped keys and raw-evidence fields through workbench.application.redaction rather than a second scheme",
+    "/events response payloads and the run summary derived from them clear the same boundary through the same module",
+    "a clean payload is returned unchanged and run_id, sequence_no, event_id, event_type, occurred_at and evidence_refs survive verbatim",
+    "the HTTP body of both routes never contains the synthetic credential or the raw-frame sentinel",
+    "a scrubbed item carries redaction.rules == REDACTION_RULES_VERSION with a bounded redacted_values count, and a clean item carries no marker",
+    "the append-only source event, its in-memory record and the .jsonl on disk are byte-identical before and after both reads"
+  ],
+  "commands": [
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/unit/test_dashboard_backend.py tests/unit/test_observability_contract.py",
+    "python3 -m ruff check services/backend/workbench_backend/read_model.py services/backend/workbench_backend/server.py tests/unit/test_dashboard_backend.py tests/unit/test_observability_contract.py",
+    "python3 -m ruff format --check services/backend/workbench_backend/read_model.py services/backend/workbench_backend/server.py tests/unit/test_dashboard_backend.py tests/unit/test_observability_contract.py",
+    "python3 tools/scripts/check_task_packet.py --all --base 3737d308de936d9d3b55de7fa6309ec59b3afd88"
+  ],
+  "evidence": [
+    "reproducer before: run_timeline returns {'api_key': 'synthetic-value', 'raw_frame': 'bytes'} unchanged",
+    "reproducer after: run_timeline returns {'api_key': '<redacted>', 'raw_frame': '<evidence-ref:redacted>'}' with redaction.rules == redaction-rules-v1",
+    "HTTP-level assertion on /api/v1/runs/{run_id}/timeline and /events that the sentinels are absent from the decoded body",
+    "clean-payload equality assertion and an assertion that a clean item grows no redaction marker",
+    "byte-equality assertion on the source .jsonl before and after both routes are read"
+  ],
+  "stop_conditions": [
+    "the API cannot distinguish an evidence reference from raw evidence without a contract change",
+    "a fix would filter a field silently instead of reporting the withheld value in band",
+    "the change would mutate the append-only event store or rewrite a stored event",
+    "the redaction module would have to be duplicated, forked or diverged from REDACTION_RULES_VERSION"
+  ],
+  "data_classification": "synthetic-only fixture values; no live credential, camera frame or personal data is introduced or read",
+  "model_policy": "No model call is made by the change or by its tests.",
+  "risks_and_fallbacks": [
+    "A clean payload must stay byte-identical, so the redactor is applied per response object and the marker is added only when a count is non-zero",
+    "Rollback is to mark the timeline payload unavailable and return evidence_refs only; the disable path fails closed and never serves the unredacted payload",
+    "The OpenAPI schema describes payload as a free-form object, so a bounded redaction marker is additive and needs no contract change"
+  ]
+}
