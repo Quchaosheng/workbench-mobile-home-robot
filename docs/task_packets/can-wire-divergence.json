@@ -1,0 +1,58 @@
+{
+  "issue": 493,
+  "human_owner": "Quchaosheng",
+  "objective": "Record that Workbench's MCU CAN Wire V1 and the companion runtime's runtime_can use incompatible classic-CAN payloads on the same arbitration IDs, so no reader assumes the two systems can share one bus.",
+  "decision_supported": "Whether the two encodings are documented as deliberately incompatible now, and whether adopting one layout or bridging them is a later owner decision.",
+  "allowed_paths": [
+    "docs/architecture/mcu-wire-v1.md",
+    "integrations/ros2_runtime/README.md",
+    "tests/unit/test_can_transport.py",
+    "docs/task_packets/can-wire-divergence.json"
+  ],
+  "read_only_paths": [
+    "libs/hardware/**",
+    "interfaces/**"
+  ],
+  "forbidden": [
+    "firmware/**",
+    "robot/control/**",
+    "services/**"
+  ],
+  "input_refs": [
+    "docs/architecture/mcu-wire-v1.md",
+    "libs/hardware/workbench/hardware/can_driver_safe.py"
+  ],
+  "outputs": [
+    "docs/architecture/mcu-wire-v1.md",
+    "integrations/ros2_runtime/README.md",
+    "tests/unit/test_can_transport.py"
+  ],
+  "acceptance": [
+    "the wire document tabulates both layouts and states they are not interoperable",
+    "the TaskEvent integration README states it is not a CAN interoperation claim",
+    "a test asserts a foreign runtime_can command frame and a foreign STOP frame are both rejected",
+    "no wire constant, schema or codec behaviour changes"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_can_transport.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "test_can_transport.py: 41 passed, including test_rejects_a_foreign_classic_can_encoding",
+    "ruff check and ruff format --check pass on the branch"
+  ],
+  "stop_conditions": [
+    "the change would require modifying a codec, identifier or payload layout",
+    "an owner decision is needed about which side owns the bus",
+    "the repository schema would need to change"
+  ],
+  "max_iterations": 2,
+  "data_classification": "public",
+  "model_policy": "human-reviewed",
+  "risks_and_fallbacks": [
+    "The divergence is documented, not fixed; a future reader may still expect interoperation.",
+    "Fallback if the two encodings must meet: open a separate decision record and codec change, never relax the version check in place.",
+    "The test pins rejection, so an accidental future 'compatibility' fix fails it."
+  ]
+}
