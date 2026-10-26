@@ -26,6 +26,7 @@ from workbench_agent_runtime.recovery import (
     RECOVERY_POLICY_BUDGET_EXHAUSTED,
     RECOVERY_POLICY_EMPTY_ACTIONS,
     RECOVERY_POLICY_EVIDENCE_NOT_FRESH,
+    RECOVERY_POLICY_EVIDENCE_UNOBSERVED,
     RECOVERY_POLICY_INVALID_BUDGET,
     RECOVERY_POLICY_MALFORMED,
     RECOVERY_POLICY_RUNTIME_OWNED_ACTION,
@@ -96,6 +97,25 @@ def evidence_stamp(**kwargs):
     from workbench_agent_runtime.recovery import EvidenceStamp
 
     return EvidenceStamp(**kwargs)
+
+
+def observed(
+    *,
+    observed_at: str = "2026-09-01T00:00:30Z",
+    fresh: bool = True,
+    provenance_valid: bool = True,
+    sequence_no: int = 6,
+    evidence_refs: tuple[str, ...] = (),
+):
+    """One recorded observation with the reference identity it carries."""
+
+    return evidence_stamp(
+        observed_at=observed_at,
+        fresh=fresh,
+        provenance_valid=provenance_valid,
+        sequence_no=sequence_no,
+        evidence_refs=evidence_refs,
+    )
 
 
 class TestPolicyParse:
@@ -328,26 +348,120 @@ class TestLedgerBehaviour:
 
 
 class TestRecoveryCannotLaunderFailure:
-    def test_a_confirmed_verification_with_no_new_evidence_is_refused(self) -> None:
+    """Issue #439: completion needs a real observation, not just a new string."""
+
+    def test_a_confirmed_verification_with_no_observation_is_refused(self) -> None:
+        # The issue's reproduction: a caller that never called
+        # ``record_observation`` supplies "frame-fabricated" and used to complete.
         held = ledger()
         held.record_verification(verification(hint="retry_action", evidence_refs=("frame-a",)))
         with pytest.raises(RecoveryPolicyError) as caught:
             held.record_verification(
-                verification(status="confirmed", hint="none", verification_id="verify-done", evidence_refs=("frame-a",))
+                verification(
+                    status="confirmed",
+                    hint="none",
+                    verification_id="verify-done",
+                    evidence_refs=("frame-fabricated",),
+                )
+            )
+        assert caught.value.code == RECOVERY_POLICY_EVIDENCE_NOT_FRESH
+        assert held.state is not RecoveryState.COMPLETE
+
+    def test_a_fabricated_reference_off_the_recorded_observation_is_refused(self) -> None:
+        # The observation exists, but the confirmation cites a string the
+        # observation never carried. A set difference cannot tell those apart.
+        held = ledger()
+        held.record_verification(verification(hint="retry_action", evidence_refs=("frame-a",)))
+        held.record_observation(observed(evidence_refs=("frame-observed",), sequence_no=6))
+        with pytest.raises(RecoveryPolicyError) as caught:
+            held.record_verification(
+                verification(
+                    status="confirmed",
+                    hint="none",
+                    verification_id="verify-done",
+                    evidence_refs=("frame-fabricated",),
+                )
+            )
+        assert caught.value.code == RECOVERY_POLICY_EVIDENCE_UNOBSERVED
+        assert held.state is not RecoveryState.COMPLETE
+
+    def test_a_stale_observation_cannot_complete_recovery(self) -> None:
+        held = ledger()
+        held.record_verification(verification(hint="retry_action", evidence_refs=("frame-a",)))
+        held.record_observation(observed(fresh=False, evidence_refs=("frame-observed",), sequence_no=6))
+        with pytest.raises(RecoveryPolicyError) as caught:
+            held.record_verification(
+                verification(
+                    status="confirmed",
+                    hint="none",
+                    verification_id="verify-done",
+                    evidence_refs=("frame-observed",),
+                )
             )
         assert caught.value.code == RECOVERY_POLICY_EVIDENCE_NOT_FRESH
 
-    def test_a_confirmed_verification_with_new_evidence_completes(self) -> None:
+    def test_an_unprovenanced_observation_cannot_complete_recovery(self) -> None:
         held = ledger()
         held.record_verification(verification(hint="retry_action", evidence_refs=("frame-a",)))
+        held.record_observation(observed(provenance_valid=False, evidence_refs=("frame-observed",), sequence_no=6))
+        with pytest.raises(RecoveryPolicyError) as caught:
+            held.record_verification(
+                verification(
+                    status="confirmed",
+                    hint="none",
+                    verification_id="verify-done",
+                    evidence_refs=("frame-observed",),
+                )
+            )
+        assert caught.value.code == RECOVERY_POLICY_EVIDENCE_NOT_FRESH
+
+    def test_a_sequence_old_observation_cannot_complete_recovery(self) -> None:
+        # The sample predates the failure, so it was already known when the
+        # attempt failed and cannot be what the confirmation is based on.
+        held = ledger()
+        held.record_observation(observed(evidence_refs=("frame-observed",), sequence_no=4))
+        held.record_verification(verification(hint="retry_action", evidence_refs=("frame-a",)))
+        with pytest.raises(RecoveryPolicyError) as caught:
+            held.record_verification(
+                verification(
+                    status="confirmed",
+                    hint="none",
+                    verification_id="verify-done",
+                    evidence_refs=("frame-observed",),
+                )
+            )
+        assert caught.value.code == RECOVERY_POLICY_EVIDENCE_NOT_FRESH
+
+    def test_a_fresh_cited_observation_completes_recovery(self) -> None:
+        held = ledger()
+        held.record_verification(verification(hint="retry_action", evidence_refs=("frame-a",)))
+        held.record_observation(observed(evidence_refs=("frame-observed",), sequence_no=6))
         assert (
             held.record_verification(
-                verification(status="confirmed", hint="none", verification_id="verify-done", evidence_refs=("frame-b",))
+                verification(
+                    status="confirmed",
+                    hint="none",
+                    verification_id="verify-done",
+                    evidence_refs=("frame-observed",),
+                )
             )
             is None
         )
         assert held.state is RecoveryState.COMPLETE
         assert held.completed_by == "verify-done"
+
+    def test_a_failure_that_requested_no_next_step_is_still_gated(self) -> None:
+        # The caller did not ask for a recovery step, so no decision was taken.
+        # The failure is still on the record, so a completion still has to bring
+        # an observation rather than a string.
+        held = ledger()
+        assert held.record_verification(verification(hint="none", evidence_refs=("frame-a",))) is None
+        assert held.attempt == 1
+        with pytest.raises(RecoveryPolicyError) as caught:
+            held.record_verification(
+                verification(status="confirmed", hint="none", verification_id="verify-done", evidence_refs=("frame-b",))
+            )
+        assert caught.value.code == RECOVERY_POLICY_EVIDENCE_NOT_FRESH
 
     def test_completion_before_any_failure_needs_no_new_evidence(self) -> None:
         held = ledger()
@@ -556,6 +670,11 @@ class TestEndToEndWithTheRealContracts:
         )
         assert held.record_verification(third).action is RecoveryAction.RETRY_OBSERVATION
 
+        # The confirmation cites the camera frame from the observation that
+        # followed the last failure, which is the only way it may complete.
+        held.record_observation(
+            observed(observed_at="2026-09-01T00:00:48Z", sequence_no=7, evidence_refs=("frame://run-1/final",))
+        )
         confirmed = self.build_result(
             status="confirmed",
             hint="none",
@@ -587,6 +706,34 @@ class TestEndToEndWithTheRealContracts:
         with pytest.raises(RecoveryPolicyError) as caught:
             held.record_verification(repeated)
         assert caught.value.code == RECOVERY_POLICY_EVIDENCE_NOT_FRESH
+
+    def test_a_real_confirmed_result_citing_an_unobserved_frame_is_refused(self) -> None:
+        held = ledger()
+        held.record_verification(
+            self.build_result(
+                status="refuted",
+                hint="retry_action",
+                verification_id="verify-1",
+                refs=["frame://run-1/first"],
+                verified_at="2026-09-01T00:00:10Z",
+            )
+        )
+        # The recorded observation carries a different frame, so a confirmation
+        # that cites this one is citing evidence nobody observed.
+        held.record_observation(
+            observed(observed_at="2026-09-01T00:00:30Z", sequence_no=6, evidence_refs=("frame://run-1/observed",))
+        )
+        fabricated = self.build_result(
+            status="confirmed",
+            hint="none",
+            verification_id="verify-fabricated",
+            refs=["frame://run-1/fabricated"],
+            verified_at="2026-09-01T00:00:40Z",
+        )
+        with pytest.raises(RecoveryPolicyError) as caught:
+            held.record_verification(fabricated)
+        assert caught.value.code == RECOVERY_POLICY_EVIDENCE_UNOBSERVED
+        assert held.state is not RecoveryState.COMPLETE
 
     def test_a_decision_persists_and_replays_through_the_real_event_store(self, tmp_path: Path) -> None:
         from workbench.kernel.event_store import EventStore

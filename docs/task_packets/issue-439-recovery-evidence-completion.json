@@ -1,0 +1,113 @@
+{
+  "issue": 439,
+  "human_owner": "Quchaosheng",
+  "objective": "Make recovery completion consume typed observation evidence instead of a set difference of caller-supplied strings, so a confirmed verification after a failed attempt can only complete recovery when the ledger holds a fresh, provenance-valid observation recorded after that failure and the confirmation cites that observation's own evidence identity.",
+  "decision_supported": "After a failed verification, may RecoveryLedger mark recovery COMPLETE, or must it refuse because no typed observation supports the confirmation?",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/recovery.py",
+    "tests/unit/test_recovery_policy.py",
+    "docs/task_packets/issue-439-recovery-evidence-completion.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/architecture/observability-contract-v1.md",
+    "docs/task_packets/README.md",
+    "docs/task_packets/example-001-world-reducer.json",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_task_packet.py",
+    "libs/contracts/workbench_contracts/models.py",
+    "services/agent_runtime/workbench_agent_runtime/post_action.py",
+    "services/world_model/workbench_world_model/event_payloads.py",
+    "services/world_model/workbench_world_model/verifier.py",
+    "sim/registry/**"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "bsp/**",
+    "deploy/**",
+    "docker/**",
+    "sim/**",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**",
+    "services/perception/**",
+    "services/backend/**",
+    "apps/dashboard/**",
+    ".github/**"
+  ],
+  "input_refs": [
+    "services/agent_runtime/workbench_agent_runtime/recovery.py",
+    "tests/unit/test_recovery_policy.py",
+    "services/agent_runtime/workbench_agent_runtime/post_action.py",
+    "libs/contracts/workbench_contracts/models.py",
+    "services/world_model/workbench_world_model/verifier.py",
+    "services/world_model/workbench_world_model/event_payloads.py",
+    "docs/architecture/observability-contract-v1.md",
+    "sim/registry/pick-place-red-block.json"
+  ],
+  "outputs": [
+    "services/agent_runtime/workbench_agent_runtime/recovery.py",
+    "tests/unit/test_recovery_policy.py",
+    "docs/task_packets/issue-439-recovery-evidence-completion.json"
+  ],
+  "acceptance": [
+    "A confirmed result with no recorded observation cannot complete recovery after a failure, and the refusal names the evidence rule rather than the caller's string set.",
+    "A stale observation, an observation whose provenance did not validate, and an observation whose sequence predates the failed attempt each cannot complete recovery.",
+    "A fabricated reference not attached to the recorded observation cannot complete recovery, and is refused with its own code so an operator can tell it from a missing sample.",
+    "A fresh, provenance-valid observation recorded after the failure, whose identity the confirmation cites, completes recovery and records the completing verification id.",
+    "The gate is a sequence comparison plus set membership over typed evidence identity: it is deterministic, bounded and takes no clock-only freshness decision.",
+    "Existing RECOVERY_POLICY_EVIDENCE_NOT_FRESH behaviour for an action retry is unchanged, and the completion rule is covered by its own tests.",
+    "The legacy duplicate-string completion cases are updated to the stronger contract instead of asserting the old set difference.",
+    "Completion before any failure still needs no observation, because there is no failed attempt to answer.",
+    "No verifier rule, scenario fixture, physical control path, World Model file or contract schema is modified by this Packet."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_recovery_policy.py -q",
+    "python3 -m ruff check services/agent_runtime/workbench_agent_runtime/recovery.py tests/unit/test_recovery_policy.py",
+    "python3 -m ruff format --check services/agent_runtime/workbench_agent_runtime/recovery.py tests/unit/test_recovery_policy.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-439-recovery-evidence-completion.json",
+    "python3 -m pytest tests/unit/test_scenario_registry.py tests/unit/test_scenario_contract.py -q",
+    "make test",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "git diff --check",
+    "git diff --name-only"
+  ],
+  "evidence": [
+    "Pre-change reproduction of the Issue #439 defect: a ledger that never called record_observation completes recovery from the string frame-fabricated, printing retry_action / None / complete confirmed None.",
+    "Post-change output of the same reproduction: the completion is refused with RECOVERY_POLICY_EVIDENCE_NOT_FRESH and the ledger state stays outside COMPLETE.",
+    "Fabricated-reference refusal output: a recorded observation carrying frame-observed and a confirmation citing frame-fabricated is refused with RECOVERY_POLICY_EVIDENCE_UNOBSERVED.",
+    "Valid fresh-stamp completion output: a fresh, provenance-valid observation at a newer sequence whose reference the confirmation cites yields state complete and the completing verification id.",
+    "Stale-stamp refusal output: the same confirmation against an observation with fresh=false is refused with RECOVERY_POLICY_EVIDENCE_NOT_FRESH.",
+    "Targeted pytest output for tests/unit/test_recovery_policy.py with the collected test names, the pass count and the exit code.",
+    "ruff check and ruff format --check output for every changed Python file, with exit codes.",
+    "Task Packet schema validation output for docs/task_packets/issue-439-recovery-evidence-completion.json, with exit code.",
+    "make test, make contract, make scenario-check and make context-check output with exit codes.",
+    "Final git diff --check and git diff --name-only output proving every changed path is allowed by this Packet and that services/world_model/workbench_world_model/event_payloads.py is untouched."
+  ],
+  "stop_conditions": [
+    "Satisfying the completion rule requires reading perception directly, inventing an evidence reference, or a new evidence producer.",
+    "Satisfying the completion rule requires changing the verifier, a scenario fixture, the World Model reducer or any interfaces/ contract.",
+    "Satisfying the completion rule requires editing services/world_model/workbench_world_model/event_payloads.py, which belongs to Issue #438.",
+    "A string-only fallback would have to be accepted in production for the rule to pass, rather than a fail-closed refusal.",
+    "The rule cannot stay deterministic and bounded, or would have to introduce a clock-only freshness decision.",
+    "An existing RECOVERY_POLICY_EVIDENCE_NOT_FRESH retry case stops behaving as it does today.",
+    "The change would need to widen allowed_paths beyond the Issue #439 scope.",
+    "A required modification falls outside allowed_paths."
+  ],
+  "max_iterations": 3,
+  "data_classification": "internal; the tests build synthetic verification results and observation stamps and commit no real evidence",
+  "model_policy": "no model call; the gate is a sequence comparison and set membership over typed evidence identity",
+  "risks_and_fallbacks": [
+    "The gate could be satisfied by a string the ledger happens to hold. EvidenceStamp.evidence_refs is the observation's own identity, and the confirmation must cite one of those; a reference no observation produced has no path to completion.",
+    "Retry and completion could be conflated. A retry asks whether a sample newer than the consumed one exists, while a completion asks whether a sample newer than the failed attempt exists and is cited. They use separate watermarks so the retry loop stays finite and the completion rule stays strict.",
+    "The stricter rule could strand a run that genuinely recovered but cited an execution reference instead of the camera frame. That is a fail-closed refusal with a named code, which is the intended direction: the caller must cite the observed sample, not an actuator report.",
+    "A caller could still confirm before any failure with no observation. There is no failed attempt to answer there, so the existing behaviour is kept and the pre-failure path is not widened.",
+    "The new RECOVERY_POLICY_EVIDENCE_UNOBSERVED code is added to EMITTED_CODES so an operator can tell a fabricated reference from a missing sample. The recovery payload validator bounds reason_code by length only, so no payload schema change is needed.",
+    "observability-contract-v1.md was checked for a stated completion rule and has none, so this Packet does not modify it."
+  ]
+}
