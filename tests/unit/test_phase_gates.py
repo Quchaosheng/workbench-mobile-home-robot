@@ -39,6 +39,7 @@ sys.path[:0] = [
 ]
 
 import phase_gates as pg
+from readiness_report import LEFT_UNCHANGED, PUBLISHED, GeneratedArtifactSetError, find_staging_residue
 
 GATE = ROOT / "tools/scripts/check_phase_gates.py"
 GENERATOR = ROOT / "tools/scripts/phase_gates.py"
@@ -352,3 +353,175 @@ def test_each_probe_returns_a_declared_verdict(name):
     code, detail = pg.run_probe(name)
     assert code in pg.VERDICTS
     assert isinstance(detail, str) and detail
+
+
+# --- the five artifacts publish as one set (Issue #465) ----------------------
+
+
+def _outputs(tmp_path: Path) -> dict:
+    """A complete pre-run artifact set to fail against."""
+
+    readme = tmp_path / "README.md"
+    readme.write_text("# Workbench\n\nintro\n", encoding="utf-8")
+    readme_zh = tmp_path / "README.zh-CN.md"
+    readme_zh.write_text("# 工作台\n", encoding="utf-8")
+    notes = tmp_path / "release-notes.md"
+    notes.write_text("# Release notes\n\nhand-written prose\n", encoding="utf-8")
+    return {
+        "status_path": tmp_path / "docs" / "phase-status-v1.json",
+        "page_path": tmp_path / "docs" / "phase-gates.md",
+        "notes_path": notes,
+        "readme_path": readme,
+        "readme_zh_path": readme_zh,
+        "locks_dir": tmp_path / "locks",
+    }
+
+
+def _snapshot(paths: list[Path]) -> dict[Path, bytes]:
+    return {path: path.read_bytes() for path in paths}
+
+
+def _targets(outputs: dict) -> list[Path]:
+    return [
+        outputs["status_path"],
+        outputs["page_path"],
+        outputs["notes_path"],
+        outputs["readme_path"],
+        outputs["readme_zh_path"],
+    ]
+
+
+def test_a_successful_run_updates_all_five_artifacts_as_one_set(tmp_path: Path):
+    outputs = _outputs(tmp_path)
+    status = pg.build_status()
+    outcomes = pg.write_outputs(status, **outputs)
+
+    assert {outcome.action for outcome in outcomes} == {PUBLISHED}
+    assert {outcome.target for outcome in outcomes} == set(_targets(outputs))
+    assert json.loads(outputs["status_path"].read_text(encoding="utf-8"))["summary"] == status["summary"]
+    assert outputs["page_path"].read_text(encoding="utf-8") == pg.markdown_page(status)
+    notes = outputs["notes_path"].read_text(encoding="utf-8")
+    assert pg.NOTES_BEGIN in notes and pg.NOTES_END in notes
+    assert "hand-written prose" in notes
+    assert pg.README_BEGIN in outputs["readme_path"].read_text(encoding="utf-8")
+    assert pg.README_BEGIN in outputs["readme_zh_path"].read_text(encoding="utf-8")
+    assert find_staging_residue("phase-gates", [tmp_path, tmp_path / "docs"]) == []
+
+
+def test_a_mid_write_failure_leaves_every_target_byte_identical(tmp_path: Path):
+    """The Issue #465 regression: die after the first write, keep the whole set."""
+
+    outputs = _outputs(tmp_path)
+    pg.write_outputs(pg.build_status(), **outputs)
+    targets = _targets(outputs)
+    before = _snapshot(targets)
+
+    changed = pg.build_status()
+    changed["limitations"] = ["this generation must never reach the disk"]
+
+    def die_after_first_write(written: int) -> None:
+        assert written == 1
+        raise OSError("injected failure after the first staged write")
+
+    with pytest.raises(GeneratedArtifactSetError) as failure:
+        pg.write_outputs(changed, on_staged=die_after_first_write, **outputs)
+
+    assert failure.value.artifact_set == "phase-gates"
+    assert "injected failure after the first staged write" in failure.value.reason
+    assert _snapshot(targets) == before
+    assert find_staging_residue("phase-gates", [tmp_path, tmp_path / "docs"]) == []
+
+
+def test_the_status_and_page_land_together_not_one_before_the_other(tmp_path: Path):
+    """A failure after the status would be staged must not publish the status."""
+
+    outputs = _outputs(tmp_path)
+    before = _snapshot([outputs["notes_path"], outputs["readme_path"], outputs["readme_zh_path"]])
+
+    def die_before_rename(written: int) -> None:
+        raise OSError(f"injected failure with {written} of 5 outputs staged")
+
+    with pytest.raises(GeneratedArtifactSetError):
+        pg.write_outputs(pg.build_status(), on_staged=die_before_rename, **outputs)
+
+    assert not outputs["status_path"].exists()
+    assert not outputs["page_path"].exists()
+    assert _snapshot([outputs["notes_path"], outputs["readme_path"], outputs["readme_zh_path"]]) == before
+
+
+def test_a_successful_run_produces_the_bytes_the_sequential_writer_produced(tmp_path: Path):
+    """Issue #465: only publication is atomic; the content must not change."""
+
+    outputs = _outputs(tmp_path)
+    status = pg.build_status()
+    before_readme = outputs["readme_path"].read_text(encoding="utf-8")
+    before_zh = outputs["readme_zh_path"].read_text(encoding="utf-8")
+    before_notes = outputs["notes_path"].read_text(encoding="utf-8")
+
+    pg.write_outputs(status, **outputs)
+
+    assert outputs["status_path"].read_text(encoding="utf-8") == json.dumps(status, indent=2, ensure_ascii=False) + "\n"
+    assert outputs["page_path"].read_text(encoding="utf-8") == pg.markdown_page(status)
+    assert outputs["notes_path"].read_text(encoding="utf-8") == pg.apply_block(
+        before_notes, pg.release_notes_block(status), begin=pg.NOTES_BEGIN, end=pg.NOTES_END
+    )
+    assert outputs["readme_path"].read_text(encoding="utf-8") == pg.apply_block(before_readme, pg.readme_block(status))
+    assert outputs["readme_zh_path"].read_text(encoding="utf-8") == pg.apply_block(
+        before_zh, pg.readme_block(status, language="zh")
+    )
+
+
+def test_a_generation_with_no_change_does_not_rewrite_tracked_artifacts(tmp_path: Path):
+    outputs = _outputs(tmp_path)
+    pg.write_outputs(pg.build_status(), **outputs)
+    targets = _targets(outputs)
+    before = _snapshot(targets)
+
+    outcomes = pg.write_outputs(pg.build_status(), **outputs)
+
+    assert {outcome.action for outcome in outcomes} == {LEFT_UNCHANGED}
+    assert _snapshot(targets) == before
+
+
+def test_the_cli_publishes_the_set_in_one_step(tmp_path: Path):
+    outputs = _outputs(tmp_path)
+    outputs["status_path"].parent.mkdir(parents=True)
+    result = _run(
+        [
+            str(GENERATOR),
+            "--output",
+            str(outputs["status_path"]),
+            "--page",
+            str(outputs["page_path"]),
+            "--release-notes",
+            str(outputs["notes_path"]),
+            "--readme",
+            str(outputs["readme_path"]),
+            "--readme-zh",
+            str(outputs["readme_zh_path"]),
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    assert "5 of 5 artifact(s) published as one set" in result.stdout
+
+
+def test_the_committed_artifacts_are_a_complete_set():
+    """The gate pairs the status with the page, the notes and both READMEs."""
+
+    committed = _committed()
+    assert PAGE.read_text(encoding="utf-8") == pg.markdown_page(committed)
+    assert _block(NOTES.read_text(encoding="utf-8"), pg.NOTES_BEGIN, pg.NOTES_END) == pg.release_notes_block(
+        committed
+    ).strip("\n")
+    assert _block(README.read_text(encoding="utf-8"), pg.README_BEGIN, pg.README_END) == pg.readme_block(
+        committed
+    ).strip("\n")
+
+
+def test_the_gate_refuses_a_checkout_left_with_staging_residue(tmp_path: Path):
+    residue = tmp_path / ".phase-gates.abc123.staging"
+    residue.mkdir()
+    (residue / "00-phase-status-v1.json").write_text("{}", encoding="utf-8")
+    result = _run([str(GATE), "--status", str(COMMITTED), "--page", str(tmp_path / "page.md")])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "staging residue" in result.stderr

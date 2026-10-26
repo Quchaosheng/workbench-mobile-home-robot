@@ -37,3 +37,21 @@ The gate compares the committed artifact against a regeneration, so a
 hand-edited `gate_status`, a stale page, or a phase that stopped passing fails
 `python3 tools/scripts/check_phase_gates.py`. The status grants no release
 approval, replaces no required check and is not physical evidence.
+
+## One atomic artifact set
+
+The status, the page, the release-notes block and both README blocks are five
+views of one generation, so `write_outputs()` publishes them as one set rather
+than with a sequence of in-place writes (Issue #465). Every output is rendered,
+staged beside its target, verified byte for byte, and only then renamed into
+place. A failure anywhere before the final rename raises a named
+`GeneratedArtifactSetError` and leaves every target byte-identical to its
+pre-run state; there is no sequential fallback.
+
+Generation of the same targets is serialised by an advisory lock under
+`build/locks`, so two concurrent runs cannot interleave their files. From a
+checkout whose inputs have not changed, `make phase-gates-check` republishes
+nothing: `generated_at` and `source_commit` are kept when every other field of the
+committed status is reproduced, and the run reports `LEFT_UNCHANGED`. A generation
+that was killed between renames leaves a staging directory behind, which the gate
+reports as residue and refuses to certify.
