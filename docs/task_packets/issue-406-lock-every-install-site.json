@@ -1,0 +1,84 @@
+{
+  "issue": 406,
+  "human_owner": "Quchaosheng",
+  "objective": "Make every workflow install its Python dependencies from the hash-checked lock, so the environment a CI or release check runs in is the same one the image was built from.",
+  "decision_supported": "Does the repository actually install from the hashed lock everywhere it claims to, and can a test prove it rather than searching for substrings?",
+  "allowed_paths": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/container-full-stack.yml",
+    ".github/workflows/daily-smoke.yml",
+    ".github/workflows/nightly-regression.yml",
+    ".github/workflows/performance-budget.yml",
+    ".github/workflows/quality-gates.yml",
+    ".github/workflows/release-image.yml",
+    "tests/unit/test_dependency_lock.py",
+    "docs/task_packets/issue-406-lock-every-install-site.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docker/requirements-dev.lock",
+    "Makefile",
+    "Dockerfile"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "docker/vex.json"
+  ],
+  "input_refs": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/container-full-stack.yml",
+    ".github/workflows/daily-smoke.yml",
+    ".github/workflows/nightly-regression.yml",
+    ".github/workflows/performance-budget.yml",
+    ".github/workflows/quality-gates.yml",
+    ".github/workflows/release-image.yml",
+    "docker/requirements-dev.lock",
+    "Makefile",
+    "Dockerfile",
+    "tests/unit/test_dependency_lock.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/container-full-stack.yml",
+    ".github/workflows/daily-smoke.yml",
+    ".github/workflows/nightly-regression.yml",
+    ".github/workflows/performance-budget.yml",
+    ".github/workflows/quality-gates.yml",
+    ".github/workflows/release-image.yml",
+    "tests/unit/test_dependency_lock.py"
+  ],
+  "acceptance": [
+    "No workflow installs a package from a version range.",
+    "Every workflow that needs project dependencies installs them with --require-hashes -r docker/requirements-dev.lock followed by --no-deps -e .",
+    "pip itself may still be upgraded, because it cannot be hash-locked from the same file.",
+    "The test walks each install command instead of asserting that three strings appear somewhere in a file.",
+    "The test fails when a bare install is added to any workflow."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_dependency_lock.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 tools/scripts/check_task_packet.py --all"
+  ],
+  "evidence": [
+    "Before the change, five workflows resolved dependencies from ranges: ci.yml installed 'pyyaml pytest' and four others installed '.[dev]'.",
+    "The previous test only asserted that three files contained three strings, so a range install alongside them passed.",
+    "Injecting 'python3 -m pip install pyyaml' into daily-smoke.yml makes the new test fail with the offending command named; reverting it passes."
+  ],
+  "stop_conditions": [
+    "A workflow turns out to need a package the lock does not carry; that package belongs in pyproject and the lock, not in a bare install.",
+    "The editable project cannot be installed with --no-deps because a runtime dependency is missing from the lock."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The lock now governs more workflows, so a stale lock breaks more jobs at once; that is the point, and the verifier already fails loudly.",
+    "pip upgrade stays unhashed because it bootstraps the hashing itself; the test allows exactly that one command and nothing else."
+  ]
+}
