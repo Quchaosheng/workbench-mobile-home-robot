@@ -137,3 +137,57 @@ def test_kernel_module_unload_verifies_singleton_cleanup() -> None:
     assert "fail_debugfs=1" in load_step
     assert "test ! -e /sys/class/net/wbcan0" in unload_step
     assert "test ! -e /sys/kernel/debug/wbcan" in unload_step
+
+
+def _step_index(workflow: str, name: str) -> int:
+    return workflow.index(f"- name: {name}")
+
+
+def test_no_release_tag_is_pushed_before_provenance_and_promotion_pass() -> None:
+    """Issue #434: publishing first leaves a tag behind when a later step fails."""
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    staging = _step_index(workflow, "Push the staging image")
+    manifest = _step_index(workflow, "Write release provenance manifest")
+    verify = _step_index(workflow, "Verify release provenance")
+    attest = _step_index(workflow, "Attest published image")
+    promotion = _step_index(workflow, "Verify promotion readiness")
+    publish = _step_index(workflow, "Publish the verified digest under the release tags")
+
+    assert staging < manifest < verify < attest < promotion < publish, (
+        "the release tags must not be published before the evidence that authorizes them"
+    )
+
+
+def test_the_staging_push_does_not_use_a_release_tag() -> None:
+    """The staging tag has to be one no consumer would resolve as a release."""
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    staging_step = _step_block(workflow, "- name: Push the staging image")
+
+    assert "staging-${{ github.sha }}" in staging_step
+    # The only tags this step touches are the staging one; the release tag list is
+    # not read here at all.
+    assert "IMAGE_TAGS" not in staging_step
+
+
+def test_the_final_publish_moves_every_release_tag_onto_the_verified_digest() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    publish_step = _step_block(workflow, "- name: Publish the verified digest under the release tags")
+
+    # Pinned to the digest that was verified, not to a local image id that could
+    # be retagged onto different bytes.
+    assert "DIGEST: ${{ steps.stage.outputs.digest }}" in publish_step
+    assert "@${DIGEST}" in publish_step
+    assert "IMAGE_TAGS" in publish_step
+    # A run that publishes nothing must fail rather than pass quietly.
+    assert 'if [ "$published" -eq 0 ]' in publish_step
+
+
+def test_attestation_targets_the_staged_digest() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    attest_step = _step_block(workflow, "uses: actions/attest-build-provenance@")
+
+    assert "subject-digest: ${{ steps.stage.outputs.digest }}" in attest_step
+    assert "steps.publish.outputs.digest" not in attest_step
