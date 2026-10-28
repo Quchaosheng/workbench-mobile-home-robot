@@ -62,9 +62,7 @@ def test_an_unexecuted_case_is_never_counted_as_executed() -> None:
         assert case["executed"] is (case["coverage"] != "NOT_EXECUTED")
     not_executed = [case for case in payload["cases"] if not case["executed"]]
     assert payload["counts"]["not_executed"] == len(not_executed)
-    assert {gap["id"] for gap in payload["gaps"] if gap["kind"] == "case"} == {
-        case["case_id"] for case in not_executed
-    }
+    assert {gap["id"] for gap in payload["gaps"] if gap["kind"] == "case"} == {case["case_id"] for case in not_executed}
 
 
 def test_only_the_nominal_case_expects_a_confirmed_verdict() -> None:
