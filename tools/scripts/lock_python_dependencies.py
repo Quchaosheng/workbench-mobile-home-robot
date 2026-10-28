@@ -227,6 +227,22 @@ def check_lock(lock: Lock, requirements: list[str], *, expected_platform: str | 
             Finding("platform_mismatch", f"the lock targets {declared_platform}, this host is {expected_platform}")
         )
 
+    # The header hash is what makes "this lock was generated from these requirements"
+    # checkable. It was written but never compared, so a lock regenerated before a
+    # pyproject edit kept claiming a provenance it no longer had (issue #405).
+    declared_hash = lock.metadata.get("requirements_hash")
+    if declared_hash is not None:
+        expected_hash = hashlib.sha256("\n".join(requirements).encode()).hexdigest()
+        if declared_hash != expected_hash:
+            findings.append(
+                Finding(
+                    "stale_requirements_hash",
+                    "the lock header records requirements_hash "
+                    f"{declared_hash[:12]}... but the declared requirements hash to "
+                    f"{expected_hash[:12]}...; regenerate with `make lock-python`",
+                )
+            )
+
     # An editable or local-path requirement cannot be installed with
     # --require-hashes, so its presence here would break the documented install
     # order rather than reproduce it.
