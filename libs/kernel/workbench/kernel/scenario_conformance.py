@@ -30,6 +30,7 @@ evidence status; it never says a scenario ran, and it is not physical evidence.
 
 from __future__ import annotations
 
+import ast
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -298,23 +299,85 @@ def resolve_test(reference: str) -> tuple[str, str]:
     return module_path, function_name.strip()
 
 
-def defined_tests(source: str) -> set[str]:
-    """Every function name defined in a test module, read without importing it.
+# Markers that stop a test from running, or from failing when it does.
+SKIPPING_DECORATORS = frozenset({"skip", "skipif", "xfail", "expectedFailure", "skipUnless", "skipIf"})
 
-    The corpus names tests that live in ``tests/**``; reading the file keeps the
-    gate free of an import side effect and free of a dependency on pytest
-    internals, which a gate that must run anywhere should not have.
+
+def defined_tests(source: str) -> set[str]:
+    """Every module-level function name defined in a test module.
+
+    Kept for callers that only need the names. ``collectable_tests`` is what the
+    gate uses, because a name being present does not mean pytest runs it.
     """
 
     names: set[str] = set()
-    for line in source.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("def ") or not stripped[4:].strip():
-            continue
-        head = stripped[4:].split("(", 1)[0].strip()
-        if head:
-            names.add(head)
+    for node in _module_functions(source):
+        names.add(node.name)
     return names
+
+
+def _module_functions(source: str) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Module-level function definitions, ignoring methods inside a class.
+
+    A test moved into a class is no longer collected under the module-level node
+    id the corpus names, so it must not count as present (issue #423).
+    """
+
+    tree = ast.parse(source)
+    return [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _decorator_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """The trailing attribute name of every decorator on a function."""
+
+    names: set[str] = set()
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if isinstance(target, ast.Attribute):
+            names.add(target.attr)
+        elif isinstance(target, ast.Name):
+            names.add(target.id)
+    return names
+
+
+def _raises_unconditionally(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether the body contains a bare ``assert False`` or ``raise`` at top level.
+
+    A test whose only statement fails cannot be evidence of a boundary, and this
+    is the shape a placeholder takes when someone stubs a case out.
+    """
+
+    for statement in node.body:
+        if isinstance(statement, ast.Raise):
+            return True
+        if isinstance(statement, ast.Assert):
+            value = statement.test
+            if isinstance(value, ast.Constant) and not value.value:
+                return True
+    return False
+
+
+def collectable_tests(source: str) -> dict[str, str]:
+    """Map each module-level test name to why it is not runnable, or ``""``.
+
+    This is a static check: it reads the file and never imports or runs it, which
+    is what keeps this module read-only. It refuses the three shapes a corpus case
+    used to accept while proving nothing -- a skipped test, a test moved into a
+    class, and a test whose body always fails.
+    """
+
+    result: dict[str, str] = {}
+    for node in _module_functions(source):
+        if not node.name.startswith("test_"):
+            continue
+        skipping = _decorator_names(node) & SKIPPING_DECORATORS
+        if skipping:
+            result[node.name] = f"is decorated with {sorted(skipping)[0]!r}"
+        elif _raises_unconditionally(node):
+            result[node.name] = "raises or asserts False unconditionally"
+        else:
+            result[node.name] = ""
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -776,12 +839,31 @@ def evaluate(
                     f"{case.test} cannot be read: {error}",
                 )
                 continue
-            if function_name not in defined_tests(source):
+            try:
+                runnable = collectable_tests(source)
+            except SyntaxError as error:
                 add(
                     identity,
                     "SCENARIO_CONFORMANCE_TEST_UNRESOLVED",
                     case.dimension,
-                    f"{case.test} does not define {function_name}",
+                    f"{case.test} names a module that does not parse: {error}",
+                )
+                continue
+            if function_name not in runnable:
+                # Either the name is absent or it is no longer a module-level
+                # function, which is the "moved into a class" shape (issue #423).
+                add(
+                    identity,
+                    "SCENARIO_CONFORMANCE_TEST_NOT_COLLECTED",
+                    case.dimension,
+                    f"{case.test} is not a module-level test in {module_path}",
+                )
+            elif runnable[function_name]:
+                add(
+                    identity,
+                    "SCENARIO_CONFORMANCE_TEST_NOT_RUNNABLE",
+                    case.dimension,
+                    f"{case.test} {runnable[function_name]}",
                 )
 
         # Raw control or a bypass marker anywhere in the manifest.

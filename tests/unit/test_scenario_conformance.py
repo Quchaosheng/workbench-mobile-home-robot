@@ -38,6 +38,7 @@ from workbench.kernel.scenario_conformance import (
     PROBE_FAMILIES,
     REQUIRED_DIMENSIONS,
     ScenarioConformanceError,
+    collectable_tests,
     defined_tests,
     evaluate,
     load_corpus,
@@ -452,7 +453,9 @@ def test_evaluate_fails_a_case_that_names_a_missing_test():
     assert exit_code == 1
     failed = {verdict.identity: verdict for verdict in verdicts}
     codes = {finding.code for finding in failed[identity].findings}
-    assert "SCENARIO_CONFORMANCE_TEST_UNRESOLVED" in codes
+    # A name that is not a module-level test is not collected, which is a more
+    # accurate diagnosis than "unresolved" (issue #423).
+    assert "SCENARIO_CONFORMANCE_TEST_NOT_COLLECTED" in codes
 
 
 def test_evaluate_fails_a_corpus_entry_for_an_unregistered_identity():
@@ -551,3 +554,97 @@ def test_committed_corpus_matches_the_registry_identity_set():
     )
     on_disk = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
     assert on_disk == corpus
+
+
+# --- Issue #423: a declared test has to be runnable --------------------------
+
+SKIPPED_TEST = """
+import pytest
+
+@pytest.mark.skip(reason="never run")
+def test_cleaning_stale_evidence():
+    assert True
+"""
+
+FAILING_TEST = """
+def test_cleaning_stale_evidence():
+    assert False, "always fails"
+"""
+
+CLASS_METHOD = """
+class TestMoved:
+    def test_cleaning_stale_evidence(self):
+        assert True
+"""
+
+HEALTHY_TEST = """
+def test_cleaning_stale_evidence():
+    assert stale_belief() == "lost"
+"""
+
+
+def test_a_skipped_test_is_not_runnable() -> None:
+    """The issue's first case: a skip decorator used to satisfy the gate."""
+
+    result = collectable_tests(SKIPPED_TEST)
+    assert "test_cleaning_stale_evidence" in result
+    assert "skip" in result["test_cleaning_stale_evidence"]
+
+
+def test_a_test_that_always_fails_is_not_runnable() -> None:
+    result = collectable_tests(FAILING_TEST)
+    assert "asserts False" in result["test_cleaning_stale_evidence"]
+
+
+def test_a_test_moved_into_a_class_is_not_collected() -> None:
+    """A method is not the module-level node id the corpus names."""
+
+    result = collectable_tests(CLASS_METHOD)
+    assert "test_cleaning_stale_evidence" not in result
+
+
+def test_a_healthy_test_is_runnable() -> None:
+    result = collectable_tests(HEALTHY_TEST)
+    assert result["test_cleaning_stale_evidence"] == ""
+
+
+def test_every_other_skipping_decorator_is_refused() -> None:
+    for decorator in ("skipif", "xfail", "expectedFailure"):
+        with self_assert(decorator):
+            source = f"""
+import pytest
+
+@pytest.mark.{decorator}(True)
+def test_cleaning_stale_evidence():
+    pass
+"""
+            result = collectable_tests(source)
+            assert result["test_cleaning_stale_evidence"], decorator
+
+
+class self_assert:
+    """Tiny helper so a failing sub-case names the decorator it tested."""
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is not None:
+            raise AssertionError(f"decorator {self.label!r} was not refused") from exc
+        return False
+
+
+def test_the_committed_corpus_tests_are_all_runnable() -> None:
+    """Every declared case in the shipped corpus has to pass the static check."""
+
+    corpus = load_corpus(CORPUS_PATH)
+    for identity, cases in corpus["scenarios"].items():
+        for case in cases:
+            module_path, function_name = resolve_test(case["test"])
+            source = (ROOT / module_path).read_text(encoding="utf-8")
+            runnable = collectable_tests(source)
+            assert function_name in runnable, f"{identity} [{case['dimension']}]: {case['test']}"
+            assert runnable[function_name] == "", f"{identity} [{case['dimension']}]: {case['test']}"
