@@ -42,20 +42,75 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+# The register is the authoritative hardware-validation evidence index, and it is
+# read on every append. Without a bound, a large register exhausts the validator's
+# memory; without strict parsing, a duplicate key silently selects the last value
+# and a non-finite number survives into the report (issue #454).
+MAX_REGISTER_BYTES = 8 * 1024 * 1024
+MAX_REGISTER_LINES = 10_000
+MAX_REGISTER_LINE_BYTES = 64 * 1024
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    seen: dict[str, object] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise EvidenceError(f"duplicate key in evidence record: {key!r}")
+        seen[key] = value
+    return seen
+
+
+def _reject_non_finite(token: str) -> object:
+    raise EvidenceError(f"non-finite number in evidence record: {token}")
+
+
+def _parse_evidence_line(line: str, line_number: int) -> dict:
+    try:
+        record = json.loads(
+            line,
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_non_finite,
+        )
+    except EvidenceError as exc:
+        raise EvidenceError(f"line {line_number}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise EvidenceError(f"invalid evidence JSON at line {line_number}") from exc
+    if not isinstance(record, dict):
+        raise EvidenceError(f"evidence at line {line_number} must be an object")
+    return record
+
+
 def load_register(path: Path) -> list[dict]:
     if not path.exists():
         return []
+
+    size = path.stat().st_size
+    if size > MAX_REGISTER_BYTES:
+        raise EvidenceError(f"evidence register is {size} bytes, over the {MAX_REGISTER_BYTES}-byte limit")
+
+    # Read as bytes and decode once, so the byte limit is checked before the whole
+    # file becomes a str and the line count is counted on what was actually read.
+    raw = path.read_bytes()
+    if len(raw) > MAX_REGISTER_BYTES:
+        raise EvidenceError(
+            f"evidence register grew to {len(raw)} bytes while being read, over the {MAX_REGISTER_BYTES}-byte limit"
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise EvidenceError("evidence register is not valid UTF-8") from exc
+
+    lines = text.splitlines()
+    if len(lines) > MAX_REGISTER_LINES:
+        raise EvidenceError(f"evidence register has {len(lines)} lines, over the {MAX_REGISTER_LINES}-line limit")
+
     records = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise EvidenceError(f"invalid evidence JSON at line {line_number}") from exc
-        if not isinstance(record, dict):
-            raise EvidenceError(f"evidence at line {line_number} must be an object")
-        records.append(record)
+        if len(line.encode("utf-8")) > MAX_REGISTER_LINE_BYTES:
+            raise EvidenceError(f"evidence at line {line_number} is over the {MAX_REGISTER_LINE_BYTES}-byte line limit")
+        records.append(_parse_evidence_line(line, line_number))
     return records
 
 

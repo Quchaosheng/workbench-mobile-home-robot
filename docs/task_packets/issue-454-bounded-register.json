@@ -1,0 +1,65 @@
+{
+  "issue": 454,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the hardware evidence register a bounded, strictly parsed input: cap its bytes, lines and line length, and refuse duplicate keys and non-finite numbers instead of letting them select a value silently.",
+  "decision_supported": "Can the register be read with plain read_text plus json.loads, or does the authoritative evidence index need bounds and a strict parser?",
+  "allowed_paths": [
+    "hardware/validation/tools/evidence.py",
+    "tests/hardware/test_bounded_register.py",
+    "docs/task_packets/issue-454-bounded-register.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "hardware/validation/tools/register_evidence.py",
+    "hardware/validation/tools/validate_validation.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/pcb/**",
+    "hardware/release/**"
+  ],
+  "input_refs": [
+    "hardware/validation/tools/evidence.py",
+    "hardware/validation/tools/register_evidence.py",
+    "hardware/validation/tools/validate_validation.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "hardware/validation/tools/evidence.py",
+    "tests/hardware/test_bounded_register.py"
+  ],
+  "acceptance": [
+    "A register larger than the byte limit is refused before it is decoded.",
+    "A register with more lines than the limit is refused.",
+    "A single line over the per-line limit is refused.",
+    "A record with a duplicate key is refused and the key is named.",
+    "NaN and both infinities are refused.",
+    "Invalid UTF-8 is refused.",
+    "A refused append leaves the register byte-identical."
+  ],
+  "commands": [
+    "python3 -m pytest tests/hardware/test_bounded_register.py -q",
+    "python3 -m pytest tests/hardware -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, load_register read the whole file and parsed each line with json.loads, so duplicate keys and NaN were accepted.",
+    "After the change a duplicate key reports 'duplicate key in evidence record' naming the key, NaN and Infinity report 'non-finite number', invalid UTF-8 reports 'not valid UTF-8', and the three limits each report their own bound.",
+    "A register containing a duplicate key refuses an append and stays byte-identical, which the existing ftruncate path already provided and the new test pins."
+  ],
+  "stop_conditions": [
+    "A legitimate register exceeds 8 MiB or 10 000 lines; those constants are in one place and are the decision point."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The byte limit is checked twice, on stat and on the bytes actually read, so a register that grows during the read is still refused.",
+    "Line length is measured on the encoded bytes rather than characters, so a multi-byte line cannot slip past the limit."
+  ]
+}
