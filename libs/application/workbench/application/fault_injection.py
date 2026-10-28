@@ -370,24 +370,60 @@ def inject_process_restart(loop: object, *, run_id: str) -> None:
     note(run_id=run_id)
 
 
+# A simulated claim is only as good as the injector run behind it, so the record
+# has to say what ran and where its output is. Without that the report was an
+# assertion API: naming a fault was enough to report it covered (issue #424).
+SIMULATION_OUTCOMES = frozenset({"injected", "observed"})
+
+
+def _simulation_evidence_problems(name: str, record: object) -> list[str]:
+    """Why this simulated claim is not backed by an execution record."""
+
+    if not isinstance(record, Mapping):
+        return [f"{name} claims SIMULATED without an execution record"]
+
+    problems: list[str] = []
+    outcome = record.get("outcome")
+    if outcome not in SIMULATION_OUTCOMES:
+        # A skipped or failed injector is not coverage; it is a run that did not
+        # establish anything.
+        problems.append(f"{name} execution outcome is {outcome!r}, not one of {sorted(SIMULATION_OUTCOMES)}")
+    reference = record.get("evidence_ref")
+    if not isinstance(reference, str) or not reference.strip():
+        problems.append(f"{name} execution record has no evidence_ref")
+    injector = record.get("injector")
+    if not isinstance(injector, str) or not injector.strip():
+        problems.append(f"{name} execution record does not name the injector that ran")
+    return problems
+
+
 def coverage_report(
     *,
     simulated: Iterable[str] = (),
+    simulation_evidence: Mapping[str, Mapping[str, object]] | None = None,
     hardware_tested: Iterable[str] = (),
     physical_evidence: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Report every declared fault as simulated, hardware-tested or not executed.
 
-    ``HARDWARE_TESTED`` requires a named physical evidence reference. A caller
-    that claims hardware coverage without one is refused, because the cheapest
-    way to overstate this report is to assert a status instead of attaching the
-    artifact that supports it.
+    Both positive statuses require evidence, because the cheapest way to overstate
+    this report is to assert a status instead of attaching what supports it:
+
+    - ``SIMULATED`` requires an execution record in ``simulation_evidence``: the
+      injector that ran, its outcome, and a reference to its output
+    - ``HARDWARE_TESTED`` requires a named physical evidence reference
     """
     evidence = dict(physical_evidence or {})
+    simulations = dict(simulation_evidence or {})
     statuses: dict[str, CoverageStatus] = {}
+    simulation_refs: dict[str, str] = {}
     for name in simulated:
         _require_declared(name)
+        problems = _simulation_evidence_problems(name, simulations.get(name))
+        if problems:
+            raise FaultInjectionError("; ".join(problems))
         statuses[name] = "SIMULATED"
+        simulation_refs[name] = str(simulations[name]["evidence_ref"])
     for name in hardware_tested:
         _require_declared(name)
         reference = evidence.get(name)
@@ -399,6 +435,7 @@ def coverage_report(
             **spec.as_dict(),
             "status": statuses.get(spec.fault.value, "NOT_EXECUTED"),
             "physical_evidence_ref": evidence.get(spec.fault.value),
+            "simulation_evidence_ref": simulation_refs.get(spec.fault.value),
         }
         for spec in FAULT_SPECS
     ]
