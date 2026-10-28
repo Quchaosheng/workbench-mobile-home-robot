@@ -1,13 +1,13 @@
-net,measurement,required_fixture,planned_access,design_state,verification_state,acceptance,evidence_ref,owner
-GND_PWR,primary power measurement reference,FX-02,J1.3|J1.4,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,guarded Kelvin connection proves less than 50mV fixture offset,,Electrical and Manufacturing Owners
-GND_CAN_ISO,isolated CAN measurement reference,FX-03,J5.3|J6.3,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,isolated probe reference is continuity checked before CAN measurement,,Electrical and Manufacturing Owners
-5V_CAN_ISO,isolated CAN supply ripple and load regulation,FX-03,ECO-TP9,ECO_REQUIRED,NOT_BUILT,dedicated pad supports short ground-spring probing under rated isolated load,,Electrical Owner
-MOTOR_ENABLE_SAFE,hardwired safe-output latency,FX-04,J11.1,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,fixture captures deassertion within 1ms without relying on MCU state,,Safety and Manufacturing Owners
-ESTOP_CH_A_RETURN,E-stop channel A open short and timing,FX-04,J10.2|J12.1,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,fixture independently opens shorts and measures channel A,,Safety and Manufacturing Owners
-ESTOP_CH_B_RETURN,E-stop channel B open short and timing,FX-04,J10.4|J12.3,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,fixture independently opens shorts and measures channel B,,Safety and Manufacturing Owners
-3V3_PGOOD,logic regulator power-good timing,FX-02,ECO-TP10,ECO_REQUIRED,NOT_BUILT,dedicated pad supports sequence capture against TP5 logic ground,,Electrical Owner
-JETSON_PGOOD,Jetson eFuse power-good timing,FX-02,ECO-TP11,ECO_REQUIRED,NOT_BUILT,dedicated pad supports sequence and load-transient capture,,Electrical Owner
-JETSON_FAULT_N,Jetson eFuse fault indication,FX-02,ECO-TP12,ECO_REQUIRED,NOT_BUILT,dedicated pad supports short-circuit and recovery capture,,Electrical Owner
-U3_IMON,Jetson branch current monitor,FX-02,ECO-TP13,ECO_REQUIRED,NOT_BUILT,dedicated pad supports calibrated current-limit correlation,,Electrical Owner
-ESTOP_A_MON,isolated E-stop channel A diagnostic,FX-04,ECO-TP14,ECO_REQUIRED,NOT_BUILT,dedicated pad supports discrepancy coverage capture,,Safety Owner
-ESTOP_B_MON,isolated E-stop channel B diagnostic,FX-04,ECO-TP15,ECO_REQUIRED,NOT_BUILT,dedicated pad supports discrepancy coverage capture,,Safety Owner
+net,measurement,required_fixture,planned_access,design_state,verification_state,acceptance,evidence_ref,owner,evidence_net,evidence_instrument,evidence_captured_at
+GND_PWR,primary power measurement reference,FX-02,J1.3|J1.4,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,guarded Kelvin connection proves less than 50mV fixture offset,,Electrical and Manufacturing Owners,,,
+GND_CAN_ISO,isolated CAN measurement reference,FX-03,J5.3|J6.3,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,isolated probe reference is continuity checked before CAN measurement,,Electrical and Manufacturing Owners,,,
+5V_CAN_ISO,isolated CAN supply ripple and load regulation,FX-03,ECO-TP9,ECO_REQUIRED,NOT_BUILT,dedicated pad supports short ground-spring probing under rated isolated load,,Electrical Owner,,,
+MOTOR_ENABLE_SAFE,hardwired safe-output latency,FX-04,J11.1,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,fixture captures deassertion within 1ms without relying on MCU state,,Safety and Manufacturing Owners,,,
+ESTOP_CH_A_RETURN,E-stop channel A open short and timing,FX-04,J10.2|J12.1,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,fixture independently opens shorts and measures channel A,,Safety and Manufacturing Owners,,,
+ESTOP_CH_B_RETURN,E-stop channel B open short and timing,FX-04,J10.4|J12.3,CONNECTOR_ACCESS_CONFIRMED,PHYSICAL_VALIDATION_REQUIRED,fixture independently opens shorts and measures channel B,,Safety and Manufacturing Owners,,,
+3V3_PGOOD,logic regulator power-good timing,FX-02,ECO-TP10,ECO_REQUIRED,NOT_BUILT,dedicated pad supports sequence capture against TP5 logic ground,,Electrical Owner,,,
+JETSON_PGOOD,Jetson eFuse power-good timing,FX-02,ECO-TP11,ECO_REQUIRED,NOT_BUILT,dedicated pad supports sequence and load-transient capture,,Electrical Owner,,,
+JETSON_FAULT_N,Jetson eFuse fault indication,FX-02,ECO-TP12,ECO_REQUIRED,NOT_BUILT,dedicated pad supports short-circuit and recovery capture,,Electrical Owner,,,
+U3_IMON,Jetson branch current monitor,FX-02,ECO-TP13,ECO_REQUIRED,NOT_BUILT,dedicated pad supports calibrated current-limit correlation,,Electrical Owner,,,
+ESTOP_A_MON,isolated E-stop channel A diagnostic,FX-04,ECO-TP14,ECO_REQUIRED,NOT_BUILT,dedicated pad supports discrepancy coverage capture,,Safety Owner,,,
+ESTOP_B_MON,isolated E-stop channel B diagnostic,FX-04,ECO-TP15,ECO_REQUIRED,NOT_BUILT,dedicated pad supports discrepancy coverage capture,,Safety Owner,,,
