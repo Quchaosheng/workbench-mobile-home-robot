@@ -761,7 +761,6 @@ class DashboardInboundBoundaryTests(unittest.TestCase):
         self.assertEqual(json.loads(oversized_body)["error"], "response_too_large")
 
 
-
 class AssuranceApiTests(unittest.TestCase):
     """The assurance endpoint must serve a projection, and refuse to invent one."""
 

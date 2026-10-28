@@ -72,8 +72,8 @@ exception handling leave residue.
 `run_scenario` now sweeps stale staging directories before creating its own:
 
 ```python
-STALE_STAGING_SECONDS = 700     # longer than the 600 s maximum manifest timeout
-_sweep_stale_staging(output_dir)   # removes `.*.partial` dirs older than that
+STALE_STAGING_SECONDS = 700  # longer than the 600 s maximum manifest timeout
+_sweep_stale_staging(output_dir)  # removes `.*.partial` dirs older than that
 ```
 
 The age guard is the important part: a `.partial` directory younger than the
