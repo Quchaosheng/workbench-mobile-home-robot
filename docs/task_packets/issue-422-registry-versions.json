@@ -1,0 +1,63 @@
+{
+  "issue": 422,
+  "human_owner": "Quchaosheng",
+  "objective": "Resolve a scenario by the exact (scenario_id, scenario_version) pair instead of indexing by scenario_id, so a second registered version no longer hides the first.",
+  "decision_supported": "Should the registry index entries by scenario_id alone, or by the full identity the caller is required to name?",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "tests/unit/test_scenario_registry.py",
+    "tools/scripts/_paths.py",
+    "docs/task_packets/issue-422-registry-versions.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/architecture/system.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "tests/unit/test_scenario_registry.py",
+    "tools/scripts/_paths.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "tests/unit/test_scenario_registry.py",
+    "tools/scripts/_paths.py"
+  ],
+  "acceptance": [
+    "resolve() with an explicit version returns that version's entry for every registered version.",
+    "resolve() with an unregistered version reports a mismatch and names the versions that are registered.",
+    "resolve() without a version stays ambiguous when the id has more than one version.",
+    "resolve() without a version still returns the entry when the id has exactly one.",
+    "describe() uses the same exact lookup.",
+    "Every registered identity resolves to itself."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_scenario_registry.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, registering 1.0 and 2.0 and calling resolve('sample-scenario', '1.0') raised SCENARIO_REGISTRY_VERSION_MISMATCH claiming the id is registered at 2.0, even though 1.0 was registered.",
+    "After the change both versions resolve exactly, an unregistered 3.0 lists ['1.0', '2.0'], and the no-version call still reports SCENARIO_REGISTRY_AMBIGUOUS_ID.",
+    "tests/unit/test_scenario_registry.py: 65 passed, including six new cases."
+  ],
+  "stop_conditions": [
+    "A caller depends on resolve() silently returning the last registered version; that is the implicit upgrade the registry documents it refuses."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The index is now keyed by a tuple, so a duplicate (id, version) pair would collide. load_registry already rejects duplicate identities before constructing the registry.",
+    "_paths.py now orders libs/kernel ahead of libs/application because both contain a workbench package and the callers import workbench.kernel."
+  ]
+}
