@@ -16,6 +16,8 @@
     "simulation": 0
   },
   "evidence_error": null,
+  "evidence_register": "hardware/validation/evidence-register.jsonl",
+  "evidence_register_is_valid": true,
   "fault_scenario_count": 20,
   "first_batch_unit_count": 10,
   "package": "validation",

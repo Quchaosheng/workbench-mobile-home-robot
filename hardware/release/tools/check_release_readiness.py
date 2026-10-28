@@ -229,9 +229,44 @@ def _binding_observed_ready(binding: str, report: dict[str, Any]) -> bool:
     if binding == "PRODUCTION_READY":
         return _stage_ready(report, "production_release")
     if binding == "PHYSICAL_EXECUTED":
-        result = report.get("physical_results")
-        return result in {"PASS", "PASSED", "VERIFIED", "COMPLETED"}
+        return _physical_executed(report)
     return False
+
+
+def _physical_executed(report: dict[str, Any]) -> bool:
+    """Whether the report shows physical evidence was actually captured.
+
+    The binding used to read one string, so `{"physical_results": "PASS"}` — a
+    hand-written file, or a copied one — satisfied a release gate (issue #429).
+    The report is a *derived* summary, so the gate now requires the summary to be
+    consistent with the register it was derived from:
+
+    - the register it was derived from has to be valid
+    - it has to count at least one physical record
+    - the derived result has to be one of the completed states
+    - the report has to name the register it read, so a copied summary cannot
+      stand in for one derived from a different register
+    """
+
+    result = report.get("physical_results")
+    if result not in {"PASS", "PASSED", "VERIFIED", "COMPLETED"}:
+        return False
+
+    if report.get("evidence_register_is_valid") is not True:
+        return False
+
+    counts = report.get("evidence_counts")
+    if not isinstance(counts, dict):
+        return False
+    physical = counts.get("physical")
+    if not isinstance(physical, int) or isinstance(physical, bool) or physical < 1:
+        return False
+
+    register = report.get("evidence_register")
+    if not isinstance(register, str) or not register.strip():
+        return False
+
+    return True
 
 
 def validate_evidence_bindings(
