@@ -1,0 +1,65 @@
+{
+  "issue": 450,
+  "human_owner": "Quchaosheng",
+  "objective": "Bound the evaluation matrix before any run starts: cap versions, scenarios and their product, refuse an oversized matrix with an actionable message, and offer a dry-run count.",
+  "decision_supported": "Can --versions and --scenarios stay unbounded, or does the product need an explicit budget before the first external process starts?",
+  "allowed_paths": [
+    "tools/scripts/run_evaluation.py",
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_matrix_budget.py",
+    "docs/task_packets/issue-450-matrix-budget.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "tools/scripts/collect_metrics.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "tools/scripts/run_evaluation.py",
+    "tools/scripts/sim_cli.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/run_evaluation.py",
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_matrix_budget.py"
+  ],
+  "acceptance": [
+    "A matrix over the run limit is refused before any run starts.",
+    "More versions or scenarios than the per-list limits is refused.",
+    "The refusal names every problem at once and says how to proceed.",
+    "The exact limits are accepted.",
+    "--dry-run reports the matrix size and starts nothing.",
+    "A dry run over the limit still refuses.",
+    "sim_cli.run_scenarios applies the same per-invocation scenario ceiling."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_matrix_budget.py -q",
+    "python3 -m pytest tests/unit/test_evaluation_tools.py tests/unit/test_sim_cli.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change the module had MAX_EVENT_LOG_BYTES and MAX_EVENTS_PER_RUN but no limit on the number of runs, so 50 versions x 50 scenarios would have started 2500 runs.",
+    "After the change the same input is refused with '50 versions, over the 20-version limit; 50 scenarios, over the 50-scenario limit; 2500 runs, over the 100-run limit'.",
+    "A 2x3 matrix reports 6 runs and is accepted; the exact limits are accepted.",
+    "--dry-run prints '2 version(s) x 1 scenario(s) = 2 run(s)' and returns 0 without creating the output directory."
+  ],
+  "stop_conditions": [
+    "A legitimate evaluation needs more than 100 runs in one invocation; the limits are three constants at the top of the module and the message says to split the work."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The limits are guesses sized well above any committed corpus; they live in one place so a reviewer can raise them deliberately.",
+    "The product limit is checked separately from the per-list limits so a 20x50 matrix is refused for its product even though each list is at its own ceiling."
+  ]
+}
