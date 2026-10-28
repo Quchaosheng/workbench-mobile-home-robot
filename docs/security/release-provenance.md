@@ -20,7 +20,21 @@ inspection is injected, so no Docker daemon and no network are required.
 | `sbom` | The SPDX SBOM path and its file hash. |
 | `image` | The inspected image id, repo digests and the registry `sha256` digest. |
 | `attestation` | `unsigned`, `signed` or `verified`, with the time it was recorded. |
-| `release_eligible` | True only when the provenance above is complete. |
+| `provenance_complete` | True only when the provenance above is complete. This is the weaker question. |
+| `promotion_eligible` | True when the provenance is complete **and** the attestation is signed or verified. |
+| `release_eligible` | Alias of `promotion_eligible`, kept for existing consumers. |
+
+**Three questions, three fields.** Provenance completeness says the record
+describes the artifact. Promotion eligibility says the artifact may be published.
+They differ exactly at the attestation step, which runs after the build-time
+manifest is written: a build-time manifest is provenance-complete while its
+attestation is `unsigned`, and publishing it would be a release decision the
+record does not support.
+
+`release_eligible` therefore follows promotion, not completeness. A manifest can
+no longer report `release_eligible: true` while `promotion_reasons()` refuses it
+(issue #435). `provenance_reasons` and `promotion_reasons` carry the reasons for
+each, so a reader does not have to guess which question was answered.
 
 ## Mutable tags cannot substitute for digests
 

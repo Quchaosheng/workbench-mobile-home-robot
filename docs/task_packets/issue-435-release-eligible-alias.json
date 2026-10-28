@@ -1,0 +1,64 @@
+{
+  "issue": 435,
+  "human_owner": "Quchaosheng",
+  "objective": "Give the release manifest one unambiguous verdict per question — provenance completeness, promotion eligibility, publication — so no artifact reads as release-eligible while the promotion predicate refuses it.",
+  "decision_supported": "Should release_eligible follow provenance completeness or promotion, and can downstream readers be migrated without losing the weaker signal?",
+  "allowed_paths": [
+    "tools/scripts/release_manifest.py",
+    "tests/unit/test_release_provenance.py",
+    "docs/security/release-provenance.md",
+    "docs/task_packets/issue-435-release-eligible-alias.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "tests/unit/test_release_workflow.py",
+    "docs/security/supply-chain.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    ".github/workflows/**"
+  ],
+  "input_refs": [
+    "tools/scripts/release_manifest.py",
+    "tests/unit/test_release_provenance.py",
+    "docs/security/release-provenance.md",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/release_manifest.py",
+    "tests/unit/test_release_provenance.py",
+    "docs/security/release-provenance.md"
+  ],
+  "acceptance": [
+    "The manifest carries provenance_complete, promotion_eligible and release_eligible, and release_eligible equals promotion_eligible.",
+    "promotion_eligible is false for an unsigned, unverifiable or failed-attestation manifest.",
+    "provenance_reasons and promotion_reasons are written so a reader knows which question was refused.",
+    "A test asserts the invariant over every attestation status.",
+    "The documentation distinguishes the three questions.",
+    "Existing readers of release_eligible keep a field with that name, now narrower than before."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_release_provenance.py tests/unit/test_release_workflow.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "The issue probe: verify_manifest returns () while promotion_reasons returns the attestation reason, and the old manifest still wrote release_eligible: true.",
+    "After the change the same probe reports provenance_complete True, promotion_eligible False, release_eligible False, and both flip together when the attestation becomes signed.",
+    "The pre-existing test asserted release_eligible was true for an unsigned manifest; it now asserts the three fields separately."
+  ],
+  "stop_conditions": [
+    "A consumer is found that treats release_eligible as provenance completeness and cannot be told apart; that would need an explicit migration note rather than the alias."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "This makes release_eligible false where it was true, which is the point of the issue but is a breaking change for any reader; the name is preserved and the reasons are now in the manifest.",
+    "The workflow still writes an unsigned manifest at build time; it is now labelled as provenance-complete rather than release-eligible."
+  ]
+}
