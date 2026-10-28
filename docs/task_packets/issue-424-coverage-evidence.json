@@ -1,0 +1,64 @@
+{
+  "issue": 424,
+  "human_owner": "Quchaosheng",
+  "objective": "Stop coverage_report from reporting a fault as SIMULATED on the strength of its name: require an execution record naming the injector, an injected or observed outcome, and a reference to the output.",
+  "decision_supported": "Is a caller-provided list of fault names evidence of simulated coverage, or does the report need the injector execution behind each claim?",
+  "allowed_paths": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py",
+    "docs/task_packets/issue-424-coverage-evidence.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/architecture/system.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py"
+  ],
+  "acceptance": [
+    "coverage_report() with no evidence reports every fault NOT_EXECUTED.",
+    "A simulated claim without an execution record is refused.",
+    "A skipped or failed outcome is refused rather than counted as coverage.",
+    "A record without an evidence_ref or without an injector name is refused.",
+    "Evidence supplied for a fault that is not claimed grants nothing.",
+    "Each SIMULATED entry carries its evidence reference in the report.",
+    "HARDWARE_TESTED still requires a named physical evidence reference.",
+    "The report stays JSON-serializable and versioned."
+  ],
+  "commands": [
+    "python3 -m pytest tests/integration/test_fault_injection_coverage.py -q",
+    "python3 -m pytest tests/integration -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, coverage_report(simulated=declared_faults()) reported all eight faults SIMULATED without running any injector.",
+    "After the change the same call is refused with 'claims SIMULATED without an execution record'.",
+    "With a record naming an injector, an observed outcome and an evidence_ref, the fault is SIMULATED and the report carries simulation_evidence_ref.",
+    "A skipped or failed outcome, a blank reference and a blank injector are each refused with their own message."
+  ],
+  "stop_conditions": [
+    "An existing injector test cannot produce an evidence reference; the reference is a path the test already knows, so this is not expected."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Callers that passed only names now fail loudly; the two tests in the repository were the only callers and both were updated.",
+    "The record is validated for shape and outcome, not for the content of the referenced file; hashing the artifact is a separate change."
+  ]
+}
