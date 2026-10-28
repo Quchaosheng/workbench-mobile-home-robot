@@ -91,6 +91,10 @@ def validate() -> dict:
         "status": "VALIDATED" if physical_results == "PASS" else "PHYSICAL_EXECUTION_REQUIRED",
         "physical_results": physical_results,
         "evidence_counts": evidence_counts,
+        # The register this summary was derived from, so a release gate can tell a
+        # derived summary from a hand-written one (issue #429).
+        "evidence_register": str((PACKAGE / "evidence-register.jsonl").relative_to(ROOT)),
+        "evidence_register_is_valid": evidence_error is None,
         "evidence_error": evidence_error,
         "scenario_results": dict(sorted(scenario_results.items())),
         "physical_scenario_results": dict(sorted(physical_scenario_results.items())),

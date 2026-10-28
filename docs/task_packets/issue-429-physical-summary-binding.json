@@ -1,0 +1,70 @@
+{
+  "issue": 429,
+  "human_owner": "Quchaosheng",
+  "objective": "Stop the release gate from trusting a derived physical PASS summary: require the summary to name the register it was derived from, to report that register as valid, and to count at least one physical record.",
+  "decision_supported": "Can a single physical_results string from a derived report satisfy a release binding, or does the gate need the summary to be consistent with the register behind it?",
+  "allowed_paths": [
+    "hardware/release/tools/check_release_readiness.py",
+    "hardware/validation/tools/validate_validation.py",
+    "hardware/validation/generated/validation_report.json",
+    "tests/hardware/test_physical_execution_binding.py",
+    "docs/task_packets/issue-429-physical-summary-binding.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "hardware/release/evidence-register.csv"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/pcb/**",
+    "hardware/validation/tools/evidence.py"
+  ],
+  "input_refs": [
+    "hardware/release/tools/check_release_readiness.py",
+    "hardware/validation/tools/validate_validation.py",
+    "hardware/validation/generated/validation_report.json",
+    "hardware/release/evidence-register.csv",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "hardware/release/tools/check_release_readiness.py",
+    "hardware/validation/tools/validate_validation.py",
+    "hardware/validation/generated/validation_report.json",
+    "tests/hardware/test_physical_execution_binding.py"
+  ],
+  "acceptance": [
+    "A report containing only physical_results: PASS no longer satisfies PHYSICAL_EXECUTED.",
+    "The report must name the register it was derived from.",
+    "evidence_register_is_valid must be true.",
+    "evidence_counts.physical must be an int of at least 1.",
+    "Unfinished results such as NOT_EXECUTED, HOLD and FAIL are refused.",
+    "The validation report gains evidence_register and evidence_register_is_valid.",
+    "The committed report still reports NOT_EXECUTED and does not satisfy the binding."
+  ],
+  "commands": [
+    "python3 -m pytest tests/hardware/test_physical_execution_binding.py -q",
+    "python3 -m pytest tests/hardware -q",
+    "python3 hardware/release/tools/check_release_readiness.py",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, _binding_observed_ready('PHYSICAL_EXECUTED', {'physical_results': 'PASS'}) returned True.",
+    "After the change it returns False, and so do a zero physical count, an invalid register, a missing register name and a missing validity flag.",
+    "A fully consistent summary still returns True, and the committed validation report (NOT_EXECUTED, physical count 0) does not."
+  ],
+  "stop_conditions": [
+    "A legitimate producer of the validation report cannot name its register; validate_validation always writes it, so that would be a producer bug."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The gate now requires a field the report did not previously carry, so an older report is refused rather than accepted; that is the fail-closed direction.",
+    "Naming the register is not the same as hashing it; binding the summary to the register's content is a separate change."
+  ]
+}
