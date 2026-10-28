@@ -15,8 +15,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "scripts"))
 
 from release_manifest import (
+    ATTESTATION_STATUSES,
     MANIFEST_SCHEMA_VERSION,
     ProvenanceError,
+    apply_verdict_fields,
     build_manifest,
     git_commit,
     lock_revision,
@@ -162,11 +164,55 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(document["schema_version"], MANIFEST_SCHEMA_VERSION)
 
     def test_the_build_time_manifest_is_provenance_complete_but_not_promotable(self) -> None:
-        """Attestation runs after the manifest is written, so unsigned is honest."""
+        """Attestation runs after the manifest is written, so unsigned is honest.
+
+        Three questions, three fields (issue #435). The build-time manifest is
+        provenance-complete and not promotable, and `release_eligible` follows
+        promotion rather than completeness so that no manifest reads as a release
+        decision that the promotion predicate would refuse.
+        """
         document = manifest(attestation={"status": "unsigned"})
         self.assertEqual(verify_manifest(document), ())
-        self.assertTrue(document["release_eligible"])
+        self.assertTrue(document["provenance_complete"])
+        self.assertEqual(document["provenance_reasons"], [])
+        self.assertFalse(document["promotion_eligible"])
+        self.assertFalse(document["release_eligible"])
         self.assertIn("signed", " ".join(promotion_reasons(document)))
+        self.assertIn("signed", " ".join(document["promotion_reasons"]))
+
+    def test_a_signed_manifest_is_both_provenance_complete_and_promotable(self) -> None:
+        document = manifest(attestation={"status": "signed"})
+        self.assertTrue(document["provenance_complete"])
+        self.assertTrue(document["promotion_eligible"])
+        self.assertTrue(document["release_eligible"])
+        self.assertEqual(document["promotion_reasons"], [])
+
+    def test_no_manifest_is_release_eligible_while_promotion_refuses_it(self) -> None:
+        """The invariant the issue asks for, over every attestation status."""
+
+        for status in sorted(ATTESTATION_STATUSES):
+            with self.subTest(status=status):
+                document = manifest(attestation={"status": status})
+                if promotion_reasons(document):
+                    self.assertFalse(document["release_eligible"])
+                else:
+                    self.assertTrue(document["release_eligible"])
+                self.assertEqual(document["release_eligible"], not promotion_reasons(document))
+
+    def test_a_broken_manifest_is_neither_complete_nor_promotable(self) -> None:
+        document = manifest()
+        document["lock"] = {
+            "path": "x",
+            "sha256": "a" * 64,
+            "package_count": 1,
+            "hashed_package_count": 1,
+            "packages": [],
+        }
+        apply_verdict_fields(document)
+        self.assertFalse(document["provenance_complete"])
+        self.assertFalse(document["promotion_eligible"])
+        self.assertFalse(document["release_eligible"])
+        self.assertNotEqual(document["provenance_reasons"], [])
 
     def test_missing_provenance_fields_are_named_individually(self) -> None:
         for field in ("source_commit", "workflow_ref", "base_image", "lock", "sbom", "image"):

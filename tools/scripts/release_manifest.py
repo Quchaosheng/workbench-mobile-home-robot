@@ -21,7 +21,7 @@ import platform
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -238,8 +238,31 @@ def build_manifest(
         "attestation": dict(attestation) if attestation is not None else {"status": "unsigned"},
         "environment": {"platform": platform.platform(), "python": platform.python_version()},
     }
-    manifest["release_eligible"] = not verify_manifest(manifest)
+    apply_verdict_fields(manifest)
     return manifest
+
+
+def apply_verdict_fields(manifest: MutableMapping[str, Any]) -> None:
+    """Write the three verdicts this manifest actually carries.
+
+    They are different questions and the names have to say which is which
+    (issue #435):
+
+    ``provenance_complete``  the record has every field and every hash agrees.
+    ``promotion_eligible``   the same, *and* the attestation is signed or
+                             verified, so the artifact may be promoted.
+    ``release_eligible``     kept as an alias of ``promotion_eligible`` for
+                             consumers that already read it, so that a manifest
+                             cannot say "release eligible" while promotion
+                             refuses it.
+    """
+    reasons = verify_manifest(manifest)
+    promotable = promotion_reasons(manifest)
+    manifest["provenance_complete"] = not reasons
+    manifest["provenance_reasons"] = list(reasons)
+    manifest["promotion_eligible"] = not promotable
+    manifest["promotion_reasons"] = list(promotable)
+    manifest["release_eligible"] = not promotable
 
 
 def verify_manifest(manifest: Mapping[str, Any]) -> tuple[str, ...]:
@@ -409,7 +432,7 @@ def record_attestation(path: Path, status: str) -> dict[str, Any]:
         raise ProvenanceError(f"attestation status must be one of {sorted(ATTESTATION_STATUSES)}")
     document = _load_manifest(path)
     document["attestation"] = {"status": status, "recorded_at": datetime.now(UTC).isoformat()}
-    document["release_eligible"] = not verify_manifest(document)
+    apply_verdict_fields(document)
     Path(path).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     return document
 
