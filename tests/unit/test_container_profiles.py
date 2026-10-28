@@ -91,10 +91,7 @@ def test_supply_chain_scan_uses_exact_vex_document() -> None:
     # than counted so that adding a blanket "ignore everything" entry fails here.
     statements = vex["statements"]
     assert len(statements) == 10
-    assert {
-        (s["vulnerability"]["name"], s["products"][0]["identifiers"]["purl"])
-        for s in statements
-    } == {
+    assert {(s["vulnerability"]["name"], s["products"][0]["identifiers"]["purl"]) for s in statements} == {
         ("GHSA-f865-m6cq-j9vx", "pkg:pypi/mpmath@0.0.0"),
         ("GHSA-x8mw-p69m-v3mx", "pkg:npm/%40fastify/busboy@2.0.0"),
         ("GHSA-v4x8-3wr5-3wq8", "pkg:pypi/filelock@3.32.7"),
@@ -119,7 +116,6 @@ def test_supply_chain_scan_uses_exact_vex_document() -> None:
         )
         # A justification without the evidence behind it is a bare assertion.
         assert len(statement["impact_statement"]) > 80
-
 
 
 def test_gpu_matrix_covers_rtx_30_40_50_with_name_and_compute_guards() -> None:
