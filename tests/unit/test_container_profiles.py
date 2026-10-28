@@ -86,20 +86,36 @@ def test_supply_chain_scan_uses_exact_vex_document() -> None:
 
     scan_block = workflow.split("uses: anchore/scan-action", 1)[1].split("- uses:", 1)[0]
     assert "vex: docker/vex.json" in scan_block
-    assert vex["statements"] == [
-        {
-            "vulnerability": {"name": "GHSA-f865-m6cq-j9vx"},
-            "products": [{"identifiers": {"purl": "pkg:pypi/mpmath@0.0.0"}}],
-            "status": "not_affected",
-            "timestamp": "2026-09-01T00:00:00Z",
-            "justification": "vulnerable_code_not_present",
-            "impact_statement": (
-                "Ubuntu Noble's python3-mpmath package ships a backported ReDOS fix; "
-                "Grype 0.118.0 reports synthetic 0.0.0 egg-info metadata, while the "
-                "runtime package is the patched distro build."
-            ),
-        }
-    ]
+    # Every statement has to name a real finding with the exact purl grype
+    # reported, and say why it cannot be reached. The list is enumerated rather
+    # than counted so that adding a blanket "ignore everything" entry fails here.
+    statements = vex["statements"]
+    assert len(statements) == 10
+    assert {(s["vulnerability"]["name"], s["products"][0]["identifiers"]["purl"]) for s in statements} == {
+        ("GHSA-f865-m6cq-j9vx", "pkg:pypi/mpmath@0.0.0"),
+        ("GHSA-x8mw-p69m-v3mx", "pkg:npm/%40fastify/busboy@2.0.0"),
+        ("GHSA-v4x8-3wr5-3wq8", "pkg:pypi/filelock@3.32.7"),
+        *{
+            (name, "pkg:pypi/virtualenv@21.7.14")
+            for name in (
+                "GHSA-c978-59m8-c77v",
+                "GHSA-8rjx-v5ww-45pp",
+                "GHSA-5vjq-rrrf-7h2q",
+                "GHSA-c947-3pg5-gm8q",
+                "GHSA-vxj4-q4g9-crj7",
+                "GHSA-394h-qwmc-48pf",
+                "GHSA-6w3r-xr62-4xcp",
+            )
+        },
+    }
+    for statement in statements:
+        assert statement["status"] == "not_affected"
+        assert statement["justification"] in (
+            "vulnerable_code_not_present",
+            "vulnerable_code_not_in_execute_path",
+        )
+        # A justification without the evidence behind it is a bare assertion.
+        assert len(statement["impact_statement"]) > 80
 
 
 def test_gpu_matrix_covers_rtx_30_40_50_with_name_and_compute_guards() -> None:

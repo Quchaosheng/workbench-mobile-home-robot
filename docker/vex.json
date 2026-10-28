@@ -1,19 +1,169 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://github.com/Quchaosheng/workbench-mobile-home-robot/vex/container-2026-09-01",
+  "@id": "https://github.com/Quchaosheng/workbench-mobile-home-robot/vex/container-2026-10-28",
   "author": "Quchaosheng/workbench-mobile-home-robot",
-  "version": 1,
-  "timestamp": "2026-09-01T00:00:00Z",
+  "version": 2,
+  "timestamp": "2026-10-28T00:00:00Z",
   "statements": [
     {
-      "vulnerability": {"name": "GHSA-f865-m6cq-j9vx"},
+      "vulnerability": {
+        "name": "GHSA-f865-m6cq-j9vx"
+      },
       "products": [
-        {"identifiers": {"purl": "pkg:pypi/mpmath@0.0.0"}}
+        {
+          "identifiers": {
+            "purl": "pkg:pypi/mpmath@0.0.0"
+          }
+        }
       ],
       "status": "not_affected",
       "timestamp": "2026-09-01T00:00:00Z",
       "justification": "vulnerable_code_not_present",
       "impact_statement": "Ubuntu Noble's python3-mpmath package ships a backported ReDOS fix; Grype 0.118.0 reports synthetic 0.0.0 egg-info metadata, while the runtime package is the patched distro build."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-x8mw-p69m-v3mx"
+      },
+      "products": [
+        {
+          "identifiers": {
+            "purl": "pkg:npm/%40fastify/busboy@2.0.0"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Ubuntu Noble's nodejs package vendors @fastify/busboy for npm-internal use. Node is in this image only as a JavaScript runtime for tests/unit/test_dashboard_accessibility.py to evaluate the dashboard modules; no HTTP server, multipart parser or npm client is started in the image at run time, so the multipart part-header path this advisory needs is never executed."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-c978-59m8-c77v"
+      },
+      "products": [
+        {
+          "identifiers": {
+            "purl": "pkg:pypi/virtualenv@21.7.14"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "virtualenv is a build-time tool pulled in by docker/requirements-dev.lock; the image never runs it. It is pinned rather than removed because the lock is hash-verified and resolved as a set, and because version drift there is what the lock exists to prevent. Upgrading it is tracked separately; this statement records why the finding cannot be reached in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-8rjx-v5ww-45pp"
+      },
+      "products": [
+        {
+          "identifiers": {
+            "purl": "pkg:pypi/virtualenv@21.7.14"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "virtualenv is a build-time tool pulled in by docker/requirements-dev.lock; the image never runs it. It is pinned rather than removed because the lock is hash-verified and resolved as a set, and because version drift there is what the lock exists to prevent. Upgrading it is tracked separately; this statement records why the finding cannot be reached in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-5vjq-rrrf-7h2q"
+      },
+      "products": [
+        {
+          "identifiers": {
+            "purl": "pkg:pypi/virtualenv@21.7.14"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "virtualenv is a build-time tool pulled in by docker/requirements-dev.lock; the image never runs it. It is pinned rather than removed because the lock is hash-verified and resolved as a set, and because version drift there is what the lock exists to prevent. Upgrading it is tracked separately; this statement records why the finding cannot be reached in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-c947-3pg5-gm8q"
+      },
+      "products": [
+        {
+          "identifiers": {
+            "purl": "pkg:pypi/virtualenv@21.7.14"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "virtualenv is a build-time tool pulled in by docker/requirements-dev.lock; the image never runs it. It is pinned rather than removed because the lock is hash-verified and resolved as a set, and because version drift there is what the lock exists to prevent. Upgrading it is tracked separately; this statement records why the finding cannot be reached in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-vxj4-q4g9-crj7"
+      },
+      "products": [
+        {
+          "identifiers": {
+            "purl": "pkg:pypi/virtualenv@21.7.14"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "virtualenv is a build-time tool pulled in by docker/requirements-dev.lock; the image never runs it. It is pinned rather than removed because the lock is hash-verified and resolved as a set, and because version drift there is what the lock exists to prevent. Upgrading it is tracked separately; this statement records why the finding cannot be reached in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-394h-qwmc-48pf"
+      },
+      "products": [
+        {
+          "identifiers": {
+            "purl": "pkg:pypi/virtualenv@21.7.14"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "virtualenv is a build-time tool pulled in by docker/requirements-dev.lock; the image never runs it. It is pinned rather than removed because the lock is hash-verified and resolved as a set, and because version drift there is what the lock exists to prevent. Upgrading it is tracked separately; this statement records why the finding cannot be reached in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-6w3r-xr62-4xcp"
+      },
+      "products": [
+        {
+          "identifiers": {
+            "purl": "pkg:pypi/virtualenv@21.7.14"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "virtualenv is a build-time tool pulled in by docker/requirements-dev.lock; the image never runs it. It is pinned rather than removed because the lock is hash-verified and resolved as a set, and because version drift there is what the lock exists to prevent. Upgrading it is tracked separately; this statement records why the finding cannot be reached in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-v4x8-3wr5-3wq8"
+      },
+      "products": [
+        {
+          "identifiers": {
+            "purl": "pkg:pypi/filelock@3.32.7"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "filelock arrives with the same build-time dependency set as virtualenv and is never imported by the daemons. The advisory concerns lock files created in a directory an attacker controls; the only lock files this image writes are under /opt/workbench-venv at build time."
     }
   ]
 }
