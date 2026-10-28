@@ -1,0 +1,65 @@
+{
+  "issue": 446,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the upstream-report structure check refuse a status outside the package's own vocabulary and a false pass field, so a renamed or self-declared field cannot read as a valid upstream approval.",
+  "decision_supported": "Does a non-empty status string plus a boolean pass field prove an upstream package is structurally valid, or does the check need the package's own vocabulary and a true result?",
+  "allowed_paths": [
+    "hardware/release/tools/check_release_readiness.py",
+    "hardware/release/generated/release_readiness_report.json",
+    "tests/hardware/test_upstream_report_structure.py",
+    "docs/task_packets/issue-446-upstream-report-structure.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/pcb/**",
+    "hardware/validation/**"
+  ],
+  "input_refs": [
+    "hardware/release/tools/check_release_readiness.py",
+    "hardware/release/generated/release_readiness_report.json",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "hardware/release/tools/check_release_readiness.py",
+    "hardware/release/generated/release_readiness_report.json",
+    "tests/hardware/test_upstream_report_structure.py"
+  ],
+  "acceptance": [
+    "A status outside the package's declared vocabulary fails the structure check.",
+    "A false pass or engineering_package_pass fails it; the field has to be true.",
+    "A missing pass field fails it.",
+    "Every package in UPSTREAM_REPORTS has a declared vocabulary, and its committed status is in it.",
+    "The committed reports still pass the structure check.",
+    "The check is still per-package: a ready status belonging to another package is refused.",
+    "The regenerated release report records the two new checks and still passes."
+  ],
+  "commands": [
+    "python3 -m pytest tests/hardware/test_upstream_report_structure.py -q",
+    "python3 -m pytest tests/hardware -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, setting the PCB status to JUST_A_STRING with the staged blocks removed left every structural check passing.",
+    "Before the change, setting pass to False with the staged blocks removed also left every check passing; only an unrelated staged-consistency check happened to catch the combined mutation.",
+    "After the change those two mutations fail on status_is_in_the_package_vocabulary and structural_pass_field_is_true respectively, and the committed reports still pass.",
+    "Regenerating the release report adds status_is_in_the_package_vocabulary and structural_pass_field_is_true to every upstream entry, both true."
+  ],
+  "stop_conditions": [
+    "A package legitimately reports a status not in its vocabulary; that status has to be added to UPSTREAM_STATUSES, which is where a reviewer sees it."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Adding a status now requires editing the table, which is deliberate friction on a release vocabulary.",
+    "The check still does not bind the report to an input digest; that is a separate issue."
+  ]
+}
