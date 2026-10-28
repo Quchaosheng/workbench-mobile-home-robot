@@ -98,25 +98,25 @@ jobs:
           output-file: workbench-1-grype.json
           vex: docker/vex.json
 
-      - name: Publish tested image
-        id: publish
+      # The candidate is pushed under a staging tag that is not any of the release
+      # tags. That gives the provenance steps something real to verify against a
+      # registry digest, while leaving no release tag published until every check
+      # below has passed (issue #434).
+      - name: Push the staging image
+        id: stage
         if: startsWith(github.ref, 'refs/tags/v')
         env:
-          IMAGE_TAGS: ${{ steps.metadata.outputs.tags }}
+          STAGING_TAG: ghcr.io/${{ github.repository }}:staging-${{ github.sha }}
         run: |
-          while IFS= read -r tag; do
-            if [ -n "$tag" ]; then
-              docker tag workbench-1:release-candidate "$tag"
-              docker push "$tag"
-            fi
-          done <<< "$IMAGE_TAGS"
-          first_tag="$(printf '%s\n' "$IMAGE_TAGS" | sed -n '/./{p;q;}')"
-          digest="$(docker image inspect "$first_tag" --format '{{index .RepoDigests 0}}' | awk -F@ '{print $2}')"
+          docker tag workbench-1:release-candidate "$STAGING_TAG"
+          docker push "$STAGING_TAG"
+          digest="$(docker image inspect "$STAGING_TAG" --format '{{index .RepoDigests 0}}' | awk -F@ '{print $2}')"
           if [ -z "$digest" ]; then
-            echo "Published image has no registry digest" >&2
+            echo "Staged image has no registry digest" >&2
             exit 1
           fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "staging_tag=$STAGING_TAG" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: always()
@@ -149,22 +149,48 @@ jobs:
             --verify release-manifest.json
 
       - name: Attest published image
-        if: steps.publish.outputs.digest != ''
+        if: steps.stage.outputs.digest != ''
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-name: ghcr.io/${{ github.repository }}
-          subject-digest: ${{ steps.publish.outputs.digest }}
+          subject-digest: ${{ steps.stage.outputs.digest }}
           push-to-registry: true
 
       # Record the attestation outcome and refuse promotion unless the manifest
       # is complete *and* the published image carries a signed attestation.
       - name: Verify promotion readiness
-        if: steps.publish.outputs.digest != ''
+        if: steps.stage.outputs.digest != ''
         run: |
           python tools/scripts/release_manifest.py \
             --mark-attestation signed \
             --output release-manifest.json \
             --require-promotion
+
+      # Only now may the release tags point at the bytes that were verified. Every
+      # tag is moved onto the staging digest, so a failure anywhere above leaves the
+      # staging tag alone and no release tag published (issue #434).
+      - name: Publish the verified digest under the release tags
+        id: publish
+        if: startsWith(github.ref, 'refs/tags/v') && steps.stage.outputs.digest != ''
+        env:
+          IMAGE_TAGS: ${{ steps.metadata.outputs.tags }}
+          DIGEST: ${{ steps.stage.outputs.digest }}
+        run: |
+          published=0
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then
+              docker pull "${tag%%:*}@${DIGEST}"
+              docker tag "${tag%%:*}@${DIGEST}" "$tag"
+              docker push "$tag"
+              published=$((published + 1))
+            fi
+          done <<< "$IMAGE_TAGS"
+          if [ "$published" -eq 0 ]; then
+            echo "no release tags were published" >&2
+            exit 1
+          fi
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+          echo "Published ${published} release tag(s) at ${DIGEST}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: always()
