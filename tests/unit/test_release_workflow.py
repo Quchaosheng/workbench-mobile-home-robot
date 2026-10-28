@@ -11,6 +11,26 @@ def _step_block(workflow: str, marker: str) -> str:
     return workflow[start:] if next_step == -1 else workflow[start:next_step]
 
 
+def _pinned_action(workflow: str, action: str) -> str:
+    """The `action@<sha>` reference a workflow actually uses.
+
+    Read from the workflow rather than repeated here: a Dependabot bump changes
+    the pin, and a test that hardcodes it turns every bump into a red build for a
+    reason that has nothing to do with the bump (issue #404).
+    """
+
+    prefix = f"uses: {action}@"
+    start = workflow.index(prefix) + len(prefix)
+    end = start
+    while end < len(workflow) and workflow[end] not in " \t\r\n#":
+        end += 1
+    reference = workflow[start:end]
+    assert len(reference) == 40 and all(character in "0123456789abcdef" for character in reference), (
+        f"{action} is not pinned to a full commit sha: {reference!r}"
+    )
+    return reference
+
+
 def test_sbom_generation_keeps_release_workflow_least_privileged() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
@@ -62,7 +82,7 @@ def test_kernel_fault_suite_publishes_and_validates_structured_report() -> None:
     assert "kernel/wbcan/validate_test_report.py" in validate_step
     assert "id: fault_report" in validate_step
     assert "if: always()" in validate_step
-    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in artifact_step
+    assert f"actions/upload-artifact@{_pinned_action(workflow, 'actions/upload-artifact')}" in artifact_step
     assert "wbcan-driver-test-report" in artifact_step
     assert "if-no-files-found: error" in artifact_step
     assert "REPORT_VALIDATION_OUTCOME" in kernel_job
@@ -86,7 +106,7 @@ def test_kernel_job_publishes_and_requires_socketcan_ingress_evidence() -> None:
     assert "--validate-report" in validate_step
     assert "--require-pass" in validate_step
     assert "if: always()" in artifact_step
-    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in artifact_step
+    assert f"actions/upload-artifact@{_pinned_action(workflow, 'actions/upload-artifact')}" in artifact_step
     assert "wbcan-socketcan-ingress-report" in artifact_step
     assert "if-no-files-found: error" in artifact_step
 
