@@ -345,20 +345,56 @@ def test_the_rendered_lock_round_trips_through_the_parser(committed_lock: lock_t
 # --------------------------------------------------------------------------- #
 
 
+def _install_lines(text: str) -> list[str]:
+    """Every line that installs a Python package, including wrapped shell bodies."""
+
+    return [line.strip() for line in text.splitlines() if "pip install" in line]
+
+
 def test_every_install_site_uses_the_lock_and_separates_the_editable_project() -> None:
-    """pip cannot hash an editable project, so the two steps must stay separate."""
+    """pip cannot hash an editable project, so the two steps must stay separate.
+
+    This walks each install command rather than looking for three strings somewhere
+    in the file: a workflow could satisfy a substring check while still resolving a
+    range install, which is exactly what issue #406 recorded.
+    """
 
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    for name, text in (("Makefile", makefile), ("Dockerfile", dockerfile), ("ci.yml", ci)):
+    for name, text in (("Makefile", makefile), ("Dockerfile", dockerfile)):
         assert "--require-hashes" in text, name
         assert "requirements-dev.lock" in text, name
         assert "--no-deps" in text, name
 
     assert "pip install --require-hashes -r docker/requirements-dev.lock" in makefile
     assert "pip install --no-deps -e ." in makefile
+
+
+# `pip install --upgrade pip` installs pip, not a project dependency, and pip cannot be
+# hash-locked from the same file. `--require-hashes` installs from the lock, and
+# `--no-deps -e .` installs the project itself with its dependencies already present.
+ALLOWED_INSTALL_PATTERNS = (
+    "python -m pip install --upgrade pip",
+    "python -m pip install --require-hashes -r docker/requirements-dev.lock",
+    "python -m pip install --no-deps -e .",
+    "pip install --require-hashes -r docker/requirements-dev.lock",
+)
+
+
+def test_no_workflow_resolves_dependencies_from_a_range() -> None:
+    """Issue #406: a range install in a workflow makes its environment differ from the image."""
+
+    offenders: list[str] = []
+    for workflow in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        for line in _install_lines(workflow.read_text(encoding="utf-8")):
+            command = line.lstrip("- ").removeprefix("run: ").strip()
+            if not command.startswith(("python -m pip install", "pip install")):
+                continue
+            if not command.startswith(ALLOWED_INSTALL_PATTERNS):
+                offenders.append(f"{workflow.name}: {command}")
+
+    assert offenders == [], "these install from a range instead of the hash-checked lock: " + "; ".join(offenders)
 
 
 def test_the_release_manifest_defaults_to_the_hashed_lock() -> None:
