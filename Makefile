@@ -8,6 +8,7 @@ PYTHON ?= python3
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
 	container-project-check property-gate mutation-gate quality-gates ready-gate lock-python lock-python-verify \
+	assurance-check \
 	branch-protection-check release-commit-check readiness-report-check phase-gates-check description-check
 
 # The root Python environment is installed from the hash-checked lock, not from
@@ -41,7 +42,7 @@ test:
 	$(PYTHON) -m pytest -v
 
 # Everything CI runs, in one command. Run this before opening a PR.
-check: lint test contract scenario-check scenario-conformance run-identity-check run-provenance-check golden-check readiness-report-check phase-gates-check context-check demo-scripted demo-offline
+check: lint test contract scenario-check scenario-conformance assurance-check run-identity-check run-provenance-check golden-check readiness-report-check phase-gates-check context-check demo-scripted demo-offline
 
 contract:
 	$(PYTHON) tools/scripts/validate_contracts.py
@@ -53,6 +54,13 @@ scenario-check:
 # evidence boundaries with a committed test (Issue #304).
 scenario-conformance:
 	$(PYTHON) tools/scripts/check_scenario_conformance.py
+
+# Every runtime-assurance invariant must resolve to an enforcement symbol and a
+# committed test, every injected fault must name the terminal state it reaches,
+# and only the nominal case may expect a confirmed goal verdict. The generated
+# page is compared, so a stale or hand-edited claim fails rather than renders.
+assurance-check:
+	$(PYTHON) tools/scripts/check_assurance.py --check-generated
 
 # Every registered scenario is reported with the evidence class it actually has
 # (Issue #307). The report is generated, and the gate regenerates it and compares,

@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +13,7 @@ SCRIPTS = ROOT / "tools" / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+import sim_cli
 from run_evaluation import scripted_events
 from sim_cli import (
     EXIT_CODES,
@@ -214,6 +216,63 @@ class SimulationCliTests(unittest.TestCase):
             self.assertIn("NOT_EXECUTED", completed.stdout)
             self.assertNotIn("占位", completed.stdout)
             self.assertNotIn("VTCR", completed.stdout)
+
+
+class StaleStagingTests(unittest.TestCase):
+    """A killed run leaves a `.partial` directory behind; the next run sweeps it.
+
+    SIGTERM and SIGKILL never reach `run_scenario`'s exception handler, so cleanup
+    cannot happen at kill time. The sweep exists because the alternative is an
+    output directory that slowly fills with directories nobody can attribute.
+    """
+
+    def test_a_stale_partial_directory_is_removed_by_the_next_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs = root / "runs"
+            runs.mkdir()
+            stale = runs / ".normal-001-dead.beef.partial"
+            stale.mkdir()
+            old = time.time() - (sim_cli.STALE_STAGING_SECONDS + 60)
+            os.utime(stale, (old, old))
+
+            scenario = load_scenarios([FROZEN / "normal-001.json"])[0]
+            run_scenario(scenario, runner="scripted", output_dir=runs, version="test")
+
+            self.assertFalse(stale.exists())
+            self.assertTrue(any(path.name.startswith("normal-001-") for path in runs.iterdir()))
+
+    def test_a_fresh_partial_directory_is_left_alone(self) -> None:
+        """It may belong to a run that is still executing in another process."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs = root / "runs"
+            runs.mkdir()
+            live = runs / ".normal-001-live.cafe.partial"
+            live.mkdir()
+
+            scenario = load_scenarios([FROZEN / "normal-001.json"])[0]
+            run_scenario(scenario, runner="scripted", output_dir=runs, version="test")
+
+            self.assertTrue(live.exists())
+
+    def test_a_file_that_looks_like_a_partial_directory_is_ignored(self) -> None:
+        """The sweep must not delete a regular file whose name matches the pattern."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs = root / "runs"
+            runs.mkdir()
+            impostor = runs / ".normal-001-file.beef.partial"
+            impostor.write_text("not a directory", encoding="utf-8")
+            old = time.time() - (sim_cli.STALE_STAGING_SECONDS + 60)
+            os.utime(impostor, (old, old))
+
+            scenario = load_scenarios([FROZEN / "normal-001.json"])[0]
+            run_scenario(scenario, runner="scripted", output_dir=runs, version="test")
+
+            self.assertTrue(impostor.exists())
 
 
 if __name__ == "__main__":

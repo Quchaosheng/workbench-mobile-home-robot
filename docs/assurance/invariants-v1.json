@@ -1,0 +1,109 @@
+{
+  "invariants_version": "assurance-invariants-v1",
+  "status": "proposed",
+  "issue": "assurance-track-v1",
+  "decision_record": "docs/decisions/ADR-0010-runtime-assurance-track.md",
+  "verdicts": [
+    "confirmed",
+    "refuted",
+    "insufficient_evidence"
+  ],
+  "statuses": [
+    "ENFORCED",
+    "NOT_IMPLEMENTED"
+  ],
+  "invariants": [
+    {
+      "id": "INV-01",
+      "statement": "A scenario the registry cannot resolve to exactly one identity is refused before a runner starts, and no evidence directory is published.",
+      "runtime_boundary": "Scenario registry and run admission",
+      "enforced_by": "tools/scripts/sim_cli.py::_identity_entry",
+      "evidence": [
+        "tests/unit/test_assurance_matrix.py::test_unregistered_scenario_cannot_start_a_run"
+      ],
+      "status": "ENFORCED"
+    },
+    {
+      "id": "INV-02",
+      "statement": "A PolicyProposal that carries raw joint, velocity or torque parameters is refused before dispatch.",
+      "runtime_boundary": "Policy validation",
+      "enforced_by": "services/agent_runtime/workbench_agent_runtime/policy_validator.py::PolicyValidator.check",
+      "evidence": [
+        "tests/unit/test_policy_validator.py::PolicyValidatorRawControlTests::test_disguised_raw_control_identifiers_are_denied"
+      ],
+      "status": "ENFORCED"
+    },
+    {
+      "id": "INV-03",
+      "statement": "After STOP or cancel, no later step is dispatched and a repeated request cannot re-arm the sequence.",
+      "runtime_boundary": "Execution controller",
+      "enforced_by": "services/agent_runtime/workbench_agent_runtime/execution_controller.py::ExecutionController.request_stop",
+      "evidence": [
+        "tests/unit/test_execution_controller.py::test_stop_request_preempts_remaining_steps_and_is_idempotent",
+        "tests/unit/test_post_action_gate.py::FailClosedStateTests::test_cancellation_blocks_every_step"
+      ],
+      "status": "ENFORCED"
+    },
+    {
+      "id": "INV-04",
+      "statement": "An acknowledgement that arrives after its command timed out cannot confirm that command or a later one.",
+      "runtime_boundary": "Device runtime and CAN transport",
+      "enforced_by": "libs/hardware/workbench/hardware/can_driver_safe.py::SafeCANBus.service_once",
+      "evidence": [
+        "tests/unit/test_can_transport.py::test_late_ack_does_not_confirm_after_command_timeout"
+      ],
+      "status": "ENFORCED"
+    },
+    {
+      "id": "INV-05",
+      "statement": "Losing the device link fails closed and no command is admitted until an explicit recovery.",
+      "runtime_boundary": "Device runtime and CAN transport",
+      "enforced_by": "libs/hardware/workbench/hardware/can_driver_safe.py::SafeCANBus.service_once",
+      "evidence": [
+        "tests/unit/test_can_transport.py::test_receive_link_loss_is_fail_closed_until_recovery"
+      ],
+      "status": "ENFORCED"
+    },
+    {
+      "id": "INV-06",
+      "statement": "A timeout reaches a declared terminal state at both the action and the run level; it never becomes a success.",
+      "runtime_boundary": "Execution controller and run admission",
+      "enforced_by": "services/agent_runtime/workbench_agent_runtime/execution_controller.py::ExecutionController.execute",
+      "evidence": [
+        "tests/unit/test_execution_controller.py::test_terminal_action_result_stops_later_steps",
+        "tests/unit/test_sim_cli.py::SimulationCliTests::test_timeout_records_status_and_does_not_leave_partial_directory"
+      ],
+      "status": "ENFORCED"
+    },
+    {
+      "id": "INV-07",
+      "statement": "After a runtime restart, the run correlation is invalidated and the loop refuses to gate a step for the stale run.",
+      "runtime_boundary": "Post-action loop",
+      "enforced_by": "services/agent_runtime/workbench_agent_runtime/post_action.py::PostActionLoop.note_restart",
+      "evidence": [
+        "tests/unit/test_post_action_gate.py::FailClosedStateTests::test_restart_invalidates_run_correlation_fail_closed"
+      ],
+      "status": "ENFORCED"
+    },
+    {
+      "id": "INV-08",
+      "statement": "A verifier that lacks the observation supporting a completion claim returns insufficient_evidence, never confirmed.",
+      "runtime_boundary": "World Model verification",
+      "enforced_by": "services/world_model/workbench_world_model/verifier.py::verify_object_in_tray",
+      "evidence": [
+        "tests/unit/test_world_model.py::WorldModelTests::test_action_result_without_spatial_observation_is_insufficient"
+      ],
+      "status": "ENFORCED"
+    },
+    {
+      "id": "INV-09",
+      "statement": "Two runs that claim the same robot resource cannot be active at the same time.",
+      "runtime_boundary": "Run resources",
+      "enforced_by": null,
+      "evidence": [],
+      "gap": "ADR-0009 defines the claim and lease state machine but no implementation exists yet; no enforcement point can be named.",
+      "status": "NOT_IMPLEMENTED"
+    }
+  ],
+  "claim_scope": "Runtime assurance only. These are properties the runtime is claimed to hold, checked by the named test. They are NOT safety functions in the ISO 13849-1 sense and carry no performance level; see docs/security/functional-safety-boundary.md."
+}

@@ -712,5 +712,63 @@ class DashboardInboundBoundaryTests(unittest.TestCase):
         self.assertEqual(json.loads(oversized_body)["error"], "response_too_large")
 
 
+class AssuranceApiTests(unittest.TestCase):
+    """The assurance endpoint must serve a projection, and refuse to invent one."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = create_server("127.0.0.1", 0)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base_url = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+
+    def test_assurance_endpoint_serves_the_projection(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/api/assurance", timeout=2) as response:
+            self.assertEqual(response.status, 200)
+            payload = json.loads(response.read())
+        self.assertTrue(payload["read_only"])
+        self.assertIn("非功能安全认证", payload["claim_scope"])
+        self.assertEqual(payload["counts"]["invariants"], len(payload["invariants"]))
+        self.assertEqual(payload["counts"]["cases"], len(payload["cases"]))
+
+    def test_the_versioned_path_serves_the_same_document(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/api/v1/assurance", timeout=2) as response:
+            versioned = json.loads(response.read())
+        with urllib.request.urlopen(f"{self.base_url}/api/assurance", timeout=2) as response:
+            unversioned = json.loads(response.read())
+        self.assertEqual(versioned["counts"], unversioned["counts"])
+
+    def test_the_page_and_its_assets_are_served(self) -> None:
+        for asset in ("/assurance.html", "/assurance.js", "/assurance.css"):
+            with urllib.request.urlopen(f"{self.base_url}{asset}", timeout=2) as response:
+                self.assertEqual(response.status, 200, asset)
+
+    def test_an_unreadable_register_is_503_not_an_empty_page(self) -> None:
+        """A register that cannot be read must not render as "nothing is claimed"."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            server = create_server("127.0.0.1", 0, static_dir=directory, assurance_root=directory)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(f"{base}/api/assurance", timeout=2)
+                self.assertEqual(caught.exception.code, 503)
+                body = json.loads(caught.exception.read())
+                self.assertEqual(body["error"], "assurance_unavailable")
+                self.assertNotIn("invariants", body)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+
 if __name__ == "__main__":
     unittest.main()
