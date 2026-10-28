@@ -21,7 +21,7 @@ import platform
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -238,8 +238,31 @@ def build_manifest(
         "attestation": dict(attestation) if attestation is not None else {"status": "unsigned"},
         "environment": {"platform": platform.platform(), "python": platform.python_version()},
     }
-    manifest["release_eligible"] = not verify_manifest(manifest)
+    apply_verdict_fields(manifest)
     return manifest
+
+
+def apply_verdict_fields(manifest: MutableMapping[str, Any]) -> None:
+    """Write the three verdicts this manifest actually carries.
+
+    They are different questions and the names have to say which is which
+    (issue #435):
+
+    ``provenance_complete``  the record has every field and every hash agrees.
+    ``promotion_eligible``   the same, *and* the attestation is signed or
+                             verified, so the artifact may be promoted.
+    ``release_eligible``     kept as an alias of ``promotion_eligible`` for
+                             consumers that already read it, so that a manifest
+                             cannot say "release eligible" while promotion
+                             refuses it.
+    """
+    reasons = verify_manifest(manifest)
+    promotable = promotion_reasons(manifest)
+    manifest["provenance_complete"] = not reasons
+    manifest["provenance_reasons"] = list(reasons)
+    manifest["promotion_eligible"] = not promotable
+    manifest["promotion_reasons"] = list(promotable)
+    manifest["release_eligible"] = not promotable
 
 
 def verify_manifest(manifest: Mapping[str, Any]) -> tuple[str, ...]:
@@ -474,8 +497,9 @@ def record_attestation(
         attestation["verification"] = dict(verification)
     document["attestation"] = attestation
     # `release_eligible` must not be true when the attestation cannot be verified,
-    # so it follows promotion here rather than provenance completeness (#436).
-    document["release_eligible"] = not promotion_reasons(document)
+    # so it follows promotion rather than provenance completeness (#436). The
+    # three verdicts are written together so they cannot disagree (#435).
+    apply_verdict_fields(document)
     Path(path).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     return document
 
