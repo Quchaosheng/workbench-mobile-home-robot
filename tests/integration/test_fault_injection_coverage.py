@@ -476,8 +476,20 @@ def test_coverage_never_reports_a_fault_as_passing_by_default() -> None:
     assert not any(entry["status"] != "NOT_EXECUTED" for entry in report["faults"])
 
 
+def simulation_record(injector: str = "ObservationFaultInjector", **overrides: object) -> dict:
+    """The execution record a SIMULATED claim has to carry (issue #424)."""
+
+    record = {
+        "injector": injector,
+        "outcome": "observed",
+        "evidence_ref": "runs/simulated/occlusion.jsonl",
+    }
+    record.update(overrides)
+    return record
+
+
 def test_coverage_marks_a_simulated_fault_and_leaves_the_rest_unexecuted() -> None:
-    report = coverage_report(simulated=["occlusion"])
+    report = coverage_report(simulated=["occlusion"], simulation_evidence={"occlusion": simulation_record()})
     statuses = {entry["fault"]: entry["status"] for entry in report["faults"]}
     assert statuses["occlusion"] == "SIMULATED"
     assert all(status == "NOT_EXECUTED" for name, status in statuses.items() if name != "occlusion")
@@ -505,9 +517,88 @@ def test_coverage_refuses_an_undeclared_fault_name() -> None:
 def test_coverage_document_is_json_serializable_and_versioned() -> None:
     import json
 
-    report = coverage_report(simulated=sorted(P2_FAULT_TYPES))
+    report = coverage_report(
+        simulated=sorted(P2_FAULT_TYPES),
+        simulation_evidence={name: simulation_record() for name in P2_FAULT_TYPES},
+    )
     encoded = json.dumps(report, allow_nan=False)
     assert "fault-injection-v1" in encoded
     assert report["coverage_statuses"] == ["SIMULATED", "HARDWARE_TESTED", "NOT_EXECUTED"]
     # Every declared fault appears exactly once.
     assert len({entry["fault"] for entry in report["faults"]}) == report["declared_count"]
+
+
+# --- Issue #424: a simulated claim needs an execution record -------------------
+
+
+def test_a_bare_fault_name_cannot_report_coverage() -> None:
+    """The shortcut the issue names: `simulated=["occlusion"]` used to be enough."""
+
+    with pytest.raises(FaultInjectionError, match="without an execution record"):
+        coverage_report(simulated=["occlusion"])
+
+
+def test_a_skipped_injector_is_not_coverage() -> None:
+    with pytest.raises(FaultInjectionError, match="not one of"):
+        coverage_report(
+            simulated=["occlusion"],
+            simulation_evidence={"occlusion": simulation_record(outcome="skipped")},
+        )
+
+
+def test_a_failed_injector_is_not_coverage() -> None:
+    with pytest.raises(FaultInjectionError, match="not one of"):
+        coverage_report(
+            simulated=["occlusion"],
+            simulation_evidence={"occlusion": simulation_record(outcome="failed")},
+        )
+
+
+def test_a_record_without_an_evidence_reference_is_refused() -> None:
+    with pytest.raises(FaultInjectionError, match="no evidence_ref"):
+        coverage_report(
+            simulated=["occlusion"],
+            simulation_evidence={"occlusion": simulation_record(evidence_ref="  ")},
+        )
+
+
+def test_a_record_without_an_injector_is_refused() -> None:
+    with pytest.raises(FaultInjectionError, match="does not name the injector"):
+        coverage_report(
+            simulated=["occlusion"],
+            simulation_evidence={"occlusion": simulation_record(injector="")},
+        )
+
+
+def test_evidence_for_another_fault_does_not_cover_this_one() -> None:
+    with pytest.raises(FaultInjectionError, match="without an execution record"):
+        coverage_report(
+            simulated=["occlusion"],
+            simulation_evidence={"dropout": simulation_record()},
+        )
+
+
+def test_the_report_carries_a_reference_per_simulated_fault() -> None:
+    names = sorted(P2_FAULT_TYPES)
+    report = coverage_report(
+        simulated=names,
+        simulation_evidence={name: simulation_record(evidence_ref=f"runs/simulated/{name}.jsonl") for name in names},
+    )
+    simulated = {entry["fault"]: entry for entry in report["faults"] if entry["status"] == "SIMULATED"}
+    assert set(simulated) == set(names)
+    for name, entry in simulated.items():
+        assert entry["simulation_evidence_ref"] == f"runs/simulated/{name}.jsonl"
+    # A fault that was not claimed carries no reference at all.
+    for entry in report["faults"]:
+        if entry["status"] == "NOT_EXECUTED":
+            assert entry["simulation_evidence_ref"] is None
+
+
+def test_an_execution_record_for_an_unclaimed_fault_grants_nothing() -> None:
+    """Supplying evidence is not the same as claiming coverage."""
+
+    report = coverage_report(
+        simulation_evidence={"occlusion": simulation_record()},
+    )
+    assert report["simulated_count"] == 0
+    assert all(entry["status"] == "NOT_EXECUTED" for entry in report["faults"])
