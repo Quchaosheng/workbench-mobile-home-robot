@@ -186,6 +186,20 @@ def validate_mechanical_evidence() -> dict[str, object]:
     }
 
 
+# The status strings each upstream package may report. A structural check used to
+# accept any non-empty string, so `JUST_A_STRING` validated as an upstream approval
+# (issue #446). Each package owns its own vocabulary; a new status has to be added
+# here, which is where a reviewer will see it.
+UPSTREAM_STATUSES: dict[str, frozenset[str]] = {
+    "pcb": frozenset({"PRODUCTION_RELEASE_READY", "PRODUCTION_RELEASE_BLOCKED"}),
+    "motor_driver": frozenset({"ORDER_RELEASE_READY", "ORDER_RELEASE_BLOCKED"}),
+    "procurement": frozenset({"ORDER_RELEASE_READY", "ORDER_RELEASE_BLOCKED"}),
+    "harness": frozenset({"HARNESS_RELEASE_READY", "HARNESS_RELEASE_BLOCKED"}),
+    "qa": frozenset({"EXECUTION_REQUIRED", "EXECUTION_COMPLETE"}),
+    "validation": frozenset({"PHYSICAL_EXECUTION_REQUIRED", "PHYSICAL_EXECUTION_COMPLETE"}),
+}
+
+
 def _status_is_ready(status: str) -> bool:
     return status.endswith("_READY") or status in {
         "ORDER_RELEASED",
@@ -326,7 +340,7 @@ def _stage_is_consistent(stage: object, ready_status: str, blocked_status: str) 
     return status == expected_status and ready == (len(blockers) == 0)
 
 
-def validate_upstream_report(report: dict[str, Any]) -> dict[str, bool]:
+def validate_upstream_report(report: dict[str, Any], package: str | None = None) -> dict[str, bool]:
     status = report.get("status")
     ready_status = isinstance(status, str) and _status_is_ready(status)
     blocker_count = report.get("blocker_count")
@@ -356,10 +370,15 @@ def validate_upstream_report(report: dict[str, Any]) -> dict[str, bool]:
         if isinstance(production_stage, dict):
             staged_consistency = staged_consistency and status == production_stage.get("status")
     structural_pass_field = report.get("pass", report.get("engineering_package_pass"))
+    known_statuses = UPSTREAM_STATUSES.get(package or "") if package else None
     return {
         "report_is_object": isinstance(report, dict),
         "status_is_nonempty_string": isinstance(status, str) and bool(status),
+        "status_is_in_the_package_vocabulary": (known_statuses is None or status in known_statuses),
+        # `pass: false` is a truthful report of an incomplete package, not a reason to
+        # accept it as structurally valid evidence of completion (issue #446).
         "structural_pass_field_is_boolean": isinstance(structural_pass_field, bool),
+        "structural_pass_field_is_true": structural_pass_field is True,
         "blocker_count_matches_blocker_list_when_present": count_consistent,
         "explicit_ready_matches_status_when_present": explicit_ready_consistent,
         "not_executed_physical_results_cannot_be_ready": physical_status_consistent,
@@ -371,7 +390,7 @@ def validate_upstream_reports() -> dict[str, object]:
     reports: dict[str, object] = {}
     for name, path in UPSTREAM_REPORTS.items():
         report = load_report(path)
-        checks = validate_upstream_report(report)
+        checks = validate_upstream_report(report, name)
         reports[name] = {
             "path": path,
             "status": report.get("status"),
