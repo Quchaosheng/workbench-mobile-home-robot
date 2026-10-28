@@ -48,6 +48,56 @@ EVENT_TYPES = {
 VERIFICATION_STATUSES = {"confirmed", "insufficient_evidence", "refuted"}
 MAX_EVENT_LOG_BYTES = 10 * 1024 * 1024
 MAX_EVENTS_PER_RUN = 10_000
+# The matrix is versions x scenarios, and every cell is an external process and an
+# artifact. The existing limits bound one log and one manifest; nothing bounded the
+# product, so a script that passed a few hundred paths could exhaust a runner before
+# anything failed (issue #450).
+MAX_MATRIX_RUNS = 100
+MAX_VERSIONS = 20
+MAX_SCENARIOS = 50
+
+
+def matrix_budget(versions: list[str], scenarios: list[Path]) -> dict[str, int]:
+    """The shape of the run matrix, and why it is or is not acceptable.
+
+    Returned rather than raised so a caller can print a dry-run count before any
+    process starts, which is what makes an accidental large matrix obvious instead
+    of expensive.
+    """
+
+    return {
+        "versions": len(versions),
+        "scenarios": len(scenarios),
+        "runs": len(versions) * len(scenarios),
+        "max_versions": MAX_VERSIONS,
+        "max_scenarios": MAX_SCENARIOS,
+        "max_runs": MAX_MATRIX_RUNS,
+    }
+
+
+def check_matrix_budget(versions: list[str], scenarios: list[Path]) -> dict[str, int]:
+    """Refuse a matrix that is larger than this runner may start."""
+
+    budget = matrix_budget(versions, scenarios)
+    problems: list[str] = []
+    if budget["versions"] > MAX_VERSIONS:
+        problems.append(f"{budget['versions']} versions, over the {MAX_VERSIONS}-version limit")
+    if budget["scenarios"] > MAX_SCENARIOS:
+        problems.append(f"{budget['scenarios']} scenarios, over the {MAX_SCENARIOS}-scenario limit")
+    if budget["runs"] > MAX_MATRIX_RUNS:
+        problems.append(
+            f"{budget['versions']} versions x {budget['scenarios']} scenarios = "
+            f"{budget['runs']} runs, over the {MAX_MATRIX_RUNS}-run limit"
+        )
+    if problems:
+        raise EvaluationInputError(
+            "refusing to start this evaluation matrix: "
+            + "; ".join(problems)
+            + ". Split the work into several invocations with distinct --output-dir values."
+        )
+    return budget
+
+
 TIMESTAMP_WINDOW_SECONDS = 365 * 24 * 60 * 60
 # Startup grace covers interpreter and adapter import time before the scenario
 # itself begins; it is added to the manifest budget rather than replacing it.
@@ -873,6 +923,11 @@ def redacted_summary(summary: dict[str, Any]) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run reproducible Workbench-1 evaluations")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report the matrix size and exit without starting any run",
+    )
     parser.add_argument("--versions", required=True, help="Comma-separated version labels")
     parser.add_argument("--scenarios", nargs="+", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -896,6 +951,14 @@ def main() -> int:
         validate_label(version, "version")
     if len(versions) != len(set(versions)):
         raise EvaluationInputError("version labels must be unique")
+    budget = check_matrix_budget(versions, scenarios)
+    if args.dry_run:
+        print(
+            f"{budget['versions']} version(s) x {budget['scenarios']} scenario(s) "
+            f"= {budget['runs']} run(s); limits are {MAX_VERSIONS} versions, "
+            f"{MAX_SCENARIOS} scenarios and {MAX_MATRIX_RUNS} runs"
+        )
+        return 0
     manifests = load_scenario_manifests(scenarios)
 
     commit = git_commit()
