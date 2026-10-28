@@ -472,13 +472,21 @@ def _probe_events(family: ProbeFamily, event_cls: Any, event_type_cls: Any, cloc
             "source": "cam0",
             "entity_type": observation.entity_type,
         }
+        # The aging path reads `observed_at` and `clock_id` from the payload, not
+        # from the event envelope, so both have to be here for the stale probe to
+        # age anything (issue #425).
+        payload.update(
+            {
+                "observed_at": f"2026-08-04T00:00:{index:02d}Z",
+                "clock_id": clock_id_cls.WALL.value,
+            }
+        )
         if observation.attributes is not None:
             payload.update(
                 {
                     "attributes": dict(observation.attributes),
                     "attributes_mode": "complete",
                     "attributes_schema_version": ATTRIBUTE_SCHEMA_VERSION,
-                    "observed_at": f"2026-08-04T00:00:{index:02d}Z",
                 }
             )
         events.append(
@@ -494,6 +502,66 @@ def _probe_events(family: ProbeFamily, event_cls: Any, event_type_cls: Any, cloc
             )
         )
     return events
+
+
+# The probe stream observes at 2026-08-04T00:00:00Z..02Z from cam0. These are the
+# explicit replay inputs the aging path needs; they are not read from process time.
+PROBE_OBSERVATION_SOURCE = "cam0"
+PROBE_STALE_AS_OF = "2026-08-04T00:01:00Z"
+PROBE_STALE_THRESHOLDS = (5.0, 30.0)
+
+
+def _stale_state(identity: str) -> tuple[Any, Mapping[str, Any]]:
+    """Age the confirmed probe stream through the shipped aging path.
+
+    The stale dimension used to be produced by cloning a confirmed state and
+    writing `WorldBelief.LOST` into both belief maps. That proved a verifier
+    refuses a hand-mutated state, not that a stale observation is detected from a
+    valid stream at an explicit boundary — age thresholds, clock mismatch
+    handling and `age_world_state()` itself could all be broken and the gate would
+    still pass (issue #425).
+    """
+
+    if identity not in PROBE_FAMILIES:
+        raise ScenarioConformanceError(
+            f"no derived probe is defined for {identity}",
+            code="SCENARIO_CONFORMANCE_PROBE_UNSUPPORTED",
+            path=identity,
+        )
+    family = PROBE_FAMILIES[identity]
+    try:
+        from workbench_contracts import ClockId, WorldEvent, WorldEventType
+        from workbench_world_model import reducer as reducer_module
+        from workbench_world_model.aging import (
+            FreshnessThresholds,
+            ObservationAgingBoundary,
+            ObservationFreshnessPolicy,
+        )
+    except ImportError as error:  # pragma: no cover
+        raise ScenarioConformanceError(
+            f"cannot import the World Model aging path: {error}",
+            code="SCENARIO_CONFORMANCE_WORLD_MODEL_UNAVAILABLE",
+        ) from error
+
+    events = _probe_events(family, WorldEvent, WorldEventType, ClockId)
+    entity_types = sorted({observation.entity_type for observation in family.observations})
+    stale_after_s, lost_after_s = PROBE_STALE_THRESHOLDS
+    policy = ObservationFreshnessPolicy(
+        rules={
+            (PROBE_OBSERVATION_SOURCE, entity_type): FreshnessThresholds(
+                stale_after_s=stale_after_s, lost_after_s=lost_after_s
+            )
+            for entity_type in entity_types
+        }
+    )
+    boundary = ObservationAgingBoundary(as_of=PROBE_STALE_AS_OF, clock_id=ClockId.WALL)
+    state = reducer_module.reduce_events(
+        PROBE_RUN_ID,
+        events,
+        freshness_policy=policy,
+        aging_boundary=boundary,
+    )
+    return state, family.keywords
 
 
 def _probe_state(identity: str) -> tuple[Any, Mapping[str, Any]]:
@@ -601,17 +669,21 @@ def reference_probes(identity: str) -> list[ProbeOutcome]:
             code="SCENARIO_CONFORMANCE_WORLD_MODEL_UNAVAILABLE",
         ) from error
 
-    aged = state.model_copy(deep=True)
-    aged.freshness_evaluated = True
-    for entity_id in sorted(aged.entity_locations):
-        aged.entity_beliefs[entity_id] = WorldBelief.LOST
-        aged.entity_location_beliefs[entity_id] = WorldBelief.LOST
+    aged, _ = _stale_state(identity)
+    # The aging path has to have done the work: every belief it produced must be
+    # LOST, or the probe is asserting a verifier behaviour the policy did not
+    # establish.
+    beliefs = sorted(set(aged.entity_beliefs.values()) | set(aged.entity_location_beliefs.values()))
     stale = call(aged)
     outcomes.append(
         ProbeOutcome(
             "stale_evidence",
-            stale.status.value == "insufficient_evidence" and stale.reason == "stale_observation",
-            f"marking every belief lost yields {stale.status.value} ({stale.reason})",
+            stale.status.value == "insufficient_evidence"
+            and stale.reason == "stale_observation"
+            and beliefs == [WorldBelief.LOST],
+            f"aging at {PROBE_STALE_AS_OF} with {PROBE_STALE_THRESHOLDS[0]}s/"
+            f"{PROBE_STALE_THRESHOLDS[1]}s thresholds yields {stale.status.value} "
+            f"({stale.reason}) with beliefs {[belief.value for belief in beliefs]}",
         )
     )
 

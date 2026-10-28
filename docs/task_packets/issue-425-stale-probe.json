@@ -1,0 +1,82 @@
+{
+  "issue": 425,
+  "human_owner": "Quchaosheng",
+  "objective": "Derive the conformance stale_evidence case through the shipped reducer and aging path with an explicit freshness policy and aging boundary, so the probe proves the aging boundary rather than a hand-mutated belief.",
+  "decision_supported": "Should the stale dimension be produced by writing WorldBelief.LOST into a cloned state, or by aging a valid stream at an explicit boundary through age_world_state?",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/scenario_conformance.py",
+    "tools/scripts/_paths.py",
+    "tests/unit/test_scenario_conformance.py",
+    "tests/unit/test_backend_health.py",
+    "tests/unit/test_data_governance.py",
+    "tests/unit/test_monitoring.py",
+    "tests/unit/test_robot_alerts.py",
+    "tests/unit/test_secret_redaction.py",
+    "docs/evaluation/readiness-report-v1.json",
+    "docs/evaluation/multi-scenario-readiness.md",
+    "docs/task_packets/issue-425-stale-probe.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "services/world_model/workbench_world_model/aging.py",
+    "services/world_model/workbench_world_model/reducer.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "libs/kernel/workbench/kernel/scenario_conformance.py",
+    "services/world_model/workbench_world_model/aging.py",
+    "services/world_model/workbench_world_model/reducer.py",
+    "tools/scripts/_paths.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "libs/kernel/workbench/kernel/scenario_conformance.py",
+    "tools/scripts/_paths.py",
+    "tests/unit/test_scenario_conformance.py",
+    "tests/unit/test_backend_health.py",
+    "tests/unit/test_data_governance.py",
+    "tests/unit/test_monitoring.py",
+    "tests/unit/test_robot_alerts.py",
+    "tests/unit/test_secret_redaction.py",
+    "docs/evaluation/readiness-report-v1.json",
+    "docs/evaluation/multi-scenario-readiness.md"
+  ],
+  "acceptance": [
+    "The stale state is produced by reduce_events with an explicit freshness policy and aging boundary.",
+    "The probe asserts that the aging path produced LOST beliefs, not only that the verifier refused the state.",
+    "The probe detail names the boundary and the thresholds it used.",
+    "The probe event payload carries observed_at and clock_id, which the aging path reads from the payload.",
+    "The age thresholds decide the belief: 4s is observed, 20s is stale, 60s is lost.",
+    "The readiness report is regenerated and the gate tests pass."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_scenario_conformance.py -q",
+    "python3 -m pytest tests/unit -q",
+    "python3 tools/scripts/readiness_report.py --output docs/evaluation/readiness-report-v1.json",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change the probe cloned a confirmed state and wrote WorldBelief.LOST into both belief maps, so age_world_state was never called.",
+    "The probe payload did not carry observed_at or clock_id, so aging produced LOST at every boundary including four seconds after the observation, which showed the thresholds were not being exercised at all.",
+    "After the change the same stream at 4s is observed, at 20s is stale and at 60s is lost, and the probe detail names the boundary and thresholds.",
+    "The full unit suite is 2280 passed, 3 skipped, which is the baseline count plus the five new tests."
+  ],
+  "stop_conditions": [
+    "The aging path requires a policy the probe cannot construct for a family's entity types; the policy is built from the family's own observations, so this is not expected."
+  ],
+  "max_iterations": 4,
+  "risks_and_fallbacks": [
+    "The probe payload changed, so every replay_hash in the readiness report changed; the report is regenerated in the same change and the gate tests pass.",
+    "_paths.py now orders libs/kernel ahead of libs/application. Both trees contain a workbench package, and the helper's callers import workbench.kernel, so the previous order resolved to the wrong copy whenever another checkout was on the path."
+  ]
+}
