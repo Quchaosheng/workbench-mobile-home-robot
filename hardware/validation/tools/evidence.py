@@ -29,6 +29,18 @@ REQUIRED_FIELDS = {
 RESULTS = {"PASS", "FAIL", "HOLD"}
 EVIDENCE_KINDS = {"simulation", "bench", "physical"}
 
+# A physical PASS is a measurement of a serialized unit. The register used to accept
+# any non-empty file whose digest matched, so a file containing "not a measurement"
+# plus a self-written instrument name was enough (issue #444). These are the fields
+# that make the record checkable rather than self-asserted.
+PHYSICAL_REQUIRED_FIELDS = {
+    "instrument_serials",
+    "calibration_due",
+    "measurement_summary",
+}
+# Files a physical record has to carry, one per measurement it claims.
+PHYSICAL_RAW_KINDS = {"capture", "log"}
+
 
 class EvidenceError(ValueError):
     """Raised when evidence cannot be trusted."""
@@ -100,6 +112,8 @@ def validate_record(
             raise EvidenceError(f"invalid {field}")
     if not isinstance(record["raw_files"], dict) or not record["raw_files"]:
         raise EvidenceError("raw_files must not be empty")
+    if record["evidence_kind"] == "physical":
+        _validate_physical_record(record)
     root = root.resolve()
     for name, expected_hash in record["raw_files"].items():
         if not isinstance(name, str) or not isinstance(expected_hash, str):
@@ -113,6 +127,69 @@ def validate_record(
             raise EvidenceError(f"raw evidence file is missing: {name}")
         if sha256(path) != expected_hash:
             raise EvidenceError(f"raw evidence hash mismatch: {name}")
+
+
+def _validate_physical_record(record: dict) -> None:
+    """Refuse a physical claim that carries no measurement metadata.
+
+    ``instrument_refs`` and ``calibration_refs`` were free-form strings, so they
+    proved nothing. A physical record now has to name the serial of every
+    instrument it used, the calibration expiry that was in force, and a summary
+    whose numbers the reviewer can check against the raw file.
+    """
+
+    missing = PHYSICAL_REQUIRED_FIELDS - set(record)
+    if missing:
+        raise EvidenceError(f"physical evidence is missing fields: {sorted(missing)}")
+
+    serials = record["instrument_serials"]
+    if (
+        not isinstance(serials, list)
+        or not serials
+        or any(not isinstance(value, str) or not value.strip() for value in serials)
+    ):
+        raise EvidenceError("instrument_serials must list the serial of every instrument used")
+    if len(set(serials)) != len(serials):
+        raise EvidenceError("instrument_serials must not repeat a serial")
+
+    # One serial per instrument reference: the record has to say which physical
+    # instrument produced the numbers, not only which model was on the bench.
+    if len(serials) != len(record["instrument_refs"]):
+        raise EvidenceError("instrument_serials must name one serial per instrument_ref")
+
+    due = record["calibration_due"]
+    if not isinstance(due, dict) or set(due) != set(serials):
+        raise EvidenceError("calibration_due must give an expiry for every instrument serial")
+    captured_at = datetime.fromisoformat(record["captured_at"].replace("Z", "+00:00"))
+    for serial, expiry in due.items():
+        if not isinstance(expiry, str):
+            raise EvidenceError(f"calibration_due[{serial}] must be an ISO-8601 date")
+        try:
+            due_at = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise EvidenceError(f"calibration_due[{serial}] must be an ISO-8601 date") from exc
+        if due_at.tzinfo is None:
+            raise EvidenceError(f"calibration_due[{serial}] must state a timezone")
+        if due_at <= captured_at:
+            raise EvidenceError(f"calibration for {serial} had expired before the measurement was captured")
+
+    summary = record["measurement_summary"]
+    if not isinstance(summary, dict) or not summary:
+        raise EvidenceError("measurement_summary must record what was measured")
+    for name, value in summary.items():
+        if not isinstance(name, str) or not name.strip():
+            raise EvidenceError("measurement_summary keys must name a quantity")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise EvidenceError(f"measurement_summary[{name}] must be a number")
+
+    kinds = record.get("raw_file_kinds")
+    if not isinstance(kinds, dict) or set(kinds) != set(record["raw_files"]):
+        raise EvidenceError("raw_file_kinds must classify every raw file")
+    for name, kind in kinds.items():
+        if kind not in PHYSICAL_RAW_KINDS:
+            raise EvidenceError(f"raw_file_kinds[{name}] must be one of {sorted(PHYSICAL_RAW_KINDS)}")
+    if "capture" not in set(kinds.values()):
+        raise EvidenceError("a physical record must include at least one captured measurement")
 
 
 def validate_register(
