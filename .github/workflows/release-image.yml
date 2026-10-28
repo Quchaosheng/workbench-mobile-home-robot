@@ -158,11 +158,37 @@ jobs:
 
       # Record the attestation outcome and refuse promotion unless the manifest
       # is complete *and* the published image carries a signed attestation.
-      - name: Verify promotion readiness
+      #
+      # The status is not asserted here: the attestation is fetched back from the
+      # registry and checked against the digest that was pushed, and the record of
+      # what was checked is what makes the manifest promotable (issue #436).
+      - name: Verify the published attestation
+        id: attestation
+        if: steps.publish.outputs.digest != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          if ! gh attestation verify \
+              "oci://ghcr.io/${GITHUB_REPOSITORY}@${DIGEST}" \
+              --owner "${GITHUB_REPOSITORY%%/*}" \
+              --format json > attestation-bundles.json; then
+            echo "no verifiable attestation covers ${DIGEST}" >&2
+            exit 1
+          fi
+          python tools/scripts/attestation_verification.py \
+            --bundles attestation-bundles.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --digest "${DIGEST}" \
+            --output attestation-verification.json
+
+      - name: Record the verified attestation and require promotion
         if: steps.publish.outputs.digest != ''
         run: |
           python tools/scripts/release_manifest.py \
             --mark-attestation signed \
+            --attestation-subject-digest "${{ steps.publish.outputs.digest }}" \
+            --attestation-verification attestation-verification.json \
             --output release-manifest.json \
             --require-promotion
 

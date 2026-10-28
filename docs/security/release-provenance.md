@@ -54,9 +54,32 @@ A manifest is refused when any of the following is true:
 Provenance completeness and attestation are deliberately separate questions. The
 build-time manifest is written before the attestation step exists, so it reports
 `unsigned` truthfully and stays provenance-complete; the workflow then records
-the attestation outcome with `--mark-attestation signed` and requires
-`--require-promotion` before publishing. That keeps "we built this from known
-inputs" distinct from "the published artifact carries an attestation".
+the attestation outcome and requires `--require-promotion` before publishing.
+That keeps "we built this from known inputs" distinct from "the published
+artifact carries an attestation".
+
+**A `signed` status is not a signature.** The manifest is a JSON file that the
+workflow writes, so `attestation.status` on its own would be an assertion rather
+than evidence. Promotion therefore requires the attestation object to carry:
+
+| Field | Meaning |
+|---|---|
+| `subject_digest` | the `sha256:` digest the attestation covers, which must equal `image.registry_digest` |
+| `verification.result` | `verified` — anything else keeps the manifest non-promotable |
+| `verification.reference` | the attestation that was checked, as `oci://…@sha256:…` |
+| `verification.verifier` | what performed the check, e.g. `gh attestation verify --owner …` |
+
+The workflow obtains those by running `gh attestation verify` against the digest
+it pushed and passing the result through
+`tools/scripts/attestation_verification.py`, which refuses when the bundle does
+not name that digest.
+
+**Residual trust.** This establishes that *an* attestation exists in the registry
+for the published digest, that it was signed by the identity `gh attestation
+verify` accepts for this repository, and that the workflow read it back rather
+than assuming it. It does not establish that the builder was honest, and it
+trusts GitHub's attestation store and the `GITHUB_TOKEN` used to read it. A
+reader who needs more has to check the bundle themselves.
 
 ## Where verification runs
 

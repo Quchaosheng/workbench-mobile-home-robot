@@ -347,7 +347,45 @@ def promotion_reasons(manifest: Mapping[str, Any]) -> tuple[str, ...]:
     status = attestation.get("status") if isinstance(attestation, Mapping) else None
     if status not in SIGNED_ATTESTATION_STATUSES:
         reasons.append("attestation must be signed or verified before promotion")
+        return tuple(reasons)
+
+    # "signed" written by the workflow is a claim, not evidence. Promotion needs the
+    # attestation to name the digest it covers and to carry the verification that
+    # was done against the registry (issue #436).
+    expected_subject = None
+    image = manifest.get("image") if isinstance(manifest, Mapping) else None
+    if isinstance(image, Mapping):
+        expected_subject = image.get("registry_digest")
+
+    reasons.extend(_attestation_evidence_reasons(attestation, expected_subject))
     return tuple(reasons)
+
+
+def _attestation_evidence_reasons(attestation: Mapping[str, Any], expected_subject: object) -> list[str]:
+    """Reasons the signed claim is not backed by a verifiable attestation."""
+
+    reasons: list[str] = []
+
+    subject = attestation.get("subject_digest")
+    if not isinstance(subject, str) or _SHA256_DIGEST.fullmatch(subject) is None:
+        reasons.append("attestation.subject_digest must be the sha256 digest the attestation covers")
+    elif isinstance(expected_subject, str) and subject != expected_subject:
+        reasons.append("attestation.subject_digest does not match image.registry_digest")
+
+    verification = attestation.get("verification")
+    if not isinstance(verification, Mapping):
+        reasons.append("attestation.verification must record how the attestation was verified")
+        return reasons
+
+    if verification.get("result") != "verified":
+        reasons.append("attestation.verification.result must be 'verified'")
+    reference = verification.get("reference")
+    if not isinstance(reference, str) or not reference.strip():
+        reasons.append("attestation.verification.reference must name the attestation that was checked")
+    verifier = verification.get("verifier")
+    if not isinstance(verifier, str) or not verifier.strip():
+        reasons.append("attestation.verification.verifier must name what performed the check")
+    return reasons
 
 
 def _default_workflow_ref() -> str:
@@ -383,6 +421,15 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=sorted(ATTESTATION_STATUSES),
         help="record an attestation outcome on the manifest at --output",
     )
+    parser.add_argument(
+        "--attestation-subject-digest",
+        help="sha256 digest the attestation covers; required for a promotable signed status",
+    )
+    parser.add_argument(
+        "--attestation-verification",
+        type=Path,
+        help="JSON file recording how the attestation was verified (result, reference, verifier)",
+    )
     parser.add_argument("--require-promotion", action="store_true", help="exit non-zero when verification refuses")
     return parser
 
@@ -397,19 +444,38 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def record_attestation(path: Path, status: str) -> dict[str, Any]:
+def record_attestation(
+    path: Path,
+    status: str,
+    *,
+    subject_digest: str | None = None,
+    verification: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Set the attestation status on an existing manifest and return it.
 
     The build-time manifest is written before the attestation step runs, so this
     records the outcome afterwards instead of leaving the file claiming
     ``unsigned`` forever. Everything else in the manifest is preserved, because
     re-deriving provenance here would let the two runs disagree.
+
+    ``status`` alone used to be enough, which made "signed" a workflow assertion
+    rather than evidence (issue #436). A signed or verified status now has to
+    name the subject it covers and the verification that was performed; without
+    them the manifest records the status and stays non-promotable, which is the
+    truth about what is known.
     """
     if status not in ATTESTATION_STATUSES:
         raise ProvenanceError(f"attestation status must be one of {sorted(ATTESTATION_STATUSES)}")
     document = _load_manifest(path)
-    document["attestation"] = {"status": status, "recorded_at": datetime.now(UTC).isoformat()}
-    document["release_eligible"] = not verify_manifest(document)
+    attestation: dict[str, Any] = {"status": status, "recorded_at": datetime.now(UTC).isoformat()}
+    if subject_digest is not None:
+        attestation["subject_digest"] = subject_digest
+    if verification is not None:
+        attestation["verification"] = dict(verification)
+    document["attestation"] = attestation
+    # `release_eligible` must not be true when the attestation cannot be verified,
+    # so it follows promotion here rather than provenance completeness (#436).
+    document["release_eligible"] = not promotion_reasons(document)
     Path(path).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     return document
 
@@ -436,7 +502,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.mark_attestation is not None:
         if args.output is None:
             parser.error("--mark-attestation requires --output")
-        record_attestation(Path(args.output), args.mark_attestation)
+        verification = None
+        if args.attestation_verification is not None:
+            verification = json.loads(Path(args.attestation_verification).read_text(encoding="utf-8"))
+            if not isinstance(verification, Mapping):
+                raise ProvenanceError("--attestation-verification must contain a JSON object")
+        record_attestation(
+            Path(args.output),
+            args.mark_attestation,
+            subject_digest=args.attestation_subject_digest,
+            verification=verification,
+        )
         if args.require_promotion:
             return report_verification(_load_manifest(Path(args.output)), require_promotion=True)
         return 0

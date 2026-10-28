@@ -1,0 +1,74 @@
+{
+  "issue": 436,
+  "human_owner": "Quchaosheng",
+  "objective": "Make a signed attestation status evidence-backed: promotion requires the attestation to name the published subject digest and to record the verification that was performed against the registry.",
+  "decision_supported": "Is a workflow-written `signed` string sufficient release evidence, and if not, what has to be checked before a manifest may be promoted?",
+  "allowed_paths": [
+    "tools/scripts/release_manifest.py",
+    "tools/scripts/attestation_verification.py",
+    "tests/unit/test_release_provenance.py",
+    "tests/unit/test_attestation_verification.py",
+    ".github/workflows/release-image.yml",
+    "docs/security/release-provenance.md",
+    "docs/task_packets/issue-436-verify-attestation.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/security/supply-chain.md",
+    "tests/unit/test_release_workflow.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**"
+  ],
+  "input_refs": [
+    "tools/scripts/release_manifest.py",
+    ".github/workflows/release-image.yml",
+    "tests/unit/test_release_provenance.py",
+    "docs/security/release-provenance.md",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/release_manifest.py",
+    "tools/scripts/attestation_verification.py",
+    "tests/unit/test_release_provenance.py",
+    "tests/unit/test_attestation_verification.py",
+    ".github/workflows/release-image.yml",
+    "docs/security/release-provenance.md"
+  ],
+  "acceptance": [
+    "A signed status without a subject digest and a verification record is not promotable.",
+    "The subject digest must equal image.registry_digest.",
+    "verification.result must be 'verified', with a reference and a verifier.",
+    "The workflow runs gh attestation verify against the pushed digest and refuses when the bundle does not cover it.",
+    "release_eligible cannot be true when attestation verification is unavailable.",
+    "The documentation names the residual trust assumptions and does not call a workflow-written string a signature.",
+    "Tests cover an absent attestation, a mismatched digest, an unverified result, a missing reference or verifier, and a valid fixture."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_release_provenance.py tests/unit/test_attestation_verification.py tests/unit/test_release_workflow.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 tools/scripts/attestation_verification.py --bundles <fixture> --repository q/workbench --digest <digest> --output <path>"
+  ],
+  "evidence": [
+    "Before the change record_attestation wrote {status, recorded_at} and promotion_reasons accepted any signed or verified string.",
+    "After the change recording signed with no evidence leaves release_eligible false with two named reasons.",
+    "A bundle naming a different digest exits 1 and writes no verification file; a matching bundle writes result=verified with the attested digests.",
+    "The end-to-end path: record_attestation with the verified record produces promotion_reasons () and release_eligible true."
+  ],
+  "stop_conditions": [
+    "gh attestation verify is unavailable in the runner image; the step fails closed rather than marking the manifest signed.",
+    "The attestation store returns a bundle for a different identity; the subject digest check does not cover identity, which the documentation states as a residual trust."
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "A release now needs the attestation to be readable immediately after the push; a registry propagation delay would fail the run rather than promote unverified, which is the intended direction.",
+    "The verifier name is recorded as the command that ran, so a future change to how verification is done is visible in the manifest."
+  ]
+}
