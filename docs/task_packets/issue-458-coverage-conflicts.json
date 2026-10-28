@@ -1,0 +1,61 @@
+{
+  "issue": 458,
+  "human_owner": "Quchaosheng",
+  "objective": "Refuse a coverage report whose input contradicts itself: a fault in both status lists, a repeated name, or a physical reference that no hardware-tested claim supports.",
+  "decision_supported": "Should coverage_report resolve contradictory caller input by iteration order, or refuse it so the entry and the counts cannot disagree with the evidence?",
+  "allowed_paths": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py",
+    "docs/task_packets/issue-458-coverage-conflicts.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/architecture/system.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/integration/test_fault_injection_coverage.py"
+  ],
+  "acceptance": [
+    "A fault named in both simulated and hardware_tested is refused.",
+    "A name repeated inside one list is refused.",
+    "A physical reference for a fault that is not hardware-tested is refused, and every orphan is named.",
+    "A consistent report still produces the expected statuses and counts.",
+    "A physical reference appears only on the entry that claimed it."
+  ],
+  "commands": [
+    "python3 -m pytest tests/integration/test_fault_injection_coverage.py -q",
+    "python3 -m pytest tests/integration -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, coverage_report(simulated=['occlusion'], hardware_tested=['occlusion'], physical_evidence={'occlusion': 'runs/hw.json'}) produced one HARDWARE_TESTED entry with simulated_count 0, silently merging the two claims.",
+    "Before the change, physical_evidence={'link_loss': 'runs/hw.json'} with no claim left link_loss NOT_EXECUTED but carrying a physical reference.",
+    "After the change both are refused with a message naming the fault.",
+    "A consistent report with one simulated and one hardware-tested fault still produces the expected statuses, counts and a null reference on the unclaimed entries."
+  ],
+  "stop_conditions": [
+    "A legitimate report needs a fault to be both simulated and hardware-tested; a fault has one status in COVERAGE_STATUSES, so that would need a schema change rather than a relaxed check."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Callers that passed the same name twice now fail loudly; none in the repository did.",
+    "The orphan check is on the physical evidence map only; simulation evidence is checked separately by the per-claim validation."
+  ]
+}

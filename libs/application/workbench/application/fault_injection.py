@@ -384,11 +384,34 @@ def coverage_report(
     artifact that supports it.
     """
     evidence = dict(physical_evidence or {})
+    simulated_names = list(simulated)
+    hardware_names = list(hardware_tested)
+
+    # A fault has one status. Naming it in both lists used to assign whichever loop
+    # ran last, so the entry and the top-level counts could disagree with the
+    # evidence actually supplied (issue #458).
+    for label, names in (("simulated", simulated_names), ("hardware_tested", hardware_names)):
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise FaultInjectionError(f"{label} names the same fault more than once: {duplicates}")
+    contradictory = sorted(set(simulated_names) & set(hardware_names))
+    if contradictory:
+        raise FaultInjectionError(f"a fault cannot be both simulated and hardware-tested: {contradictory}")
+
+    # A physical reference is evidence for a HARDWARE_TESTED claim and nothing
+    # else. Carrying one on a NOT_EXECUTED entry made the report look like it had
+    # hardware evidence it never claimed.
+    orphans = sorted(set(evidence) - set(hardware_names))
+    if orphans:
+        raise FaultInjectionError(
+            f"physical evidence is only valid for a hardware-tested fault; unexpected reference(s) for {orphans}"
+        )
+
     statuses: dict[str, CoverageStatus] = {}
-    for name in simulated:
+    for name in simulated_names:
         _require_declared(name)
         statuses[name] = "SIMULATED"
-    for name in hardware_tested:
+    for name in hardware_names:
         _require_declared(name)
         reference = evidence.get(name)
         if not isinstance(reference, str) or not reference.strip():
