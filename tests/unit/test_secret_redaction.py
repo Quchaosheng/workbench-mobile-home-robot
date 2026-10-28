@@ -14,8 +14,21 @@ import textwrap
 import unittest
 from pathlib import Path
 
+
+def _ensure_on_path(entry: str) -> None:
+    """Add a path entry without taking precedence over the package the suite uses.
+
+    `workbench` is a regular package under both libs/kernel and libs/application,
+    so prepending one of them decides which copy every later import sees. Appending
+    keeps this module's imports resolvable without changing that choice.
+    """
+
+    if entry not in sys.path:
+        sys.path.append(entry)
+
+
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "libs" / "application"))
+_ensure_on_path(str(ROOT / "libs" / "application"))
 sys.path.insert(0, str(ROOT / "services" / "backend"))
 sys.path.insert(0, str(ROOT / "tools" / "scripts"))
 
