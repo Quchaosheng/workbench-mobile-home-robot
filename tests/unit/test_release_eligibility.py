@@ -18,12 +18,15 @@ sys.path.insert(0, str(ROOT / "tools" / "scripts"))
 from collect_metrics import collect
 from generate_report import release_reasons
 from release_eligibility import (
+    ENVIRONMENT_FIELDS,
     PROVENANCE_FORMAT,
     PROVENANCE_FORMAT_VERSION,
     REASON_AUDIT_INCOMPLETE,
     REASON_AUDIT_INVALID,
     REASON_AUDIT_MISSING,
     REASON_COMMIT_MISMATCH,
+    REASON_ENVIRONMENT_INVALID,
+    REASON_ENVIRONMENT_MISSING,
     REASON_FALSE_COMPLETION,
     REASON_LOG_HASH_MISMATCH,
     REASON_MANIFEST_HASH_MISMATCH,
@@ -172,6 +175,43 @@ class EligibilityRefusalTests(unittest.TestCase):
             verdict = Fixture(Path(directory)).verdict(provenance=None)
             self.assertFalse(verdict["eligible"])
             self.assertIn(REASON_NO_PROVENANCE, verdict["reasons"])
+
+    def test_environment_that_disagrees_with_the_run_is_refused(self) -> None:
+        """Issue #427: the record's environment has to be part of the verdict."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Fixture(Path(directory))
+            # Everything else is untouched: same logs, same manifest, same audit.
+            verdict = fixture.verdict(provenance=fixture.provenance(environment={"python": "9.9"}))
+            self.assertFalse(verdict["eligible"])
+            self.assertIn(REASON_ENVIRONMENT_INVALID, verdict["reasons"])
+
+    def test_absent_environment_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Fixture(Path(directory))
+            provenance = fixture.provenance()
+            del provenance["environment"]
+            verdict = fixture.verdict(provenance=provenance)
+            self.assertFalse(verdict["eligible"])
+            self.assertIn(REASON_ENVIRONMENT_MISSING, verdict["reasons"])
+
+    def test_null_environment_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Fixture(Path(directory))
+            verdict = fixture.verdict(provenance=fixture.provenance(environment=None))
+            self.assertFalse(verdict["eligible"])
+            self.assertIn(REASON_ENVIRONMENT_MISSING, verdict["reasons"])
+
+    def test_environment_missing_a_published_field_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Fixture(Path(directory))
+            for field in ENVIRONMENT_FIELDS:
+                environment = {"platform": "test", "python": "3.12", "machine": "test"}
+                del environment[field]
+                with self.subTest(field=field):
+                    verdict = fixture.verdict(provenance=fixture.provenance(environment=environment))
+                    self.assertFalse(verdict["eligible"])
+                    self.assertIn(REASON_ENVIRONMENT_INVALID, verdict["reasons"])
 
     def test_scripted_run_cannot_be_relabelled_external(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
