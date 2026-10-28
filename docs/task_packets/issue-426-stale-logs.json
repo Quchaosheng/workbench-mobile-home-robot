@@ -1,0 +1,61 @@
+{
+  "issue": 426,
+  "human_owner": "Quchaosheng",
+  "objective": "Make an evaluation rerun describe only its own invocation: clear the logs it is about to rewrite, and refuse an output directory that holds logs it would not rewrite.",
+  "decision_supported": "Does collect_metrics need a manifest of what was written, or can run_evaluation guarantee the directory only ever holds one invocation?",
+  "allowed_paths": [
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_run_output_isolation.py",
+    "docs/task_packets/issue-426-stale-logs.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "tools/scripts/collect_metrics.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "tools/scripts/run_evaluation.py",
+    "tools/scripts/collect_metrics.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_run_output_isolation.py"
+  ],
+  "acceptance": [
+    "The logs this invocation is about to write are removed before it writes them.",
+    "An output directory holding a log for a scenario this invocation does not select is refused, and every stray path is named.",
+    "An output directory holding a version this invocation does not select is refused for the same reason.",
+    "A refused preparation deletes nothing.",
+    "Non-log files are left alone.",
+    "collect_metrics keeps working; it is not changed."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_run_output_isolation.py -q",
+    "python3 -m pytest tests/unit/test_evaluation_tools.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, run_evaluation only overwrote the (version, scenario) pairs it selected, so a smaller matrix left the rest in place and collect_metrics rglob counted them.",
+    "After the change a leftover scenario is refused with its path named, and this invocation's own logs are removed first so a same-matrix rerun works.",
+    "A refused preparation leaves both the kept and the stray log in place."
+  ],
+  "stop_conditions": [
+    "A workflow depends on accumulating several invocations in one output directory; that would need an explicit manifest rather than the refusal."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Refusing instead of silently deleting a stray log means a user has to remove it; that is the safe direction because the alternative silently changes the denominator.",
+    "Only *.jsonl is considered, so summary.json and provenance.json from a previous run are overwritten by this one anyway."
+  ]
+}

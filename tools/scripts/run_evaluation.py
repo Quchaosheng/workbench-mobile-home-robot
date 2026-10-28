@@ -857,6 +857,48 @@ def run_external(
         raise RuntimeError(redact_text(f"external runner failed ({process.returncode}): {(stderr or '').strip()}"))
 
 
+def _prepare_output_dir(output_dir: Path, versions: list[str], manifests: list[tuple[Path, dict[str, Any]]]) -> None:
+    """Make the output directory describe only this invocation (issue #426).
+
+    Each `(version, scenario)` log used to be overwritten only when that pair was
+    selected again, so a rerun with a smaller matrix left the previous logs in
+    place. `collect_metrics.py` walks the directory recursively and counted them,
+    which inflated `run_count` and let a blocked rerun inherit an older successful
+    log for the same scenario.
+
+    This run's own logs are removed first, so what remains is exactly what this
+    invocation produced. A log for a version this invocation does not touch is
+    left alone and the run refuses to continue, because mixing two invocations in
+    one output directory is the situation this function exists to prevent.
+    """
+
+    selected = {version: {str(manifest["scenario_id"]) for _path, manifest in manifests} for version in versions}
+    stray: list[str] = []
+    for version_dir in sorted(path for path in output_dir.iterdir() if path.is_dir()):
+        version = version_dir.name
+        wanted = selected.get(version)
+        for log in sorted(version_dir.glob("*.jsonl")):
+            scenario = log.stem
+            if wanted is None or scenario not in wanted:
+                stray.append(str(log.relative_to(output_dir)))
+
+    if stray:
+        listed = "\n  ".join(stray)
+        raise EvaluationInputError(
+            "output directory already holds event logs this invocation would not rewrite; "
+            "use a fresh --output-dir or remove them first:\n  " + listed
+        )
+
+    for version in versions:
+        version_dir = output_dir / version
+        if not version_dir.is_dir():
+            continue
+        for scenario in selected[version]:
+            log = version_dir / f"{scenario}.jsonl"
+            if log.is_file():
+                log.unlink()
+
+
 def redacted_summary(summary: dict[str, Any]) -> dict[str, Any]:
     """Return the publishable form of the run summary.
 
@@ -900,6 +942,7 @@ def main() -> int:
 
     commit = git_commit()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_output_dir(args.output_dir, versions, manifests)
     summaries: list[dict[str, Any]] = []
     # Provenance is built from the validated logs themselves, so it can be
     # recomputed and checked later instead of being read back from a summary.
