@@ -1,0 +1,68 @@
+{
+  "issue": 444,
+  "human_owner": "Quchaosheng",
+  "objective": "Refuse a physical PASS that carries no checkable measurement metadata: instrument serials, calibration validity at capture time, a numeric summary and a classified raw capture.",
+  "decision_supported": "Is a matching file digest plus free-form instrument strings enough to call a physical measurement PASS?",
+  "allowed_paths": [
+    "hardware/validation/tools/evidence.py",
+    "tests/hardware/test_physical_evidence.py",
+    "tests/hardware/test_engineering_packages.py",
+    "docs/task_packets/issue-444-physical-evidence.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "hardware/validation/first-batch-acceptance.csv",
+    "hardware/validation/tools/validate_validation.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/pcb/**"
+  ],
+  "input_refs": [
+    "hardware/validation/tools/evidence.py",
+    "hardware/validation/tools/validate_validation.py",
+    "hardware/validation/first-batch-acceptance.csv",
+    "tests/hardware/test_engineering_packages.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "hardware/validation/tools/evidence.py",
+    "tests/hardware/test_physical_evidence.py",
+    "tests/hardware/test_engineering_packages.py"
+  ],
+  "acceptance": [
+    "A physical record without instrument_serials, calibration_due or measurement_summary is refused.",
+    "Every instrument_ref needs its own serial, and serials must not repeat.",
+    "calibration_due must give a timezone-aware expiry for every serial and must not be in the past at capture time.",
+    "measurement_summary values must be numbers.",
+    "Every raw file must be classified, and at least one must be a capture.",
+    "A simulation record is unaffected.",
+    "The existing registration tests use a record that carries the new fields."
+  ],
+  "commands": [
+    "python3 -m pytest tests/hardware/test_physical_evidence.py -q",
+    "python3 -m pytest tests/hardware -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, a record with raw_files pointing at a file containing 'not a measurement' and instrument_refs ['whatever'] validated as a physical PASS.",
+    "After the change the same record is refused for missing calibration_due, instrument_serials and measurement_summary.",
+    "A complete record is accepted; an expired calibration, a non-numeric summary, an unclassified raw file and a record with no capture are each refused with their own message.",
+    "The two existing registration tests now use a record carrying the new fields and still pass."
+  ],
+  "stop_conditions": [
+    "A real capture format cannot be classified as capture or log; that would need a third kind rather than relaxing the check."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The record format grows four fields, so an old physical record no longer validates; none exists in the repository, and a fabricated one should not.",
+    "This checks that the metadata is present and coherent, not that the numbers are real; authenticity still needs the reviewer step."
+  ]
+}
