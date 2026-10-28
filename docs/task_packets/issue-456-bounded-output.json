@@ -1,0 +1,62 @@
+{
+  "issue": 456,
+  "human_owner": "Quchaosheng",
+  "objective": "Bound the external runner's stdout and stderr instead of accumulating them in memory, stop the process tree when the budget is crossed, and keep the failure message excerpted.",
+  "decision_supported": "Can the runner's output be captured with subprocess.PIPE and communicate(), or does an untrusted stream need files with ceilings and a kill on overrun?",
+  "allowed_paths": [
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_runner_output_budget.py",
+    "docs/task_packets/issue-456-bounded-output.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "tools/scripts/sim_cli.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "tools/scripts/run_evaluation.py",
+    "tools/scripts/sim_cli.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_runner_output_budget.py"
+  ],
+  "acceptance": [
+    "stdout over the budget stops the runner and raises a typed failure.",
+    "stderr over the budget does the same.",
+    "A runner that floods and keeps running is stopped within seconds, not at the wall-clock deadline.",
+    "A quiet runner is unaffected.",
+    "The failure message for a non-zero exit is excerpted rather than echoed whole.",
+    "The refusal names the stream, the observed size and the limit."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_runner_output_budget.py -q",
+    "python3 -m pytest tests/unit/test_evaluation_tools.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change run_external used subprocess.PIPE for both streams and communicate(timeout=...), so the parent held every byte the runner wrote until it exited.",
+    "After the change the streams go to temporary files; a runner writing 200 x 64 KiB to stdout is refused at 13107200 bytes against the 1048576-byte limit.",
+    "A runner that writes continuously and never exits is stopped in 0.3s against a 60s wall-clock budget.",
+    "A failing runner's stderr excerpt stays under the stderr budget plus a small fixed overhead."
+  ],
+  "stop_conditions": [
+    "The runner needs its full stdout for a result; the protocol is the output file named by {output}, not stdout, so this is not expected."
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "Polling every 250ms means a runner can overshoot the budget by one poll interval of output before it is killed; the budget is checked after exit too, so a flood that finishes inside one interval is still refused.",
+    "The temporary directory is removed when run_external returns, so the output is not kept for debugging; the runner's own artifact is the {output} file."
+  ]
+}

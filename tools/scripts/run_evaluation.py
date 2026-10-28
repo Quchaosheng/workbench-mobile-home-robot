@@ -10,6 +10,7 @@ import re
 import shlex
 import signal
 import subprocess
+import tempfile
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -52,6 +53,12 @@ TIMESTAMP_WINDOW_SECONDS = 365 * 24 * 60 * 60
 # Startup grace covers interpreter and adapter import time before the scenario
 # itself begins; it is added to the manifest budget rather than replacing it.
 EXTERNAL_STARTUP_GRACE_SECONDS = 30
+# A runner's output is untrusted and unbounded. `communicate()` accumulated all of
+# it in memory, so a runner writing a large stream could exhaust the parent before
+# its wall-clock budget fired. The output now goes to files with these ceilings and
+# the process tree is stopped when one is crossed (issue #456).
+MAX_RUNNER_STDOUT_BYTES = 1 * 1024 * 1024
+MAX_RUNNER_STDERR_BYTES = 256 * 1024
 EXTERNAL_TERMINATION_GRACE_SECONDS = 5.0
 
 
@@ -759,6 +766,20 @@ def external_timeout_budget(manifest: dict[str, Any]) -> int:
     return timeout_s + EXTERNAL_STARTUP_GRACE_SECONDS
 
 
+class ExternalRunnerOutputOverrun(RuntimeError):
+    """The runner wrote more than its output budget allows."""
+
+    def __init__(self, scenario_id: str, stream: str, limit: int, observed: int) -> None:
+        self.scenario_id = scenario_id
+        self.stream = stream
+        self.limit = limit
+        self.observed = observed
+        super().__init__(
+            f"external runner for {scenario_id} exceeded its {stream} budget: "
+            f"{observed} bytes, over the {limit}-byte limit"
+        )
+
+
 def _terminate_process_group(process: subprocess.Popen[Any]) -> None:
     """Stop a runner and its descendants deterministically on Linux and Windows."""
     if process.poll() is None:
@@ -823,38 +844,125 @@ def run_external(
         raise EvaluationInputError(f"invalid runner command template: {exc}") from exc
     argv: Sequence[str] = shlex.split(command, posix=os.name != "nt")
     started = time.monotonic()
-    try:
-        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-        process = subprocess.Popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=os.name != "nt",
-            creationflags=creation_flags,
-        )
-    except OSError as exc:
-        raise RuntimeError(f"external runner could not start: {exc}") from exc
-    try:
-        _stdout, stderr = process.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        _terminate_process_group(process)
-        elapsed = time.monotonic() - started
-        raise ExternalRunnerTimeout(
-            redact_text(
-                f"external runner for {scenario_id} timed out after {elapsed:.1f}s "
-                f"(budget {timeout_s}s including {EXTERNAL_STARTUP_GRACE_SECONDS}s startup grace); "
-                f"command: {command}"
-            ),
-            scenario_id=scenario_id,
-            elapsed_s=elapsed,
-            budget_s=timeout_s,
-        ) from None
-    if process.returncode != 0:
+    # The runner's output goes to files, not pipes. A pipe is read by the parent,
+    # so anything the runner writes is memory the parent has to hold; a file is
+    # read back only up to the budget after the process has stopped (issue #456).
+    with tempfile.TemporaryDirectory(prefix="wb-runner-") as scratch:
+        stdout_path = Path(scratch) / "stdout"
+        stderr_path = Path(scratch) / "stderr"
+        try:
+            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
+                process = subprocess.Popen(
+                    argv,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    start_new_session=os.name != "nt",
+                    creationflags=creation_flags,
+                )
+                returncode = _wait_with_output_budget(
+                    process,
+                    scenario_id=scenario_id,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                    timeout_s=timeout_s,
+                    command=command,
+                    started=started,
+                )
+        except OSError as exc:
+            raise RuntimeError(f"external runner could not start: {exc}") from exc
+
+        stderr = _bounded_read(stderr_path, MAX_RUNNER_STDERR_BYTES)
+
+    if returncode != 0:
         # A runner that fails inside a credentialed command echoes the credential
         # into stderr; this message ends up in a traceback or a report, so it is
         # scrubbed at the point where it is built.
-        raise RuntimeError(redact_text(f"external runner failed ({process.returncode}): {(stderr or '').strip()}"))
+        raise RuntimeError(redact_text(f"external runner failed ({returncode}): {stderr.strip()}"))
+
+
+def _bounded_read(path: Path, limit: int) -> str:
+    """Read at most ``limit`` bytes, decoded leniently.
+
+    The file may have grown past the limit between the poll and this read, so the
+    read is capped rather than trusting the earlier check.
+    """
+
+    try:
+        with path.open("rb") as handle:
+            return handle.read(limit).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _wait_with_output_budget(
+    process: subprocess.Popen[Any],
+    *,
+    scenario_id: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_s: int,
+    command: str,
+    started: float,
+) -> int:
+    """Wait for the runner, stopping it if it times out or floods its output.
+
+    Polling is the price of bounding output without a reader thread: the parent
+    never holds the stream, it only checks the size on disk and kills the tree when
+    the budget is crossed.
+    """
+
+    def overrun() -> ExternalRunnerOutputOverrun | None:
+        """The first stream that exceeded its budget, if any."""
+
+        for stream, path, limit in (
+            ("stdout", stdout_path, MAX_RUNNER_STDOUT_BYTES),
+            ("stderr", stderr_path, MAX_RUNNER_STDERR_BYTES),
+        ):
+            observed = path.stat().st_size if path.exists() else 0
+            if observed > limit:
+                return ExternalRunnerOutputOverrun(scenario_id, stream, limit, observed)
+        return None
+
+    while True:
+        try:
+            returncode = process.wait(timeout=_OUTPUT_POLL_INTERVAL_S)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            # A runner that floods and exits inside one poll interval never trips
+            # the loop check, so the budget is asserted once more before the
+            # output is accepted.
+            exceeded = overrun()
+            if exceeded is not None:
+                raise exceeded
+            return returncode
+
+        for stream, path, limit in (
+            ("stdout", stdout_path, MAX_RUNNER_STDOUT_BYTES),
+            ("stderr", stderr_path, MAX_RUNNER_STDERR_BYTES),
+        ):
+            observed = path.stat().st_size if path.exists() else 0
+            if observed > limit:
+                _terminate_process_group(process)
+                raise ExternalRunnerOutputOverrun(scenario_id, stream, limit, observed)
+
+        elapsed = time.monotonic() - started
+        if elapsed >= timeout_s:
+            _terminate_process_group(process)
+            raise ExternalRunnerTimeout(
+                redact_text(
+                    f"external runner for {scenario_id} timed out after {elapsed:.1f}s "
+                    f"(budget {timeout_s}s including {EXTERNAL_STARTUP_GRACE_SECONDS}s startup grace); "
+                    f"command: {command}"
+                ),
+                scenario_id=scenario_id,
+                elapsed_s=elapsed,
+                budget_s=timeout_s,
+            )
+
+
+_OUTPUT_POLL_INTERVAL_S = 0.25
 
 
 def redacted_summary(summary: dict[str, Any]) -> dict[str, Any]:
