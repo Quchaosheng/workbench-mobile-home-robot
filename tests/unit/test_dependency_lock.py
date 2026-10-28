@@ -401,3 +401,34 @@ def test_the_lock_revision_records_the_resolved_package_hashes() -> None:
     assert legacy["hashed_package_count"] == 0
     assert legacy["package_count"] == len(legacy["packages"])
     assert ProvenanceError is not None
+
+
+def test_a_stale_requirements_hash_is_a_finding(tmp_path: Path) -> None:
+    """Issue #405: the header records the requirements it was generated from."""
+
+    requirements = lock_tool.locked_requirements()
+    # Real pins, so the only thing this test can trip on is the header it rewrites.
+    pins = lock_tool.parse_lock(LOCK).pins
+    rendered = lock_tool.render_lock(pins, requirements)
+
+    good = tmp_path / "good.lock"
+    good.write_text(rendered, encoding="utf-8")
+    assert [
+        finding
+        for finding in lock_tool.check_lock(lock_tool.parse_lock(good), requirements)
+        if finding.code == "stale_requirements_hash"
+    ] == []
+
+    # Same pins, a header that no longer describes these requirements: the lock
+    # still resolves, and that is precisely why the hash has to be compared.
+    stale = tmp_path / "stale.lock"
+    stale.write_text(
+        rendered.replace(
+            next(line for line in rendered.splitlines() if line.startswith("# requirements_hash:")),
+            "# requirements_hash: " + "f" * 64,
+        ),
+        encoding="utf-8",
+    )
+    findings = lock_tool.check_lock(lock_tool.parse_lock(stale), requirements)
+    assert [finding.code for finding in findings] == ["stale_requirements_hash"]
+    assert "regenerate with `make lock-python`" in findings[0].detail
