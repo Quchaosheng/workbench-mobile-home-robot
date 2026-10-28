@@ -94,12 +94,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install kernel headers and can-utils
         run: |
+          # The runner's kernel is not always one the archive has packages for:
+          # on 7.0.0-1017-azure, `linux-modules-extra-<release>` does not exist
+          # yet and apt exits 100 before anything is installed. What the build
+          # below actually needs is headers, so those are required and the
+          # modules-extra package is best-effort. The module loads against vcan,
+          # which ships in the base kernel, not in modules-extra.
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             "linux-headers-$(uname -r)" \
             linux-headers-generic \
-            "linux-modules-extra-$(uname -r)" \
             can-utils ethtool build-essential
+          modules_extra="linux-modules-extra-$(uname -r)"
+          if apt-cache show "$modules_extra" >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends "$modules_extra"
+          else
+            echo "::warning::$modules_extra is not in the archive for this kernel; continuing without it"
+          fi
       - name: Build and check wbcan.ko
         run: |
           for headers in /usr/src/linux-headers-*-generic; do
