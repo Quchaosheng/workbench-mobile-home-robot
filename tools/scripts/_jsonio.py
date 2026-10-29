@@ -13,6 +13,12 @@ from pathlib import Path
 from typing import Any
 
 MAX_DIAGNOSTIC_KEYS = 1
+# A release gate that reads its input without a bound makes its verdict depend on
+# how much memory the host has. These are the ceilings for one JSON document and
+# one Markdown document; a gate refuses an oversize input rather than truncating it
+# and continuing, because a truncated policy document is not the policy (issue #451).
+MAX_JSON_BYTES = 8 * 1024 * 1024
+MAX_TEXT_BYTES = 4 * 1024 * 1024
 
 
 class JsonInputError(ValueError):
@@ -44,12 +50,49 @@ def loads(text: str, source: Path | str = "<memory>", *, line_number: int | None
         raise JsonInputError(f"{location}: not valid JSON: {exc}") from exc
 
 
-def load_json(path: Path | str) -> Any:
-    """Read and decode one JSON file, rejecting duplicate object keys."""
-    source = Path(path)
+def _bounded_bytes(path: Path, limit: int, label: str) -> bytes:
+    """Read at most ``limit`` bytes, refusing a larger file instead of truncating."""
+
     try:
-        text = source.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise JsonInputError(f"{path}: cannot read {label} input: {exc}") from exc
+    if size > limit:
+        raise JsonInputError(f"{path}: {label} input is {size} bytes, over the {limit}-byte limit")
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise JsonInputError(f"{path}: cannot read {label} input: {exc}") from exc
+    if len(payload) > limit:
+        # The file grew between the stat and the read.
+        raise JsonInputError(f"{path}: {label} input grew to {len(payload)} bytes, over the {limit}-byte limit")
+    return payload
+
+
+def read_text(path: Path | str, *, limit: int = MAX_TEXT_BYTES) -> str:
+    """Read one UTF-8 text file with a byte ceiling.
+
+    Used by the gates that read a Markdown policy or a generated report. The
+    ceiling is checked on the bytes read as well as on the stat, so a file that
+    grows while being read is still refused.
+    """
+
+    source = Path(path)
+    payload = _bounded_bytes(source, limit, "text")
+    try:
+        return payload.decode("utf-8")
+    except UnicodeError as exc:
+        raise JsonInputError(f"{source}: text input is not valid UTF-8: {exc}") from exc
+
+
+def load_json(path: Path | str, *, limit: int = MAX_JSON_BYTES) -> Any:
+    """Read and decode one JSON file, rejecting duplicate object keys."""
+
+    source = Path(path)
+    payload = _bounded_bytes(source, limit, "JSON")
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeError as exc:
         raise JsonInputError(f"{source}: cannot read JSON input: {exc}") from exc
     return loads(text, source)
 

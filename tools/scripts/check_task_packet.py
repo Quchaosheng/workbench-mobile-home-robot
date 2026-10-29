@@ -9,6 +9,7 @@ import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from _jsonio import JsonInputError, load_json
 from _paths import ROOT
 from jsonschema import Draft202012Validator
 
@@ -58,8 +59,8 @@ def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def _load_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_object_without_duplicates)
-    except (OSError, json.JSONDecodeError) as exc:
+        return load_json(path)
+    except (OSError, json.JSONDecodeError, JsonInputError) as exc:
         raise TaskPacketError(f"cannot read JSON: {exc}") from exc
 
 
