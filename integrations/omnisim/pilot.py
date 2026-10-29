@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import tempfile
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,7 +42,13 @@ class OmniSimPilotRunner:
 
         destination = Path(output_dir).resolve()
         destination.mkdir(parents=True, exist_ok=True)
-        run_id = f"omnisim-{uuid.uuid4().hex[:12]}"
+        # The run identity has to be a function of the probe, not of the clock: a
+        # uuid4 made every rerun of the same world a different artifact that could
+        # not be compared to its predecessor (issue #455). The digest is taken from
+        # the world file that was actually loaded, so an artifact can be tied back
+        # to the revision it came from.
+        world_digest = _world_digest(world_path)
+        run_id = f"omnisim-{_run_suffix(world_digest, steps)}"
         staging = Path(tempfile.mkdtemp(prefix=f".{run_id}.", suffix=".partial", dir=destination))
         final = destination / run_id
         responses: dict[str, dict[str, Any]] = {}
@@ -94,6 +99,7 @@ class OmniSimPilotRunner:
             "physical_evidence": False,
             "mapped_to_workbench_event_contract": False,
             "world_path": world_path,
+            "world_digest": world_digest,
             "requested_steps": steps,
             "started_at": started_at,
             "finished_at": datetime.now(UTC).isoformat(),
@@ -176,6 +182,34 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _world_digest(world_path: str) -> str:
+    """The sha256 of the world file this probe loads.
+
+    A missing or unreadable world is reported as ``unavailable`` rather than
+    raising: the run still has to record why it produced no evidence, and the
+    loader is the component that decides whether the world is usable.
+    """
+
+    path = Path(world_path)
+    try:
+        if not path.is_file():
+            return "unavailable"
+        return _sha256(path)
+    except OSError:
+        return "unavailable"
+
+
+def _run_suffix(world_digest: str, steps: int) -> str:
+    """A stable 12-hex suffix derived from the probe inputs."""
+
+    material = json.dumps(
+        {"world_digest": world_digest, "steps": steps},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:12]
 
 
 def _write_checksums(directory: Path) -> None:
