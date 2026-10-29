@@ -39,6 +39,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _jsonio import JsonInputError, load_json, read_text
 from _paths import ROOT
 
 PASS = 0
@@ -58,7 +59,7 @@ MANIFEST_EVIDENCE_CLASSES: dict[str, frozenset[str]] = {
 
 
 def _load(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json(path)
 
 
 def _stable(report: dict[str, Any]) -> dict[str, Any]:
@@ -174,22 +175,22 @@ def _generated_artifacts(
 
     findings: list[str] = []
     try:
-        page = page_path.read_text(encoding="utf-8")
-    except OSError as error:
+        page = read_text(page_path)
+    except (OSError, JsonInputError) as error:
         return [f"cannot read the generated page {page_path}: {error}"]
     if page != markdown_page(current):
         findings.append(f"{page_path} is not the page this report generates; regenerate and commit it")
 
     try:
-        readme = readme_path.read_text(encoding="utf-8")
-    except OSError as error:
+        readme = read_text(readme_path)
+    except (OSError, JsonInputError) as error:
         return [*findings, f"cannot read {readme_path}: {error}"]
     findings.extend(_readme_findings(readme, readme_block(current), readme_path))
 
     if readme_zh_path.is_file():
         try:
-            readme_zh = readme_zh_path.read_text(encoding="utf-8")
-        except OSError as error:
+            readme_zh = read_text(readme_zh_path)
+        except (OSError, JsonInputError) as error:
             return [*findings, f"cannot read {readme_zh_path}: {error}"]
         findings.extend(_readme_findings(readme_zh, readme_block(current, language="zh"), readme_zh_path))
     return findings
@@ -211,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         committed = _load(args.report)
-    except OSError as error:
+    except (OSError, JsonInputError) as error:
         print(f"INCOMPLETE: cannot read {args.report}: {error}", file=sys.stderr)
         return INCOMPLETE
     except json.JSONDecodeError as error:

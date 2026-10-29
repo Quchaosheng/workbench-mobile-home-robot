@@ -31,6 +31,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from _jsonio import load_json
 from _paths import ROOT
 
 PASS = 0
@@ -53,7 +54,7 @@ class UnobservableError(RuntimeError):
 
 def load_required_checks(path: Path) -> tuple[str, ...]:
     try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        payload = load_json(Path(path))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise UnobservableError(f"cannot read the branch-protection declaration: {path}") from exc
     checks = payload.get("required_status_checks") if isinstance(payload, dict) else None
@@ -134,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.check_runs is not None:
         try:
-            payload = json.loads(Path(args.check_runs).read_text(encoding="utf-8"))
+            payload = load_json(Path(args.check_runs))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             print(f"INCOMPLETE: cannot read recorded check runs: {exc}", file=sys.stderr)
             return INCOMPLETE
@@ -164,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     branch = args.protected_branch
     if branch is None:
         try:
-            branch = json.loads(Path(args.declaration).read_text(encoding="utf-8")).get("target_branch")
+            branch = load_json(Path(args.declaration)).get("target_branch")
         except (OSError, UnicodeError, json.JSONDecodeError):
             branch = None
     branch = branch or "main"

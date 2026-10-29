@@ -1,0 +1,80 @@
+{
+  "issue": 451,
+  "human_owner": "Quchaosheng",
+  "objective": "Bound what the release and governance gates read, so a large or hostile input is refused with its path and limit instead of being loaded whole or truncated.",
+  "decision_supported": "Should each gate keep its own unbounded read_text/json.loads, or share one bounded reader that refuses oversize input?",
+  "allowed_paths": [
+    "tools/scripts/_jsonio.py",
+    "tools/scripts/check_release_commit.py",
+    "tools/scripts/check_ready_gate.py",
+    "tools/scripts/check_task_packet.py",
+    "tools/scripts/check_phase_gates.py",
+    "tools/scripts/check_readiness_report.py",
+    "tests/unit/test_bounded_gate_reads.py",
+    "tests/unit/test_task_packet.py",
+    "docs/task_packets/issue-451-bounded-reads.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/architecture/system.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "tools/scripts/_jsonio.py",
+    "tools/scripts/check_release_commit.py",
+    "tools/scripts/check_ready_gate.py",
+    "tools/scripts/check_task_packet.py",
+    "tools/scripts/check_phase_gates.py",
+    "tools/scripts/check_readiness_report.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/_jsonio.py",
+    "tools/scripts/check_release_commit.py",
+    "tools/scripts/check_ready_gate.py",
+    "tools/scripts/check_task_packet.py",
+    "tools/scripts/check_phase_gates.py",
+    "tools/scripts/check_readiness_report.py",
+    "tests/unit/test_bounded_gate_reads.py",
+    "tests/unit/test_task_packet.py"
+  ],
+  "acceptance": [
+    "A JSON document over the limit is refused with its path and the limit.",
+    "A text document over the limit is refused the same way.",
+    "A document at the limit is still accepted.",
+    "An oversize document is never truncated and returned.",
+    "Duplicate keys and invalid UTF-8 are still refused.",
+    "No gate keeps an unbounded read_text, and every gate uses the shared reader.",
+    "The gates still report INCOMPLETE rather than raising when an input is unreadable."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_bounded_gate_reads.py -q",
+    "python3 -m pytest tests/unit/test_task_packet.py tests/unit/test_phase_gates.py tests/unit/test_readiness_report.py tests/unit/test_ready_gate.py tests/unit/test_evaluation_tools.py -q",
+    "python3 tools/scripts/check_task_packet.py --all",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change five gates called Path.read_text and json.loads directly, so an input of any size was loaded whole.",
+    "After the change an 8388716-byte JSON document is refused at the 8388608-byte limit and a 4194404-byte Markdown document at the 4194304-byte limit, each naming the path.",
+    "A test enumerates the five gates and asserts none of them contains an unbounded read_text and each imports the shared reader.",
+    "239 tests across the gate suites pass, including the ones asserting an unreadable input yields INCOMPLETE."
+  ],
+  "stop_conditions": [
+    "A legitimate input exceeds 8 MiB of JSON or 4 MiB of text; the limits are two constants in _jsonio and the refusal names them."
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "The gates now raise JsonInputError where they previously raised OSError or JSONDecodeError; each gate's except clause was widened so the INCOMPLETE outcome is unchanged.",
+    "The duplicate-key message is now shared, so one Task Packet test that matched the old wording was updated to the shared phrase."
+  ]
+}
