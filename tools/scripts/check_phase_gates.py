@@ -41,6 +41,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _jsonio import JsonInputError, load_json, read_text
 from _paths import ROOT
 from phase_gates import (
     NOTES_BEGIN,
@@ -65,7 +66,7 @@ PHASE_STATUS_LABELS = frozenset({"COMPLETE", "INCOMPLETE", "FAIL", "BLOCKED", "N
 
 
 def _load(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json(path)
 
 
 def _stable(status: dict[str, Any]) -> dict[str, Any]:
@@ -173,8 +174,8 @@ def _generated_artifacts(
 ) -> list[str]:
     findings: list[str] = []
     try:
-        page = page_path.read_text(encoding="utf-8")
-    except OSError as error:
+        page = read_text(page_path)
+    except (OSError, JsonInputError) as error:
         return [f"cannot read the generated page {page_path}: {error}"]
     if page != markdown_page(status):
         findings.append(f"{page_path} is not the page this status generates; regenerate and commit it")
@@ -187,8 +188,8 @@ def _generated_artifacts(
         return text[start : stop + len(end)]
 
     try:
-        readme = readme_path.read_text(encoding="utf-8")
-    except OSError as error:
+        readme = read_text(readme_path)
+    except (OSError, JsonInputError) as error:
         return [*findings, f"cannot read {readme_path}: {error}"]
     block = _extract(readme, README_BEGIN, README_END)
     if block is None:
@@ -198,8 +199,8 @@ def _generated_artifacts(
 
     if notes_path.is_file():
         try:
-            notes = notes_path.read_text(encoding="utf-8")
-        except OSError as error:
+            notes = read_text(notes_path)
+        except (OSError, JsonInputError) as error:
             return [*findings, f"cannot read {notes_path}: {error}"]
         notes_block = _extract(notes, NOTES_BEGIN, NOTES_END)
         if notes_block is None:
@@ -209,8 +210,8 @@ def _generated_artifacts(
 
     if readme_zh_path.is_file():
         try:
-            readme_zh = readme_zh_path.read_text(encoding="utf-8")
-        except OSError as error:
+            readme_zh = read_text(readme_zh_path)
+        except (OSError, JsonInputError) as error:
             return [*findings, f"cannot read {readme_zh_path}: {error}"]
         block_zh = _extract(readme_zh, README_BEGIN, README_END)
         if block_zh is None:
@@ -232,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         committed = _load(args.status)
-    except OSError as error:
+    except (OSError, JsonInputError) as error:
         print(f"INCOMPLETE: cannot read {args.status}: {error}", file=sys.stderr)
         return INCOMPLETE
     except json.JSONDecodeError as error:

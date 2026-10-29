@@ -261,7 +261,9 @@ def test_invalid_json_reports_a_validation_error(tmp_path: Path) -> None:
 def test_duplicate_json_keys_are_rejected(tmp_path: Path) -> None:
     packet = tmp_path / "duplicate.json"
     packet.write_text('{"allowed_paths": [], "allowed_paths": ["robot/**"]}', encoding="utf-8")
-    with pytest.raises(task_packet.TaskPacketError, match="duplicate JSON key"):
+    # The shared reader names the offending key; the phrase matches what every
+    # other evidence boundary reports (issue #451).
+    with pytest.raises(task_packet.TaskPacketError, match="duplicate JSON object key"):
         task_packet._load_json(packet)
 
 
