@@ -136,3 +136,77 @@ def test_pilot_records_unavailable_harness_as_not_executed(tmp_path):
 def test_client_rejects_non_loopback_control_url():
     with pytest.raises(ValueError, match="loopback"):
         OmniSimClient("https://example.com")
+
+
+# --- Issue #455: the run identity comes from the probe, not the clock --------
+
+
+def test_the_run_identity_is_stable_for_the_same_world(tmp_path: Path, harness) -> None:
+    """Two probes of one world are the same probe, so they share an identity."""
+
+    from integrations.omnisim.pilot import _run_suffix, _world_digest
+
+    world = tmp_path / "world.usd"
+    world.write_text("world-a", encoding="utf-8")
+    digest = _world_digest(str(world))
+
+    assert _run_suffix(digest, 1) == _run_suffix(digest, 1)
+    assert digest != "unavailable"
+
+
+def test_a_different_world_changes_the_identity(tmp_path: Path) -> None:
+    from integrations.omnisim.pilot import _run_suffix, _world_digest
+
+    first = tmp_path / "a.usd"
+    second = tmp_path / "b.usd"
+    first.write_text("world-a", encoding="utf-8")
+    second.write_text("world-b", encoding="utf-8")
+
+    assert _run_suffix(_world_digest(str(first)), 1) != _run_suffix(_world_digest(str(second)), 1)
+
+
+def test_a_different_step_count_changes_the_identity(tmp_path: Path) -> None:
+    from integrations.omnisim.pilot import _run_suffix, _world_digest
+
+    world = tmp_path / "world.usd"
+    world.write_text("world-a", encoding="utf-8")
+    digest = _world_digest(str(world))
+
+    assert _run_suffix(digest, 1) != _run_suffix(digest, 2)
+
+
+def test_a_missing_world_reports_unavailable() -> None:
+    from integrations.omnisim.pilot import _world_digest
+
+    assert _world_digest("/nonexistent/world.usd") == "unavailable"
+
+
+def test_the_published_metadata_records_the_world_digest(harness, tmp_path: Path) -> None:
+    """The artifact has to be tieable to the world revision it loaded."""
+
+    from integrations.omnisim.pilot import _world_digest
+
+    world = tmp_path / "world.usd"
+    world.write_text("world-a", encoding="utf-8")
+    digest = _world_digest(str(world))
+    assert digest != "unavailable"
+
+    result = OmniSimPilotRunner(OmniSimClient(harness)).run(str(world), tmp_path / "runs", steps=1)
+    metadata = json.loads((result.artifact_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["world_digest"] == digest
+    assert metadata["requested_steps"] == 1
+    assert metadata["run_id"].startswith("omnisim-")
+    assert len(metadata["run_id"]) == len("omnisim-") + 12
+
+
+def test_a_repeated_probe_publishes_the_same_run_id(harness, tmp_path: Path) -> None:
+    """The issue: every invocation used to get a distinct uuid4 suffix."""
+
+    world = tmp_path / "world.usd"
+    world.write_text("world-a", encoding="utf-8")
+    client = OmniSimClient(harness)
+
+    first = OmniSimPilotRunner(client).run(str(world), tmp_path / "runs", steps=1)
+    second = OmniSimPilotRunner(client).run(str(world), tmp_path / "runs-2", steps=1)
+
+    assert first.run_id == second.run_id

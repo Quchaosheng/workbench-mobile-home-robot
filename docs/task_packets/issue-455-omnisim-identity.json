@@ -1,0 +1,61 @@
+{
+  "issue": 455,
+  "human_owner": "Quchaosheng",
+  "objective": "Derive the OmniSim pilot run identity from the verified world digest and the step count instead of uuid4, and record that digest in the artifact metadata.",
+  "decision_supported": "Should the pilot run identity be a random value, or a hash of the world it loaded and the probe it performed?",
+  "allowed_paths": [
+    "integrations/omnisim/pilot.py",
+    "tests/integration/test_omnisim_pilot.py",
+    "docs/task_packets/issue-455-omnisim-identity.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "integrations/omnisim/client.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "integrations/omnisim/pilot.py",
+    "integrations/omnisim/client.py",
+    "tests/integration/test_omnisim_pilot.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "integrations/omnisim/pilot.py",
+    "tests/integration/test_omnisim_pilot.py"
+  ],
+  "acceptance": [
+    "The same world and step count produce the same run id.",
+    "A different world changes the id.",
+    "A different step count changes the id.",
+    "A missing world reports unavailable rather than raising.",
+    "The published metadata records world_digest next to world_path.",
+    "uuid4 is no longer used to name a run."
+  ],
+  "commands": [
+    "python3 -m pytest tests/integration/test_omnisim_pilot.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change run_id was f'omnisim-{uuid.uuid4().hex[:12]}', so the same world path and step count produced a different directory on every invocation.",
+    "After the change two runs of the same world and step count share a run id, and changing either input changes it.",
+    "The metadata now carries world_digest, so an artifact can be tied to the world revision it loaded; the existing world_path field is unchanged."
+  ],
+  "stop_conditions": [
+    "The world lives on the simulator host rather than the local filesystem; the digest then reports unavailable and the id falls back to the step count alone, which the metadata makes visible."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Two probes of the same world now write to the same directory name, so a second run into one output_dir collides rather than adding a sibling; the caller chooses the output directory per invocation.",
+    "The digest is of the local file, not of what the simulator loaded; a mismatch between them is a property of the loader, not of this identity."
+  ]
+}
