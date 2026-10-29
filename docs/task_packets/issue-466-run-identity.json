@@ -1,0 +1,60 @@
+{
+  "issue": 466,
+  "human_owner": "Quchaosheng",
+  "objective": "Derive a sim_cli run id from the inputs that decide what the run is, so the same scenario and seed produce the same identity, and offer an explicit nonce for an intentional rerun.",
+  "decision_supported": "Should the published run directory be named from uuid4, or from a hash of the semantic inputs with an opt-in nonce?",
+  "allowed_paths": [
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_run_identity_stability.py",
+    "docs/task_packets/issue-466-run-identity.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "tools/scripts/run_evaluation.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_run_identity.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_run_identity_stability.py"
+  ],
+  "acceptance": [
+    "The same scenario, runner, version and seed produce the same run id.",
+    "Changing the runner, the version or the seed changes the id.",
+    "A nonce produces a distinct id and the same nonce stays reproducible.",
+    "The id keeps the scenario_id prefix and a 12-hex suffix, so it stays filesystem-safe.",
+    "uuid4 is no longer used to name a run."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_run_identity_stability.py -q",
+    "python3 -m pytest tests/unit/test_sim_cli.py tests/unit/test_run_identity.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change run_scenario built the id as f'{scenario_id}-{uuid.uuid4().hex[:12]}', so two invocations of the same inputs produced different directory names.",
+    "After the change two calls with identical arguments return the same id; changing runner, version, seed_base or the nonce each changes it.",
+    "The published artifact is still protected from overwrite by the existing refusal in _publish_artifact, so a stable name cannot silently replace prior evidence."
+  ],
+  "stop_conditions": [
+    "A caller relies on a fresh directory per invocation without passing a nonce; that caller now needs the nonce, which is the explicit signal the issue asks for."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A rerun with identical inputs now fails on the existing overwrite refusal instead of silently creating a second directory; passing a nonce is the documented way to keep both.",
+    "The hash covers scenario_version and scene_hash as well as the run parameters, so a changed manifest also produces a new identity."
+  ]
+}

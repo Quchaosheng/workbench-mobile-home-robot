@@ -19,7 +19,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -517,6 +516,38 @@ def _record_identity(metadata: dict[str, Any], scenario: Scenario, events_path: 
     metadata["event_stream_hash"] = identity.material["event_stream_hash"]
 
 
+def _run_identity(
+    scenario: Scenario,
+    *,
+    runner: str,
+    version: str,
+    seed_base: int,
+    nonce: str | None,
+) -> str:
+    """A run id derived from the inputs, not from a random value.
+
+    A uuid4 made every invocation of the same scenario produce a different
+    directory name, so a rerun could not be compared to its predecessor and an
+    evidence reference naming a run_id was unstable for no reason (issue #466).
+    The inputs that decide what the run is are hashed instead, and an intentional
+    rerun passes `nonce` to get a distinct identity on purpose.
+    """
+
+    material = {
+        "scenario_id": scenario.scenario_id,
+        "scenario_version": scenario.manifest.get("scenario_version"),
+        "scene_hash": scenario.scene_hash,
+        "runner": runner,
+        "version": version,
+        "seed_base": seed_base,
+        "manifest_seed": scenario.manifest.get("seed"),
+        "nonce": nonce or "",
+    }
+    encoded = json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()[:12]
+    return f"{scenario.scenario_id}-{digest}"
+
+
 def run_scenario(
     scenario: Scenario,
     *,
@@ -525,6 +556,7 @@ def run_scenario(
     version: str = "sim-cli",
     command: Sequence[str] | None = None,
     seed_base: int = 1000,
+    nonce: str | None = None,
 ) -> RunResult:
     """Run one scenario and atomically publish a bounded evidence directory."""
 
@@ -533,7 +565,7 @@ def run_scenario(
     if not _safe_id(version):
         raise SimulationInputError(f"version must be ASCII and filesystem-safe: {version!r}")
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_id = f"{scenario.scenario_id}-{uuid.uuid4().hex[:12]}"
+    run_id = _run_identity(scenario, runner=runner, version=version, seed_base=seed_base, nonce=nonce)
     staging = Path(tempfile.mkdtemp(prefix=f".{run_id}.", suffix=".partial", dir=output_dir))
     final = output_dir / run_id
     stdout_path = staging / "stdout.log"
