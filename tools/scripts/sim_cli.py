@@ -29,7 +29,12 @@ from _paths import ROOT, enable_local_packages
 
 enable_local_packages()
 
-from scenario_tools import canonical_hash, materialize_scenario, validate_simulation_manifest
+from scenario_tools import (
+    canonical_hash,
+    external_timeout_budget,
+    materialize_scenario,
+    validate_simulation_manifest,
+)
 from workbench.kernel.run_provenance import (
     EVENT_ORDERINGS,
     RunProvenanceError,
@@ -673,6 +678,11 @@ def run_scenario(
     stdout_path = staging / "stdout.log"
     stderr_path = staging / "stderr.log"
     events_path = staging / "events.jsonl"
+    # The same manifest has to get the same deadline here as in run_evaluation,
+    # which adds the startup grace for a simulator that is slow to initialise
+    # (issue #431). The enforced budget is recorded, not the manifest value, so the
+    # bundle explains the deadline that actually applied.
+    enforced_timeout_s = external_timeout_budget(scenario.manifest, error=SimulationInputError)
     metadata: dict[str, Any] = {
         "schema_version": "sim-run-v1",
         "run_id": run_id,
@@ -683,7 +693,8 @@ def run_scenario(
         "manifest_seed": scenario.manifest["seed"],
         "world_version": scenario.manifest["world_version"],
         "fault_type": scenario.manifest["fault_type"],
-        "timeout_s": scenario.manifest["timeout_s"],
+        "timeout_s": enforced_timeout_s,
+        "manifest_timeout_s": scenario.manifest["timeout_s"],
         "scene_hash": scenario.scene_hash,
         "commit": commit,
         "run_nonce": run_material["nonce"],
@@ -770,7 +781,7 @@ def run_scenario(
                         try:
                             return_code, timed_out, output_exceeded = _wait_bounded(
                                 process,
-                                timeout_s=scenario.manifest["timeout_s"],
+                                timeout_s=enforced_timeout_s,
                                 stdout_path=stdout_path,
                                 stderr_path=stderr_path,
                             )
@@ -798,7 +809,8 @@ def run_scenario(
                                     {
                                         "status": "TIMED_OUT",
                                         "reason": (
-                                            f"runner exceeded manifest timeout of {scenario.manifest['timeout_s']}s"
+                                            f"runner exceeded the {enforced_timeout_s}s budget "
+                                            f"(manifest {scenario.manifest['timeout_s']}s plus startup grace)"
                                         ),
                                     }
                                 )
