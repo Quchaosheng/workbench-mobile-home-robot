@@ -22,7 +22,13 @@ from _paths import enable_local_packages
 enable_local_packages()
 
 from release_eligibility import build_provenance, evaluate_eligibility
-from scenario_tools import TASK_PROFILES, materialize_scenario, validate_simulation_manifest
+from scenario_tools import (
+    EXTERNAL_STARTUP_GRACE_SECONDS,
+    TASK_PROFILES,
+    materialize_scenario,
+    validate_simulation_manifest,
+)
+from scenario_tools import external_timeout_budget as shared_external_timeout_budget
 from workbench.application.redaction import (
     REDACTION_MARKER_KEY,
     REDACTION_RULES_VERSION,
@@ -51,7 +57,6 @@ MAX_EVENTS_PER_RUN = 10_000
 TIMESTAMP_WINDOW_SECONDS = 365 * 24 * 60 * 60
 # Startup grace covers interpreter and adapter import time before the scenario
 # itself begins; it is added to the manifest budget rather than replacing it.
-EXTERNAL_STARTUP_GRACE_SECONDS = 30
 EXTERNAL_TERMINATION_GRACE_SECONDS = 5.0
 
 
@@ -752,11 +757,13 @@ def validate_event_log(
 
 
 def external_timeout_budget(manifest: dict[str, Any]) -> int:
-    """Derive the runner wall-clock budget from the manifest plus startup grace."""
-    timeout_s = manifest.get("timeout_s")
-    if not isinstance(timeout_s, int) or isinstance(timeout_s, bool) or timeout_s <= 0:
-        raise EvaluationInputError(f"scenario manifest timeout_s must be a positive integer: {timeout_s!r}")
-    return timeout_s + EXTERNAL_STARTUP_GRACE_SECONDS
+    """Derive the runner wall-clock budget from the manifest plus startup grace.
+
+    The arithmetic lives in `scenario_tools` so `sim_cli` enforces the same
+    deadline for the same manifest (issue #431).
+    """
+
+    return shared_external_timeout_budget(manifest, error=EvaluationInputError)
 
 
 def _terminate_process_group(process: subprocess.Popen[Any]) -> None:

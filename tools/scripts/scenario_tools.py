@@ -129,6 +129,27 @@ ENTITY_APPEARANCE = {
 }
 
 
+# A runner imports and initialises a simulator before the scenario starts, so the
+# wall-clock budget is the manifest's timeout plus this grace. Both evidence
+# producing entry points have to agree on it, or the same manifest gets a different
+# deadline depending on which tool ran it (issue #431).
+EXTERNAL_STARTUP_GRACE_SECONDS = 30
+
+
+def external_timeout_budget(manifest: dict[str, Any], *, error: type[Exception]) -> int:
+    """The enforced wall-clock budget for one manifest.
+
+    ``error`` is the caller's own input error so the message is raised in the
+    vocabulary the caller already uses; the arithmetic and the validation live
+    here so the two entry points cannot drift apart.
+    """
+
+    timeout_s = manifest.get("timeout_s")
+    if not isinstance(timeout_s, int) or isinstance(timeout_s, bool) or timeout_s <= 0:
+        raise error(f"scenario manifest timeout_s must be a positive integer: {timeout_s!r}")
+    return timeout_s + EXTERNAL_STARTUP_GRACE_SECONDS
+
+
 def canonical_hash(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
     return hashlib.sha256(encoded).hexdigest()

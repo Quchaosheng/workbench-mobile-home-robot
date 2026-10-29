@@ -13,6 +13,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from run_evaluation import scripted_events
+from scenario_tools import EXTERNAL_STARTUP_GRACE_SECONDS
 from sim_cli import (
     EXIT_CODES,
     SimulationInputError,
@@ -157,7 +158,10 @@ class SimulationCliTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             scenario = load_scenarios([manifest_path])[0]
             sleeper = root / "sleep.py"
-            sleeper.write_text("import time; time.sleep(10)\n", encoding="utf-8")
+            # The budget is the manifest timeout plus the startup grace, which
+            # both entry points now share (issue #431), so the sleeper has to
+            # outlast the grace for this to be a timeout at all.
+            sleeper.write_text(f"import time; time.sleep({EXTERNAL_STARTUP_GRACE_SECONDS + 60})\n", encoding="utf-8")
             result = run_scenario(
                 scenario,
                 runner="external",
