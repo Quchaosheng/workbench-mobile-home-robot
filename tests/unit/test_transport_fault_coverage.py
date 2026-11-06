@@ -30,7 +30,13 @@ def test_each_transport_fault_matches_a_shipped_diagnostic_code():
 
 
 def test_coverage_report_does_not_promote_an_unexecuted_transport_fault():
-    report = coverage_report(simulated=sorted(declared_faults()))
+    # A SIMULATED claim needs an execution record (#520): the injector that ran,
+    # its outcome, and a reference to its output.
+    evidence = {
+        name: {"outcome": "injected", "evidence_ref": f"run/{name}.jsonl", "injector": "can-bus"}
+        for name in declared_faults()
+    }
+    report = coverage_report(simulated=sorted(declared_faults()), simulation_evidence=evidence)
     for fault in ("ack_timeout", "stop_timeout", "stop_rejected"):
         row = next(item for item in report["faults"] if item["fault"] == fault)
         assert row["status"] == "SIMULATED"
