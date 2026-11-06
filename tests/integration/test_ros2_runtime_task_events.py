@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from workbench_contracts import ActionOutcome, DeviceState
 from workbench_world_model.event_store import SQLiteEventStore
 
 from integrations.ros2_runtime import TaskEventRejected, bind_task_event, ingest_capture, ingest_task_event
+from integrations.ros2_runtime.task_events import MAX_CAPTURE_BYTES, MAX_CAPTURE_LINES
 
 
 def record(**overrides: object) -> dict[str, object]:
@@ -178,4 +180,85 @@ def test_an_unreadable_capture_is_refused_not_raised_raw(tmp_path: Path) -> None
         ingest_capture(store, corrupt)
     with pytest.raises(TaskEventRejected, match="could not be read"):
         ingest_capture(store, tmp_path / "absent.jsonl")
+    store.close()
+
+
+def capture_lines() -> str:
+    return json.dumps(record()) + "\n"
+
+
+def test_a_capture_over_the_byte_limit_is_refused_before_parsing(tmp_path: Path) -> None:
+    # One line, under the line limit, so only the byte budget can refuse it: a
+    # reader that parses first would bind and store both lines.
+    capture = tmp_path / "oversize.jsonl"
+    padded = json.dumps(record(task_id="task-2", goal_id="goal-2", message="x" * MAX_CAPTURE_BYTES)) + "\n"
+    capture.write_text(capture_lines() + padded, encoding="utf-8")
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+
+    with pytest.raises(TaskEventRejected) as caught:
+        ingest_capture(store, capture)
+    assert f"{MAX_CAPTURE_BYTES}-byte limit" in str(caught.value)
+    assert str(capture) in str(caught.value)
+    assert "xxxx" not in str(caught.value)
+    assert store.run_ids() == []
+    store.close()
+
+
+def test_a_capture_over_the_line_limit_is_refused_before_parsing(tmp_path: Path) -> None:
+    capture = tmp_path / "too_many_lines.jsonl"
+    capture.write_text(capture_lines() * (MAX_CAPTURE_LINES + 1), encoding="utf-8")
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+
+    with pytest.raises(TaskEventRejected, match=f"{MAX_CAPTURE_LINES}-line limit"):
+        ingest_capture(store, capture)
+    assert store.run_ids() == []
+    store.close()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # The same member twice: the value the store would keep depends on which
+        # duplicate won, so the record is ambiguous rather than last-one-wins.
+        '{"stamp": {"sec": 1, "nanosec": 0}, "stamp": {"sec": 2, "nanosec": 0}}',
+        '{"stamp": {"sec": 1, "sec": 2, "nanosec": 0}}',
+        # A non-finite constant. Python's decoder accepts these and would then
+        # write a value no strict JSON consumer can read back.
+        '{"stamp": {"sec": NaN, "nanosec": 0}}',
+        '{"stamp": {"sec": Infinity, "nanosec": 0}}',
+        '{"stamp": {"sec": -Infinity, "nanosec": 0}}',
+    ],
+)
+def test_duplicate_keys_and_non_finite_constants_are_refused(line: str, tmp_path: Path) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+    capture = tmp_path / "ambiguous.jsonl"
+    capture.write_text(capture_lines() + line + "\n", encoding="utf-8")
+
+    with pytest.raises(TaskEventRejected, match=r"^line 2: (duplicate JSON key|the non-standard JSON constant)"):
+        ingest_capture(store, capture)
+    # The first line is valid, so a lenient reader would have stored it: a
+    # refused capture must leave the store exactly as it was.
+    assert store.run_ids() == []
+    store.close()
+
+
+def test_a_rejected_capture_leaves_the_store_unchanged(tmp_path: Path) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite")
+    good = tmp_path / "good.jsonl"
+    good.write_text(capture_lines(), encoding="utf-8")
+    ingest_capture(store, good)
+    before = [(run_id, [event.event_id for event in store.list_run(run_id)]) for run_id in store.run_ids()]
+
+    # The first line is a run the store does not hold yet, so a reader that
+    # appends as it parses would leave that run behind when line 2 is refused.
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text(
+        json.dumps(record(task_id="task-2", goal_id="goal-2")) + "\n" + '{"task_id": "task-3"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(TaskEventRejected, match="line 2"):
+        ingest_capture(store, bad)
+
+    after = [(run_id, [event.event_id for event in store.list_run(run_id)]) for run_id in store.run_ids()]
+    assert after == before
     store.close()

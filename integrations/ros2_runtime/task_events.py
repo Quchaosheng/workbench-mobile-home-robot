@@ -12,6 +12,10 @@ ROS 2 is not a Workbench dependency: a node or a ``ros2 topic echo`` run writes
 the lines, and this module only reads them. The three correlation fields must be
 present, which means the capture has to come from a runtime build that carries
 ``request_id``, ``workflow_id`` and ``goal_id`` on ``TaskEvent``.
+
+The capture is untrusted input, so it is bounded and decoded strictly before the
+first event is appended: an over-limit, ambiguous or non-finite capture is
+refused as a whole and never stored as a prefix of itself.
 """
 
 from __future__ import annotations
@@ -40,6 +44,11 @@ _OUTCOMES: dict[int, tuple[ActionOutcome, DeviceState]] = {
 }
 
 _CORRELATION_KEYS = ("request_id", "workflow_id", "goal_id")
+
+# The committed capture budget. A runtime capture is a handful of terminal
+# events, so these match the backend's event-log ceiling rather than a run's.
+MAX_CAPTURE_BYTES = 10 * 1024 * 1024
+MAX_CAPTURE_LINES = 10_000
 
 # The only ``action_status``/``outcome`` pairs task_executor publishes. Written
 # from its three publish sites rather than as a cross product, because a pair
@@ -152,28 +161,83 @@ def ingest_task_event(store: SQLiteEventStore, record: object, *, line_number: i
 
 
 def ingest_capture(store: SQLiteEventStore, path: str | Path) -> tuple[TaskEventIngestResult, ...]:
-    """Ingest a JSONL TaskEvent capture. Blank lines are skipped."""
+    """Ingest a JSONL TaskEvent capture. Blank lines are skipped.
+
+    The whole capture is bounded, decoded and bound before anything is appended,
+    so a capture this module refuses writes no event at all, not a valid prefix
+    of itself. A store refusal part-way through a batch is typed too, and the
+    replayed lines still carry the runtime's own event identity.
+    """
 
     capture = Path(path)
     try:
         # A capture is untrusted input: a non-UTF-8 or unreadable file is a
         # refused capture, not a raw UnicodeDecodeError escaping to the caller.
-        text = capture.read_text(encoding="utf-8")
-    except UnicodeDecodeError as error:
-        raise TaskEventRejected(f"{capture}: capture is not valid UTF-8: {error}") from error
+        # The read itself is bounded, so an oversized file is never loaded whole.
+        with capture.open("rb") as handle:
+            raw = handle.read(MAX_CAPTURE_BYTES + 1)
     except OSError as error:
         raise TaskEventRejected(f"{capture}: capture could not be read: {error}") from error
+    if len(raw) > MAX_CAPTURE_BYTES:
+        # Refused on size alone, and the diagnostic names the limit instead of
+        # echoing any of the body.
+        raise TaskEventRejected(f"{capture}: capture exceeds the {MAX_CAPTURE_BYTES}-byte limit")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise TaskEventRejected(f"{capture}: capture is not valid UTF-8: {error}") from error
 
-    results = []
-    for line_number, line in enumerate(text.splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise TaskEventRejected(f"line {line_number}: invalid JSON: {error}") from error
-        results.append(ingest_task_event(store, record, line_number=line_number))
-    return tuple(results)
+    # Line numbers stay the file's own, so a refusal names the line an operator
+    # can open; a blank line is skipped but still counted. Newlines are counted
+    # before the split, so a body of blank lines cannot be materialized as
+    # millions of empty strings before the budget refuses it.
+    if text.count("\n") + (0 if text.endswith("\n") else 1) > MAX_CAPTURE_LINES:
+        raise TaskEventRejected(f"{capture}: capture exceeds the {MAX_CAPTURE_LINES}-line limit")
+    lines = [(number, line) for number, line in enumerate(text.splitlines(), 1) if line.strip()]
+
+    records = [(number, _decode_line(line, number)) for number, line in lines]
+    for number, record in records:
+        # Bound before the first append, so a capture this module refuses writes
+        # no event at all instead of a valid prefix of itself.
+        bind_task_event(record, line_number=number)
+    return tuple(ingest_task_event(store, record, line_number=number) for number, record in records)
+
+
+class _DuplicateJsonKey(ValueError):
+    """Raised before JSON decoding can silently discard an object member."""
+
+
+class _NonFiniteJson(ValueError):
+    """Raised when a document uses a JSON constant that RFC 8259 forbids."""
+
+
+def _object_without_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise _DuplicateJsonKey(f"duplicate JSON key: {key!r}")
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(name: str) -> None:
+    raise _NonFiniteJson(f"the non-standard JSON constant {name} is not allowed")
+
+
+def _decode_line(line: str, line_number: int) -> object:
+    """Decode one capture line with duplicate-key and non-finite rejection.
+
+    A capture is a log of what the runtime published, so an object member
+    repeated inside one line is an edit rather than a message, and a NaN the
+    encoder would re-emit is not a value the event chain can store.
+    """
+
+    try:
+        return json.loads(line, object_pairs_hook=_object_without_duplicates, parse_constant=_reject_json_constant)
+    except (_DuplicateJsonKey, _NonFiniteJson) as error:
+        raise TaskEventRejected(f"line {line_number}: {error}") from error
+    except json.JSONDecodeError as error:
+        raise TaskEventRejected(f"line {line_number}: invalid JSON: {error}") from error
 
 
 def _join(prefix: str, *parts: str) -> str:
