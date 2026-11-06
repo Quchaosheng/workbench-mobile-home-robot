@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import os
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
 import yaml
 
 from bsp.validation.check_readiness import BLOCKED_STATUS, READY_STATUS, check, validate_readiness
@@ -208,3 +211,247 @@ def test_image_outputs_cannot_exist_before_inputs_are_locked() -> None:
     }
 
     assert "built output hashes require build_ready inputs" in validate_image_inputs(manifest)
+
+
+class TestVerifiedImageInputDigests:
+    """Issue #443: a digest is locked only once the referenced artifact is hashed."""
+
+    def _manifest(self, root: Path) -> dict:
+        files = {
+            "kernel.config": b"CONFIG_ROBOT_BSP=y\n",
+            "rootfs/services.yaml": b"services: {}\n",
+            "rootfs/package.lock": b"pkg==1.0 --hash=sha256:abc\n",
+            "recovery/recovery.img": b"recovery-image-bytes\n",
+            "src/workbench.dts": b"/dts-v1/;\n",
+            "out/boot.img": b"boot-image-bytes\n",
+            "out/rootfs.img": b"rootfs-image-bytes\n",
+            "out/recovery.img": b"recovery-image-bytes\n",
+            "out/workbench.dtb": b"dtb-bytes\n",
+            "build/build.log": b"build completed\n",
+        }
+        for relative, payload in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+        container_digest = "sha256:" + _digest(files["recovery/recovery.img"])
+        return {
+            "version": "0.1",
+            "target": "JETSON_TEST",
+            "build_ready": True,
+            "status": "inputs_locked",
+            "inputs": {
+                "jetpack": {
+                    "version": "6.2",
+                    "source": "https://vendor.invalid/jetpack.tbz2",
+                    "sha256": _digest(files["kernel.config"]),
+                    "retrieval": {
+                        "url": "https://vendor.invalid/jetpack.tbz2",
+                        "size_bytes": 1024,
+                        "sha256": _digest(files["kernel.config"]),
+                    },
+                },
+                "l4t": {
+                    "version": "35.5",
+                    "source": "https://vendor.invalid/l4t.tbz2",
+                    "sha256": _digest(files["rootfs/services.yaml"]),
+                    "retrieval": {
+                        "url": "https://vendor.invalid/l4t.tbz2",
+                        "size_bytes": 2048,
+                        "sha256": _digest(files["rootfs/services.yaml"]),
+                    },
+                },
+                "kernel": {
+                    "version": "5.15",
+                    "source": "https://vendor.invalid/linux.tbz2",
+                    "sha256": _digest(files["rootfs/package.lock"]),
+                    "retrieval": {
+                        "url": "https://vendor.invalid/linux.tbz2",
+                        "size_bytes": 4096,
+                        "sha256": _digest(files["rootfs/package.lock"]),
+                    },
+                    "config": "kernel.config",
+                    "config_sha256": _digest(files["kernel.config"]),
+                },
+                "device_tree": {
+                    "source": "src/workbench.dts",
+                    "source_sha256": _digest(files["src/workbench.dts"]),
+                    "dtb_sha256": _digest(files["out/workbench.dtb"]),
+                },
+                "rootfs": {
+                    "base_source": "https://vendor.invalid/rootfs.tbz2",
+                    "base_sha256": _digest(files["rootfs/services.yaml"]),
+                    "retrieval": {
+                        "url": "https://vendor.invalid/rootfs.tbz2",
+                        "size_bytes": 8192,
+                        "sha256": _digest(files["rootfs/services.yaml"]),
+                    },
+                    "package_lock": "rootfs/package.lock",
+                    "package_lock_sha256": _digest(files["rootfs/package.lock"]),
+                    "services": "rootfs/services.yaml",
+                    "services_sha256": _digest(files["rootfs/services.yaml"]),
+                },
+                "recovery": {
+                    "image_source": "recovery/recovery.img",
+                    "image_sha256": _digest(files["recovery/recovery.img"]),
+                    "rollback_procedure": "build/build.log",
+                },
+                "toolchain": {
+                    "container_digest": container_digest,
+                    "retrieval": {
+                        "url": f"registry.invalid/bsp@{container_digest}",
+                        "size_bytes": 512,
+                        "sha256": container_digest.removeprefix("sha256:"),
+                    },
+                    "compiler": "gcc 13.2",
+                },
+            },
+            "outputs": {
+                "boot_image_sha256": _digest(files["out/boot.img"]),
+                "rootfs_image_sha256": _digest(files["out/rootfs.img"]),
+                "recovery_image_sha256": _digest(files["out/recovery.img"]),
+            },
+            "build_record": {
+                "command": "make bsp-image",
+                "log": "build/build.log",
+                "artifacts": {
+                    "boot_image_sha256": "out/boot.img",
+                    "rootfs_image_sha256": "out/rootfs.img",
+                    "recovery_image_sha256": "out/recovery.img",
+                    "dtb_sha256": "out/workbench.dtb",
+                },
+            },
+            "rules": {
+                "network_sources_require_https": True,
+                "all_build_inputs_require_sha256": True,
+                "unresolved_inputs_block_build": True,
+                "generated_output_hashes_do_not_imply_physical_boot": True,
+            },
+        }
+
+    def test_fully_verified_inputs_are_the_only_locked_manifest(self, tmp_path: Path) -> None:
+        root = tmp_path / "repo"
+
+        assert validate_image_inputs(self._manifest(root), root) == []
+
+    def test_all_zero_digests_never_lock_the_manifest(self, tmp_path: Path) -> None:
+        root = tmp_path / "repo"
+        manifest = self._manifest(root)
+        zeros = "0" * 64
+        manifest["inputs"]["kernel"]["config_sha256"] = zeros
+        manifest["inputs"]["rootfs"]["services_sha256"] = zeros
+
+        errors = validate_image_inputs(manifest, root)
+
+        assert f"kernel.config_sha256 does not match kernel.config: expected {zeros}" in " ".join(errors)
+        assert "rootfs.services_sha256 does not match rootfs/services.yaml" in " ".join(errors)
+        assert "invalid image inputs must block build_ready" in errors
+        assert "image build status must be inputs_unresolved" in errors
+
+    def test_wrong_digest_names_the_field_and_the_real_digest(self, tmp_path: Path) -> None:
+        root = tmp_path / "repo"
+        manifest = self._manifest(root)
+        manifest["inputs"]["kernel"]["config_sha256"] = "b" * 64
+
+        errors = validate_image_inputs(manifest, root)
+
+        assert (
+            f"kernel.config_sha256 does not match kernel.config: expected {'b' * 64}, "
+            f"actual {_digest(b'CONFIG_ROBOT_BSP=y\n')}" in errors
+        )
+
+    def test_missing_and_wrong_type_inputs_fail_closed(self, tmp_path: Path) -> None:
+        root = tmp_path / "repo"
+        manifest = self._manifest(root)
+        manifest["inputs"]["rootfs"]["services"] = "rootfs/absent.yaml"
+        manifest["inputs"]["recovery"]["image_sha256"] = 1234
+
+        errors = validate_image_inputs(manifest, root)
+
+        assert "rootfs services must reference a repository file" in errors
+        assert "recovery.image_sha256 must be a string" in errors
+        assert "image build status must be inputs_unresolved" in errors
+
+    def test_external_input_needs_size_and_https_retrieval_identity(self, tmp_path: Path) -> None:
+        root = tmp_path / "repo"
+        manifest = self._manifest(root)
+        manifest["inputs"]["jetpack"]["retrieval"] = {"url": "https://vendor.invalid/jetpack.tbz2"}
+        manifest["inputs"]["l4t"]["retrieval"]["url"] = "http://vendor.invalid/l4t.tbz2"
+        manifest["inputs"]["kernel"]["retrieval"]["size_bytes"] = 0
+
+        errors = validate_image_inputs(manifest, root)
+
+        assert "jetpack.sha256 requires a retrieval record with exactly url, size_bytes and sha256" in errors
+        assert "l4t.sha256 retrieval url must use HTTPS" in errors
+        assert "kernel.sha256 retrieval size_bytes must be a positive integer" in errors
+
+    def test_stale_output_artifact_is_detected(self, tmp_path: Path) -> None:
+        root = tmp_path / "repo"
+        manifest = self._manifest(root)
+        (root / "out/boot.img").write_bytes(b"rebuilt-elsewhere\n")
+        expected = manifest["outputs"]["boot_image_sha256"]
+
+        errors = validate_image_inputs(manifest, root)
+
+        assert (
+            f"boot_image_sha256 does not match build artifact out/boot.img: expected {expected}, "
+            f"actual {_digest(b'rebuilt-elsewhere\n')}" in errors
+        )
+        assert "invalid image inputs must block build_ready" in errors
+
+    def test_output_digests_without_a_build_record_are_refused(self, tmp_path: Path) -> None:
+        root = tmp_path / "repo"
+        manifest = self._manifest(root)
+        del manifest["build_record"]
+
+        errors = validate_image_inputs(manifest, root)
+
+        assert "boot_image_sha256 requires a recorded build output" in errors
+        assert "dtb_sha256 requires a recorded build output" in errors
+
+    def test_unreadable_local_input_cannot_be_marked_locked(self, tmp_path: Path) -> None:
+        if os.geteuid() == 0:
+            pytest.skip("root ignores mode 000, so an unreadable input is not reproducible")
+        root = tmp_path / "repo"
+        manifest = self._manifest(root)
+        unreadable = root / "rootfs/services.yaml"
+        unreadable.chmod(0)
+        try:
+            errors = validate_image_inputs(manifest, root)
+        finally:
+            unreadable.chmod(0o600)
+
+        assert "rootfs.services_sha256 cannot be verified: rootfs/services.yaml is unreadable" in errors
+        assert "invalid image inputs must block build_ready" in errors
+
+    def test_truncated_local_input_breaks_its_declared_digest(self, tmp_path: Path) -> None:
+        root = tmp_path / "repo"
+        manifest = self._manifest(root)
+        (root / "recovery/recovery.img").write_bytes(b"recovery")
+
+        errors = validate_image_inputs(manifest, root)
+
+        assert (
+            "recovery.image_sha256 does not match recovery/recovery.img: "
+            f"expected {_digest(b'recovery-image-bytes\n')}, actual {_digest(b'recovery')}" in errors
+        )
+
+    def test_unverifiable_source_keeps_the_manifest_unlocked(self, tmp_path: Path) -> None:
+        root = tmp_path / "repo"
+        manifest = self._manifest(root)
+        manifest["inputs"]["device_tree"]["source"] = "TBD_CARRIER_DTS_PATH"
+
+        errors = validate_image_inputs(manifest, root)
+
+        assert "unresolved image inputs must block build_ready" in errors
+        assert "image build status must be inputs_unresolved" in errors
+
+    def test_committed_manifest_stays_unresolved_and_non_buildable(self) -> None:
+        manifest = load_image_inputs()
+
+        assert manifest["build_ready"] is False
+        assert manifest["status"] == "inputs_unresolved"
+        assert validate_image_inputs(manifest) == []
+
+
+def _digest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()

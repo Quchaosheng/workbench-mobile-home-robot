@@ -7,14 +7,17 @@ inputs:
     version: TBD_COMPATIBILITY_SELECTION
     source: TBD_VENDOR_HTTPS_URL
     sha256: TBD_SHA256
+    retrieval: null
   l4t:
     version: TBD_COMPATIBILITY_SELECTION
     source: TBD_VENDOR_HTTPS_URL
     sha256: TBD_SHA256
+    retrieval: null
   kernel:
     version: TBD_L4T_KERNEL_VERSION
     source: TBD_VENDOR_HTTPS_URL
     sha256: TBD_SHA256
+    retrieval: null
     config: bsp/linux/robot_bsp.config
     config_sha256: TBD_SHA256
   device_tree:
@@ -24,6 +27,7 @@ inputs:
   rootfs:
     base_source: TBD_VENDOR_HTTPS_URL
     base_sha256: TBD_SHA256
+    retrieval: null
     package_lock: TBD_ROOTFS_PACKAGE_LOCK_PATH
     package_lock_sha256: TBD_SHA256
     services: bsp/rootfs/services.yaml
@@ -34,6 +38,7 @@ inputs:
     rollback_procedure: TBD_ROLLBACK_PROCEDURE_PATH
   toolchain:
     container_digest: TBD_OCI_DIGEST
+    retrieval: null
     compiler: TBD_COMPILER_VERSION
 outputs:
   boot_image_sha256: NOT_BUILT
