@@ -19,7 +19,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -44,6 +43,7 @@ from workbench.kernel.scenario_identity import (
     event_stream_hash,
     hash_events_file,
     identity_from_entry,
+    run_identity,
 )
 from workbench.kernel.scenario_migration import (
     ScenarioMigrationError,
@@ -73,6 +73,30 @@ UNSPECIFIED = "unspecified"
 MAX_MANIFEST_BYTES = 1 * 1024 * 1024
 MAX_COMMAND_TOKENS = 64
 MAX_RUNNER_LOG_BYTES = 4 * 1024 * 1024
+# A caller may label an intentional rerun, but the label is bounded because it
+# is recorded in metadata and read by a reviewer. Omitting it is the default and
+# is what makes the run ID a pure function of the run's inputs (Issue #466).
+MAX_RUN_NONCE_LENGTH = 64
+NO_NONCE = "none"
+# The inputs the published run directory name is derived from, in the order they
+# are hashed. The list is deliberately narrower than the bundle identity in
+# ``scenario_identity``: this names a directory, it does not attribute evidence.
+# ``scenario_id`` is the manifest ID rather than the registry identity so two
+# fixtures that share one registered definition never share a directory, and
+# ``nonce`` is recorded rather than defaulted to a random value: a rerun is
+# explicit or it collides (Issue #466).
+RUN_ID_INPUTS: tuple[str, ...] = (
+    "scenario_id",
+    "registry_identity",
+    "seed",
+    "version",
+    "commit",
+    "nonce",
+)
+# Hex characters kept from the digest. The suffix has no '-', which is what makes
+# ``<scenario_id>-<suffix>`` unambiguous: the last '-' always separates the two,
+# so no scenario_id can be read as another scenario's prefix plus digest.
+RUN_ID_HEX_LENGTH = 12
 RUNNER_STATUSES = {
     "SCRIPTED_FIXTURE",
     "EXECUTED",
@@ -135,6 +159,72 @@ def _git_commit() -> str:
 
 def _safe_id(value: str) -> bool:
     return bool(value) and value.isascii() and all(character.isalnum() or character in "._-" for character in value)
+
+
+def validate_run_nonce(nonce: str | None) -> str:
+    """Check an optional caller-supplied rerun label, or return the recorded default.
+
+    The nonce exists so an intentional rerun into a fresh output root is still
+    possible under a deterministic run ID. It is refused rather than sanitized:
+    a silently rewritten label would not be the label the caller asked for, and
+    the value is recorded in ``metadata.json`` where a reviewer reads it.
+
+    ``NO_NONCE`` is the reserved spelling of "no caller label", so it is
+    accepted and means the default. Recording the absence as a value rather than
+    a null is what lets a reviewer recompute a published name from the metadata
+    alone; the reserved value is a sentinel, not a random ID, so accepting it
+    never produces two bundles for one set of inputs.
+    """
+
+    if nonce is None or nonce == NO_NONCE:
+        return NO_NONCE
+    if not isinstance(nonce, str) or not nonce.strip():
+        raise SimulationInputError(f"run nonce must be a non-blank string; got {nonce!r}")
+    if nonce != nonce.strip():
+        raise SimulationInputError(f"run nonce must not be padded with whitespace: {nonce!r}")
+    if len(nonce) > MAX_RUN_NONCE_LENGTH:
+        raise SimulationInputError(f"run nonce exceeds {MAX_RUN_NONCE_LENGTH} characters: {nonce!r}")
+    if not _safe_id(nonce):
+        raise SimulationInputError(f"run nonce must be ASCII and filesystem-safe: {nonce!r}")
+    return nonce
+
+
+def derive_run_id(
+    *,
+    scenario_id: str,
+    registry_identity: str,
+    seed: object,
+    version: str,
+    commit: str,
+    nonce: str | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Derive the published run directory name from the run's inputs (Issue #466).
+
+    The ID is a pure function of the semantic inputs, so two processes given the
+    same scenario, seed, version and commit name the same directory. It reuses
+    ``run_identity`` from #302 rather than inventing a second hashing scheme:
+    one canonical, ordered input list, one digest, and the material kept so a
+    difference names the field that moved.
+
+    Concatenation is safe because ``scenario_id`` is validated filesystem-safe
+    and the digest suffix is all hex, so the final ``-`` is the only place the
+    two parts meet: a different scenario can never produce the same name by
+    simple string concatenation. Changing the scenario, the registered
+    definition, the seed, the version, the commit or the nonce changes the
+    suffix, which is why the collision refusal below is a real refusal and not
+    a naming coincidence.
+    """
+
+    material = {
+        "scenario_id": scenario_id,
+        "registry_identity": registry_identity,
+        "seed": str(seed),
+        "version": version,
+        "commit": commit or UNSPECIFIED,
+        "nonce": validate_run_nonce(nonce),
+    }
+    identity = run_identity(material, inputs=RUN_ID_INPUTS)
+    return f"{scenario_id}-{identity.identity_hash[:RUN_ID_HEX_LENGTH]}", material
 
 
 def _command_is_available(command: Sequence[str] | None) -> bool:
@@ -405,9 +495,26 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_bytes(_json_bytes(payload))
 
 
-def _publish_artifact(staging: Path, final: Path) -> None:
+def _refuse_existing_artifact(final: Path) -> None:
+    """Refuse to publish over a bundle that already names this identity.
+
+    Issue #466 makes the directory name a function of the run's inputs, so the
+    refusal is now reachable by simply running the same scenario twice. That is
+    deliberate: the alternative was to rename or reroll the ID, which is how a
+    deterministic name silently replaced the evidence it collided with. The
+    message names both legal ways forward so an operator does not read it as a
+    crash.
+    """
+
     if final.exists():
-        raise SimulationInputError(f"refusing to overwrite existing run artifact: {final}")
+        raise SimulationInputError(
+            f"refusing to overwrite existing run artifact: {final}; the run ID is derived from the run's inputs, "
+            "so a rerun needs a different output directory or an explicit run nonce"
+        )
+
+
+def _publish_artifact(staging: Path, final: Path) -> None:
+    _refuse_existing_artifact(final)
     try:
         os.replace(staging, final)
     except OSError as exc:
@@ -525,21 +632,47 @@ def run_scenario(
     version: str = "sim-cli",
     command: Sequence[str] | None = None,
     seed_base: int = 1000,
+    nonce: str | None = None,
 ) -> RunResult:
-    """Run one scenario and atomically publish a bounded evidence directory."""
+    """Run one scenario and atomically publish a bounded evidence directory.
+
+    The published directory name is derived from the run's inputs (Issue #466)
+    rather than from a UUID, so the same scenario, seed, version and commit name
+    the same bundle in every process. ``nonce`` is the one way to publish an
+    intentional second bundle of the same inputs, and it is recorded rather than
+    defaulted so a rerun is always visible as one.
+    """
 
     if runner not in {"scripted", "gazebo", "external"}:
         raise SimulationInputError(f"unsupported runner: {runner}")
     if not _safe_id(version):
         raise SimulationInputError(f"version must be ASCII and filesystem-safe: {version!r}")
+    validate_run_nonce(nonce)
+    # Resolve the registered definition before anything is written. A run whose
+    # identity cannot be derived is refused here rather than falling back to a
+    # random name, because an unrecorded random ID is the defect #466 fixes.
+    entry = _identity_entry(scenario)
+    commit = _git_commit()
+    effective_seed = seed_base + scenario.manifest["seed"]
+    run_id, run_material = derive_run_id(
+        scenario_id=scenario.scenario_id,
+        registry_identity=str(entry["identity"]),
+        seed=effective_seed,
+        version=version,
+        commit=commit,
+        nonce=nonce,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_id = f"{scenario.scenario_id}-{uuid.uuid4().hex[:12]}"
-    staging = Path(tempfile.mkdtemp(prefix=f".{run_id}.", suffix=".partial", dir=output_dir))
     final = output_dir / run_id
+    # Checked once before the run starts and once at publication: the earlier
+    # check fails before a costly runner is launched, the later one is the
+    # atomic gate that a concurrent process cannot slip past. Both happen before
+    # a staging directory exists, so a refusal leaves nothing behind.
+    _refuse_existing_artifact(final)
+    staging = Path(tempfile.mkdtemp(prefix=f".{run_id}.", suffix=".partial", dir=output_dir))
     stdout_path = staging / "stdout.log"
     stderr_path = staging / "stderr.log"
     events_path = staging / "events.jsonl"
-    effective_seed = seed_base + scenario.manifest["seed"]
     metadata: dict[str, Any] = {
         "schema_version": "sim-run-v1",
         "run_id": run_id,
@@ -552,7 +685,14 @@ def run_scenario(
         "fault_type": scenario.manifest["fault_type"],
         "timeout_s": scenario.manifest["timeout_s"],
         "scene_hash": scenario.scene_hash,
-        "commit": _git_commit(),
+        "commit": commit,
+        "run_nonce": run_material["nonce"],
+        "run_id_derivation": {
+            "inputs": list(RUN_ID_INPUTS),
+            "material": run_material,
+            "suffix_length": RUN_ID_HEX_LENGTH,
+            "note": "the published run directory name is <scenario_id>-<digest prefix>",
+        },
         "release_eligible": False,
         "executed": False,
         "status": "NOT_EXECUTED",
@@ -745,11 +885,13 @@ def run_scenarios(
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     version: str = "sim-cli",
     command: Sequence[str] | None = None,
+    nonce: str | None = None,
 ) -> dict[str, Any]:
     if not scenarios:
         raise SimulationInputError("at least one scenario is required")
+    validate_run_nonce(nonce)
     results = [
-        run_scenario(scenario, runner=runner, output_dir=output_dir, version=version, command=command)
+        run_scenario(scenario, runner=runner, output_dir=output_dir, version=version, command=command, nonce=nonce)
         for scenario in scenarios
     ]
     counts = {status: sum(result.status == status for result in results) for status in sorted(RUNNER_STATUSES)}
@@ -758,6 +900,7 @@ def run_scenarios(
         "schema_version": "sim-summary-v1",
         "runner": runner,
         "version": version,
+        "run_nonce": validate_run_nonce(nonce),
         "scenario_count": len(results),
         "executed_count": executed_count,
         "scripted_count": counts["SCRIPTED_FIXTURE"],
@@ -926,6 +1069,14 @@ def _parser() -> argparse.ArgumentParser:
         "--command", nargs="+", help="argv tokens; placeholders: {manifest} {output} {seed} {version} {run_dir}"
     )
     run_parser.add_argument("--version", default="sim-cli")
+    run_parser.add_argument(
+        "--nonce",
+        default=None,
+        help=(
+            "optional label for an intentional rerun, at most "
+            f"{MAX_RUN_NONCE_LENGTH} filesystem-safe characters; it is recorded in metadata"
+        ),
+    )
     run_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     run_parser.add_argument("--json", action="store_true", dest="as_json")
     return parser
@@ -965,6 +1116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=args.output_dir,
             version=args.version,
             command=args.command,
+            nonce=args.nonce,
         )
         _print_json_or_text(summary, args.as_json)
         if summary["failed_count"]:

@@ -89,6 +89,87 @@ would hide the real cause.
 Re-running the scenario under v2 records the input and produces the new hash.
 No fixture, seed, scene hash or registry manifest changes.
 
+## The published run ID is derived from those inputs (Issue #466)
+
+`sim_cli.run` used to name its output directory with `uuid.uuid4()`. The bundle
+identity and provenance were deterministic, but the directory name a reviewer
+quotes was not, so the same inputs could not be rerun into the same place and no
+evidence reference could name a `run_id` stably.
+
+The directory name is now `<scenario_id>-<12 hex characters>` of a digest over
+one ordered input list, `RUN_ID_INPUTS` in `tools/scripts/sim_cli.py`:
+
+| Field | Why it is an input |
+|---|---|
+| `scenario_id` | The manifest ID. Two fixtures can share one registered definition, and they are different runs. |
+| `registry_identity` | `id@version`. A definition bump is a different run even when the manifest ID is unchanged. |
+| `seed` | The **effective** seed, `seed_base + manifest seed`. |
+| `version` | The `--version` label the caller chose. |
+| `commit` | `git rev-parse HEAD`, or `unspecified` outside a checkout. |
+| `nonce` | `none` by default, or the caller's bounded rerun label. |
+
+The digest is `run_identity(..., inputs=RUN_ID_INPUTS)` from
+`libs/kernel/workbench/kernel/scenario_identity.py`. This is deliberate reuse:
+the repository has one canonical-hash-and-material helper, and #466 adds an input
+list to it rather than a second hashing scheme beside it.
+
+Three properties follow:
+
+- **Cross-process determinism.** The ID is a pure function of the inputs, so two
+  processes with the same scenario, seed, version and commit publish the same
+  name.
+- **No concatenation ambiguity.** `scenario_id` is validated filesystem-safe and
+  the suffix is all hex, so the final `-` is the only boundary between them. A
+  scenario whose ID happens to equal another run's full name still gets a
+  distinct directory, because its suffix is recomputed over the new ID.
+- **Collision is a refusal, not a rename.** A second run into an output root that
+  already holds this ID raises `SimulationInputError` ("refusing to overwrite
+  existing run artifact") before any staging directory is created, and again at
+  publication. The first bundle is left byte-identical. The message names both
+  legal ways forward: a different output root, or an explicit `--nonce`.
+
+### The nonce is explicit, bounded and recorded
+
+`run_scenario(..., nonce=...)` and `sim_cli run --nonce ...` accept at most 64
+ASCII, filesystem-safe characters. A nonce is never generated for the caller:
+omitting it records `none`, so a rerun is always visible as one in
+`metadata.json`. The refusal rules are:
+
+| Value | Outcome |
+|---|---|
+| omitted, or `none` | Accepted; recorded as `none`, the reserved default. |
+| blank or whitespace-only | Refused (`non-blank`). |
+| padded with whitespace | Refused (`padded`); a silently stripped label is not the label asked for. |
+| longer than 64 characters | Refused (`exceeds`). |
+| non-ASCII or containing anything but `A-Za-z0-9._-` | Refused (`filesystem-safe`). |
+
+### What a bundle records about its own name
+
+`metadata.json` carries `run_nonce` and `run_id_derivation`, which holds the
+input list, the exact material and the suffix length. A reviewer can recompute
+the published directory name from a bundle without re-running it, so a name can
+be checked rather than trusted. The derivation is not a second identity: it
+names a directory and is not consulted by `check_run_identity.py` or
+`check_run_provenance.py`.
+
+### Operator consequence: a rerun needs a fresh root or a nonce
+
+Because the name is stable, re-running the same command a second time into the
+same output root now fails with exit code 2 instead of quietly creating a second
+directory. That is the fail-closed behaviour the issue asks for, and it is what
+`make run-identity-check` / `make run-provenance-check` now do on a second
+invocation in the same checkout:
+
+```text
+NOT_EXECUTED: refusing to overwrite existing run artifact: runs/identity-check/normal-001-…;
+the run ID is derived from the run's inputs, so a rerun needs a different output
+directory or an explicit run nonce
+```
+
+The two legal reruns are `--output-dir` pointing somewhere fresh, or
+`--nonce <label>` to publish a second, clearly labelled bundle beside the first.
+CI is unaffected: each job starts from a clean workspace.
+
 ## What this gate does not claim
 
 The gate is read-only. It starts no simulator, writes no run or event, and its

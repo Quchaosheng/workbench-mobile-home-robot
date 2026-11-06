@@ -1,0 +1,90 @@
+{
+  "issue": 466,
+  "human_owner": "Quchaosheng",
+  "objective": "Derive the published simulation run directory name and metadata.run_id from the run's registered scenario identity, effective seed, version and commit instead of uuid4(), so the same inputs name the same bundle across processes, a changed input changes the name, and a second run over an existing bundle is refused rather than renamed or rerolled.",
+  "decision_supported": "Whether a stored simulation run directory can be named, quoted and rerun from its inputs, and whether two runs that differ in scenario, seed, version or commit are distinguishable by name rather than only by reading the bundle.",
+  "allowed_paths": [
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_sim_cli.py",
+    "docs/architecture/run-provenance-v1.md",
+    "docs/task_packets/issue-466-run-identity-from-inputs.json"
+  ],
+  "read_only_paths": [
+    "libs/kernel/workbench/kernel/scenario_identity.py",
+    "libs/kernel/workbench/kernel/run_provenance.py",
+    "libs/kernel/workbench/kernel/scenario_registry.py",
+    "libs/kernel/workbench/kernel/scenario_contract.py",
+    "libs/contracts/**",
+    "interfaces/**",
+    "services/world_model/**",
+    "sim/registry/**",
+    "sim/scenarios/**",
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_run_identity.py",
+    "tests/unit/test_run_provenance.py",
+    "tests/integration/test_omnisim_pilot.py"
+  ],
+  "forbidden": [
+    "robot/control/**",
+    "firmware/**",
+    "hardware/**",
+    "kernel/**",
+    "services/backend/**",
+    "apps/dashboard/**",
+    "docs/evaluation/readiness-report-v1.json"
+  ],
+  "input_refs": [
+    "tools/scripts/sim_cli.py",
+    "libs/kernel/workbench/kernel/scenario_identity.py",
+    "libs/kernel/workbench/kernel/run_provenance.py",
+    "tests/unit/test_sim_cli.py",
+    "docs/architecture/run-provenance-v1.md"
+  ],
+  "outputs": [
+    "tools/scripts/sim_cli.py",
+    "tests/unit/test_sim_cli.py",
+    "docs/architecture/run-provenance-v1.md"
+  ],
+  "acceptance": [
+    "Two runs with the same scenario identity, seed, version and commit derive the same default run ID across processes",
+    "A different seed, version, registry identity or commit changes the derived run ID",
+    "A second run into the same output root refuses to overwrite the first bundle and leaves it byte-identical",
+    "A caller-supplied nonce is explicit, bounded to 64 filesystem-safe characters and recorded in metadata as run_nonce rather than defaulted to a random value",
+    "The published name is <scenario_id>-<hex suffix>, so the final hyphen is the only boundary and no two scenarios can produce one name by string concatenation",
+    "The derivation reuses run_identity from libs/kernel/workbench/kernel/scenario_identity.py rather than adding a second hashing scheme",
+    "Tests cover cross-process determinism and every changed-input case"
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/issue-466-run-identity-from-inputs.json",
+    "python3 -m pytest tests/unit/test_sim_cli.py -q",
+    "python3 -m ruff check tools/scripts/sim_cli.py tests/unit/test_sim_cli.py",
+    "python3 -m ruff format --check tools/scripts/sim_cli.py tests/unit/test_sim_cli.py",
+    "python3 -m pytest tests/unit/test_run_identity.py tests/unit/test_run_provenance.py -q",
+    "python3 tools/scripts/sim_cli.py run normal-001 --runner scripted --output-dir runs/sim-id-check"
+  ],
+  "evidence": [
+    "pytest transcript for tests/unit/test_sim_cli.py with the passed count, including the two-process determinism case",
+    "the changed-input vector table: seed, version, commit, registry identity and scenario id each derive a different ID",
+    "the existing-output refusal transcript and the unchanged checksums.sha256 of the first bundle",
+    "a metadata.json excerpt showing run_nonce and run_id_derivation",
+    "ruff check and ruff format output"
+  ],
+  "stop_conditions": [
+    "stop if the change would need to overwrite, rename or delete an existing stored run directory rather than refuse the collision",
+    "stop if the change would require editing libs/kernel/, which is outside the allowed paths and would need its own issue",
+    "stop if the change would require an event schema, Motion, physical-control or Gazebo behaviour change",
+    "stop if the change would need to edit tests/integration/test_omnisim_pilot.py beyond an added test, because Issue #455 is modifying that file in parallel",
+    "stop if a deterministic name could silently replace prior evidence; the collision refusal must land in the same change",
+    "stop if the only way to keep a rerun possible is an unrecorded random ID, which is the defect this issue fixes"
+  ],
+  "max_iterations": 5,
+  "data_classification": "public repository source, documentation and test fixtures; no secrets, personal data, credentials or physical measurement data",
+  "model_policy": "AI may write the run ID derivation, the nonce validation and the tests; a named human Owner accepts the ID input list, the choice of run_identity as the helper, and the fail-closed collision refusal that makes a rerun require an explicit nonce",
+  "risks_and_fallbacks": [
+    "an existing operator script may expect a random directory per invocation; fallback is the documented refusal message, which names --nonce and a different --output-dir as the two legal reruns",
+    "two concurrent runs of one scenario could race for one name; fallback is that the pre-run check fails early in the common case and the publication-time check is the atomic gate, so the loser is refused rather than merged",
+    "the run ID could drift from the bundle identity recorded by Issue #302; fallback is that the run ID is a directory name over a narrower, documented input list and is not consulted by check_run_identity.py or check_run_provenance.py, which continue to read the identity block",
+    "a nonce could be used to dress a rerun as independent evidence; fallback is that run_nonce is recorded in metadata and in the summary, so a nonced rerun is visible to a reviewer",
+    "rollback is a revert of this commit; the change adds fields to metadata and a flag to the parser, and no fixture, seed, scene hash or registry manifest changes"
+  ]
+}
