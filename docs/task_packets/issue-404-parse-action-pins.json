@@ -1,0 +1,58 @@
+{
+  "issue": 404,
+  "human_owner": "Quchaosheng",
+  "objective": "Stop a Dependabot action bump from turning the release workflow tests red, by resolving the pinned action sha from the workflow instead of repeating it in the test.",
+  "decision_supported": "Is a hardcoded action sha part of the contract these tests defend, or an implementation detail that should be read from the workflow?",
+  "allowed_paths": [
+    "tests/unit/test_release_workflow.py",
+    "docs/task_packets/issue-404-parse-action-pins.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    ".github/workflows/ci.yml",
+    ".github/workflows/release-image.yml"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    ".github/workflows/**"
+  ],
+  "input_refs": [
+    "tests/unit/test_release_workflow.py",
+    ".github/workflows/ci.yml",
+    ".github/workflows/release-image.yml",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tests/unit/test_release_workflow.py"
+  ],
+  "acceptance": [
+    "No test hardcodes an actions/upload-artifact sha.",
+    "The test still asserts the step uses that action, by reading the pin from the workflow.",
+    "A full commit sha is required: a tag reference fails with a message naming the action.",
+    "Changing the pinned sha in the workflow does not fail the test."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_release_workflow.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Two assertions in tests/unit/test_release_workflow.py repeated the v7.0.1 sha, so the Dependabot bump to v7.0.2 in #395 failed them while the workflow was correct.",
+    "Rewriting every upload-artifact pin in ci.yml to the v7.0.2 sha leaves the suite green.",
+    "Replacing the pin with the tag v7.0.1 fails both assertions with 'is not pinned to a full commit sha'."
+  ],
+  "stop_conditions": [
+    "The workflow stops pinning the action to a sha; that is a contract violation and the helper asserts it."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Reading the pin means a workflow that pins the wrong sha is not caught; pin correctness belongs to Dependabot and the review, not to this test.",
+    "The helper asserts a 40-character hex string, so an unpinned or tag reference still fails."
+  ]
+}
