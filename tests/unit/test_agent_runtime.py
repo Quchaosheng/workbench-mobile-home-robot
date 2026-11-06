@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "libs/contracts"), str(ROOT / "services/agent_runtime"), str(ROOT / "tools/scripts")]
@@ -14,6 +15,12 @@ from workbench_agent_runtime import (
     build_policy_routed_parcel_plan,
     build_template_plan,
     classify_template_task,
+)
+from workbench_agent_runtime.planner import (
+    MAX_PARCEL_BATCH_DEPENDENCIES,
+    MAX_PARCEL_BATCH_PARCELS,
+    MAX_PARCEL_BATCH_STEPS,
+    ParcelBatchLimitExceeded,
 )
 
 
@@ -183,6 +190,90 @@ class PlannerTests(unittest.TestCase):
                 attributes,
                 destination_capacities={"pickup_shelf": 2, "quarantine_bin": 1},
             )
+
+    def test_parcel_plan_graph_size_is_bounded_by_the_reviewed_batch_budget(self) -> None:
+        # The ceiling is a reviewed Operations decision documented in
+        # docs/architecture/parcel-batch-budget-v1.md, not a tunable: raising it
+        # must update this assertion, the arithmetic below and that page.
+        self.assertEqual(MAX_PARCEL_BATCH_PARCELS, 64)
+        self.assertEqual(MAX_PARCEL_BATCH_STEPS, 192)
+        self.assertEqual(MAX_PARCEL_BATCH_DEPENDENCIES, 4_223)
+        self.assertEqual(MAX_PARCEL_BATCH_STEPS, 3 * MAX_PARCEL_BATCH_PARCELS)
+        self.assertEqual(
+            MAX_PARCEL_BATCH_DEPENDENCIES,
+            MAX_PARCEL_BATCH_PARCELS**2 + 2 * MAX_PARCEL_BATCH_PARCELS - 1,
+        )
+
+        def batch(parcel_count: int) -> dict[str, dict[str, str]]:
+            return {
+                f"parcel-{index:03d}": {"label_status": "verified", "condition": "intact"}
+                for index in range(parcel_count)
+            }
+
+        # The last admitted batch keeps the existing shape: one scan step per
+        # parcel, then a serialized grasp/route pair whose dependency list is
+        # exactly the scan plus the previous route step.
+        plan = build_policy_routed_parcel_plan("Route the largest admitted batch", batch(MAX_PARCEL_BATCH_PARCELS))
+        step_ids = [step.step_id for step in plan.steps]
+        observations = [step for step in plan.steps if step.action.action_type.value == "observe"]
+        dependency_links = sum(len(step.depends_on) for step in plan.steps)
+        self.assertEqual(len(plan.steps), MAX_PARCEL_BATCH_STEPS)
+        self.assertEqual(len(observations), MAX_PARCEL_BATCH_PARCELS)
+        self.assertEqual(dependency_links, MAX_PARCEL_BATCH_DEPENDENCIES)
+        self.assertEqual(len(step_ids), len(set(step_ids)))
+        self.assertTrue(all(dependency in step_ids for step in plan.steps for dependency in step.depends_on))
+        self.assertEqual(step_ids[-1], f"route-parcel-{MAX_PARCEL_BATCH_PARCELS - 1:03d}")
+
+        # The bounded-shape assertion above is only meaningful while the
+        # unlimited planner really would have grown: one parcel past the limit
+        # would have produced three more steps and a longer dependency list.
+        with patch("workbench_agent_runtime.planner._validate_parcel_batch_budget"):
+            unbounded = build_policy_routed_parcel_plan(
+                "Show the unbounded construction",
+                batch(MAX_PARCEL_BATCH_PARCELS + 1),
+            )
+        self.assertEqual(len(unbounded.steps), MAX_PARCEL_BATCH_STEPS + 3)
+        self.assertGreater(
+            sum(len(step.depends_on) for step in unbounded.steps),
+            MAX_PARCEL_BATCH_DEPENDENCIES,
+        )
+
+    def test_parcel_plan_refuses_an_oversized_batch_before_building_any_step(self) -> None:
+        def batch(parcel_count: int) -> dict[str, dict[str, str]]:
+            return {
+                f"parcel-{index:03d}": {"label_status": "verified", "condition": "intact"}
+                for index in range(parcel_count)
+            }
+
+        for parcel_count in (MAX_PARCEL_BATCH_PARCELS + 1, 1_000, 5_000):
+            with (
+                self.subTest(parcel_count=parcel_count),
+                patch("workbench_agent_runtime.planner._parcel_policy_decision") as policy,
+                patch("workbench_agent_runtime.planner.TaskStep") as task_step,
+                self.assertRaises(ParcelBatchLimitExceeded) as context,
+            ):
+                build_policy_routed_parcel_plan("Refuse an oversized batch", batch(parcel_count))
+            self.assertEqual(context.exception.code, "parcel_batch_too_large")
+            message = str(context.exception)
+            self.assertIn(f"has {parcel_count} parcels", message)
+            self.assertIn(f"above the {MAX_PARCEL_BATCH_PARCELS} parcel limit", message)
+            self.assertIn(f"{MAX_PARCEL_BATCH_STEPS} steps", message)
+            self.assertIn(f"{MAX_PARCEL_BATCH_DEPENDENCIES} dependency links", message)
+            # No TaskStep means no step, no dependency list and no TaskGraph was
+            # materialized for the batch that was refused; no policy decision
+            # means the refusal came before the batch was even evaluated.
+            task_step.assert_not_called()
+            policy.assert_not_called()
+
+        # The step producer refuses too, so the budget cannot be bypassed by
+        # calling it directly instead of going through the policy entry point.
+        routes = [(f"parcel-{index:03d}", "pickup_shelf") for index in range(MAX_PARCEL_BATCH_PARCELS + 1)]
+        with (
+            patch("workbench_agent_runtime.planner.TaskStep") as task_step,
+            self.assertRaises(ParcelBatchLimitExceeded),
+        ):
+            build_parcel_sorting_plan("Refuse an oversized route table", routes)
+        task_step.assert_not_called()
 
     def test_parcel_capacity_snapshots_and_colliding_ids_fail_closed_or_stay_unique(self) -> None:
         attributes = {
