@@ -27,6 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import ClassVar
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services" / "backend"))
@@ -63,6 +64,80 @@ EXPORT_TAIL = (
 MODULE_PRELUDE = "const module = { exports: {} };\n(function (module, exports) {\n"
 MODULE_EPILOGUE = "\n})(module, module.exports);\n"
 
+# A run-list refresh is a request/response transition, so the assertions below
+# drive the real `loadRuns` and its renderers over a DOM and `fetch` stub rather
+# than checking the source of either. Only the browser bootstrap is replaced.
+LIST_DOM_STUB = (
+    "const __elements = {}, __children = {};\n"
+    "function __element(key) {\n"
+    '  return { innerHTML: "", textContent: "", hidden: false, className: "",\n'
+    "    classList: { states: {}, toggle(name, on) { this.states[name] = on; }, add() {}, remove() {} },\n"
+    "    listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; },\n"
+    '    querySelector: (selector) => (__children[key + " " + selector] = __children[key + " " + selector]'
+    ' || __element(key + " " + selector)),\n'
+    "    querySelectorAll: () => [], setAttribute() {}, removeAttribute() {}, scrollIntoView() {} };\n"
+    "}\n"
+    "const document = { getElementById: (id) => (__elements[id] = __elements[id] || __element(id)),\n"
+    "  querySelector: () => null, querySelectorAll: () => [] };\n"
+    "const __requests = [], __responses = [];\n"
+    "const window = {};\n"
+    "globalThis.fetch = async (url) => {\n"
+    "  __requests.push(String(url));\n"
+    "  const next = __responses.shift();\n"
+    '  if (!next) throw new Error("unexpected request");\n'
+    "  return { ok: next.ok, status: next.status || 200, json: async () => next.body || {} };\n"
+    "};\n"
+)
+LIST_EXPORT_TAIL = (
+    "\nmodule.exports = { state, loadRuns, renderRunList };\n"
+    "globalThis.__elements = __elements;\n"
+    "globalThis.__children = __children;\n"
+    "globalThis.__requests = __requests;\n"
+    "globalThis.__responses = __responses;\n"
+)
+# The sequence is the Issue: a successful page, the failed refresh of the
+# selected filter (the stale-pagination bug), a re-render while it is unresolved,
+# a genuine zero match, and the retry that restores a coherent triple.
+LIST_DRIVER = """
+const api = module.exports;
+const [matched, zeroMatch, failure] = JSON.parse(process.argv[1]);
+const read = () => ({
+  count: __elements["run-count"].textContent,
+  countUnavailable: Boolean(__elements["run-count"].classList.states["is-unavailable"]),
+  list: __elements["run-list"].innerHTML.replace(/\\s+/g, " ").trim(),
+  rows: (__elements["run-list"].innerHTML.match(/data-run-id=/g) || []).length,
+  listUnavailable: __elements["run-list"].innerHTML.includes("运行列表暂时不可用"),
+  alert: __elements["run-list"].innerHTML.includes('role="alert"'),
+  pagination: __elements["run-pagination"].innerHTML.replace(/\\s+/g, " ").trim(),
+});
+(async () => {
+  api.state.selection = { scenario_id: "", scenario_version: "", outcome: "", evidence: "refuted" };
+  api.state.filter = "all";
+  const readings = {};
+  __responses.push(matched);
+  await api.loadRuns(1);
+  readings.success = read();
+  __responses.push(failure);
+  await api.loadRuns(1);
+  readings.failed = read();
+  api.renderRunList();
+  readings.rerendered = read();
+  __responses.push(zeroMatch);
+  await api.loadRuns(1);
+  readings.zeroMatch = read();
+  __responses.push(failure);
+  await api.loadRuns(1);
+  __responses.push(zeroMatch);
+  const retry = __children["run-list .run-retry"];
+  if (retry) await retry.listeners.click();
+  readings.retried = { ...read(), retryAvailable: Boolean(retry), requests: __requests.slice() };
+  process.stdout.write(JSON.stringify(readings));
+})().catch((error) => {
+  process.stderr.write(String(error && error.stack));
+  process.exit(1);
+});
+"""
+
 
 def _run_node(expression: str, *arguments: object) -> object:
     """Evaluate one Dashboard helper in Node with JSON arguments."""
@@ -78,6 +153,31 @@ def _run_node(expression: str, *arguments: object) -> object:
     )
     completed = subprocess.run(
         [NODE, "-e", program, *[json.dumps(argument) for argument in arguments]],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(f"node failed: {completed.stderr}")
+    return json.loads(completed.stdout)
+
+
+def _drive_run_list(matched: dict, zero_match: dict, failure: dict) -> dict:
+    """Drive the real `loadRuns` through a page, a failure, a zero match and a retry."""
+    source = SCRIPT.read_text(encoding="utf-8")
+    program = "".join(
+        [
+            LIST_DOM_STUB,
+            MODULE_PRELUDE,
+            source[: source.index(BOOTSTRAP)],
+            LIST_EXPORT_TAIL,
+            MODULE_EPILOGUE,
+            LIST_DRIVER,
+        ]
+    )
+    completed = subprocess.run(
+        [NODE, "-e", program, json.dumps([matched, zero_match, failure])],
         capture_output=True,
         text=True,
         timeout=30,
@@ -538,6 +638,97 @@ class DashboardViewTests(unittest.TestCase):
         )
         self.assertFalse(single["filtered"])
         self.assertFalse(single["truncated"])
+
+
+class RunListFailureTests(unittest.TestCase):
+    """Issue #459: a failed refresh must not leave the previous pagination up."""
+
+    MATCHED: ClassVar[dict[str, object]] = {
+        "ok": True,
+        "body": {
+            "runs": [
+                {
+                    "run_id": "run-recovery",
+                    "task_id": "task-clear-workspace",
+                    "status": "confirmed",
+                    "status_label": "已确认",
+                    "evidence": "refuted",
+                    "outcome": "confirmed",
+                    "goal": "放好积木",
+                    "updated_at": None,
+                }
+            ],
+            "facets": {"evidence": ["refuted"]},
+            "total": 3,
+            "unfiltered_count": 4,
+            "page": 1,
+            "page_size": 20,
+        },
+    }
+    ZERO_MATCH: ClassVar[dict[str, object]] = {
+        "ok": True,
+        "body": {**MATCHED["body"], "runs": [], "total": 0},
+    }
+    FAILURE: ClassVar[dict[str, object]] = {"ok": False, "status": 503, "body": {"error": "source_unavailable"}}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.readings = _drive_run_list(cls.MATCHED, cls.ZERO_MATCH, cls.FAILURE)
+        cls.success = cls.readings["success"]
+        cls.failed = cls.readings["failed"]
+        cls.rerendered = cls.readings["rerendered"]
+        cls.zero_match = cls.readings["zeroMatch"]
+        cls.retried = cls.readings["retried"]
+
+    def test_a_successful_page_reports_its_own_totals(self) -> None:
+        self.assertEqual(self.success["count"], "1")
+        self.assertEqual(self.success["rows"], 1)
+        self.assertIn("显示 3 / 3", self.success["pagination"])
+        self.assertIn("全部 4", self.success["pagination"])
+        self.assertFalse(self.success["listUnavailable"])
+
+    def test_a_genuine_zero_match_is_not_the_unavailable_state(self) -> None:
+        # The API answered: an empty selection is a fact about the filter, so the
+        # count and the page summary stay readable and say zero.
+        self.assertEqual(self.zero_match["count"], "0")
+        self.assertEqual(self.zero_match["rows"], 0)
+        self.assertFalse(self.zero_match["listUnavailable"])
+        self.assertFalse(self.zero_match["countUnavailable"])
+        self.assertIn("显示 0 / 0", self.zero_match["pagination"])
+        self.assertNotIn("不可用", self.zero_match["pagination"])
+
+    def test_a_failed_request_clears_the_previous_totals_and_page_controls(self) -> None:
+        # The previous response said 3 of 3; none of that may survive the failure.
+        self.assertEqual(self.failed["count"], "--")
+        self.assertTrue(self.failed["countUnavailable"])
+        self.assertEqual(self.failed["rows"], 0)
+        self.assertIn("分页不可用", self.failed["pagination"])
+        for stale in ("第 1 / 1 页", "显示 3 / 3", "全部 4"):
+            self.assertNotIn(stale, self.failed["pagination"])
+        # Both page controls are unusable while the page is unknown.
+        self.assertEqual(self.failed["pagination"].count("disabled"), 2)
+
+    def test_the_failure_is_persistent_and_available_to_assistive_technology(self) -> None:
+        # A toast disappears after 3.2 s; the unavailable list is a rendered alert
+        # region, so a re-render while the selection is unresolved keeps announcing
+        # the same failure instead of falling back to the old counts.
+        for reading in (self.failed, self.rerendered):
+            self.assertTrue(reading["listUnavailable"])
+            self.assertTrue(reading["alert"])
+            self.assertIn("source_unavailable", reading["list"])
+            self.assertNotIn("显示 3 / 3", reading["pagination"])
+
+    def test_retrying_a_failed_request_restores_a_coherent_triple(self) -> None:
+        self.assertTrue(self.retried["retryAvailable"])
+        self.assertEqual(self.retried["count"], "0")
+        self.assertEqual(self.retried["rows"], 0)
+        self.assertFalse(self.retried["listUnavailable"])
+        self.assertFalse(self.retried["countUnavailable"])
+        self.assertIn("显示 0 / 0", self.retried["pagination"])
+        self.assertIn("全部 4", self.retried["pagination"])
+        # The retry repeats the filter and page that failed rather than inventing one.
+        self.assertEqual(self.retried["requests"][-1], "/api/runs?evidence=refuted&page=1&page_size=20")
+        self.assertEqual(len(self.retried["requests"]), 5)
 
 
 if __name__ == "__main__":
