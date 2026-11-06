@@ -136,6 +136,19 @@ svg {
   color: var(--green);
 }
 
+.assurance-entry {
+  color: var(--teal);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.assurance-entry:hover,
+.assurance-entry:focus-visible {
+  border-bottom-color: var(--teal);
+}
+
 .connection-dot {
   width: 8px;
   height: 8px;

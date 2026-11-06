@@ -31,6 +31,7 @@ jobs:
       - run: make contract
       - run: make scenario-check
       - run: make scenario-conformance
+      - run: make assurance-check
       - run: make readiness-report-check
       - run: make phase-gates-check
       - run: make run-identity-check

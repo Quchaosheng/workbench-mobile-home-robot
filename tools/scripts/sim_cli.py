@@ -514,6 +514,49 @@ def _refuse_existing_artifact(final: Path) -> None:
     crash.
     """
 
+
+# A staging directory older than this cannot belong to a live run: the longest
+# manifest timeout is 600 s, so anything past that is residue from a killed process.
+STALE_STAGING_SECONDS = 700
+
+
+def _sweep_stale_staging(output_dir: Path) -> list[str]:
+    """Remove `.partial` directories a killed run left behind.
+
+    `run_scenario` deletes its own staging directory on every exception it can
+    catch, but SIGTERM and SIGKILL never reach that handler. The next run in the
+    same output directory is the only reliable place to clean up, and it must be
+    conservative: a directory younger than the longest possible run is left alone,
+    because it may belong to a concurrently running process.
+
+    Returns the names it removed, so a caller can report what it cleaned.
+    """
+
+    removed: list[str] = []
+    deadline = time.time() - STALE_STAGING_SECONDS
+    for candidate in output_dir.glob(".*.partial"):
+        try:
+            if not candidate.is_dir() or candidate.stat().st_mtime > deadline:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(candidate, ignore_errors=True)
+        if not candidate.exists():
+            removed.append(candidate.name)
+    return removed
+
+
+def _refuse_existing_artifact(final: Path) -> None:
+    """Refuse to publish over a bundle that already names this identity.
+
+    Issue #466 makes the directory name a function of the run's inputs, so the
+    refusal is now reachable by simply running the same scenario twice. That is
+    deliberate: the alternative was to rename or reroll the ID, which is how a
+    deterministic name silently replaced the evidence it collided with. The
+    message names both legal ways forward so an operator does not read it as a
+    crash.
+    """
+
     if final.exists():
         raise SimulationInputError(
             f"refusing to overwrite existing run artifact: {final}; the run ID is derived from the run's inputs, "
@@ -659,6 +702,11 @@ def run_scenario(
     # Resolve the registered definition before anything is written. A run whose
     # identity cannot be derived is refused here rather than falling back to a
     # random name, because an unrecorded random ID is the defect #466 fixes.
+    #
+    # Admission (INV-01): an unresolvable scenario is refused before a staging
+    # directory or a runner process exists, so the refusal cannot leave partial
+    # evidence behind. The registry is read here as well as when provenance is
+    # recorded; the extra read is cheap and keeps the two paths independent.
     entry = _identity_entry(scenario)
     commit = _git_commit()
     effective_seed = seed_base + scenario.manifest["seed"]
@@ -671,6 +719,7 @@ def run_scenario(
         nonce=nonce,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+    _sweep_stale_staging(output_dir)
     final = output_dir / run_id
     # Checked once before the run starts and once at publication: the earlier
     # check fails before a costly runner is launched, the later one is the
@@ -889,6 +938,8 @@ def run_scenario(
         _publish_artifact(staging, final)
         return _result_from_metadata(metadata, final)
     except BaseException:
+        # SIGTERM/SIGKILL are not catchable here, so this only covers the errors
+        # Python can raise. `_sweep_stale_staging` handles the signals on the next run.
         shutil.rmtree(staging, ignore_errors=True)
         raise
 

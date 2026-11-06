@@ -109,6 +109,11 @@ ignore = [
   # import the packages under test, so the import cannot come first. The pattern
   # is intentional and is the documented way to run the tools without installing.
   "E402",
+  # The operator UI is Chinese. Full-width punctuation is correct there, and
+  # "fixing" it would change what a Chinese-speaking operator reads.
+  "RUF001",
+  "RUF002",
+  "RUF003",
 ]
 
 [tool.ruff.lint.per-file-ignores]
