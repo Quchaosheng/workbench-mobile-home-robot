@@ -1,0 +1,70 @@
+{
+  "issue": 431,
+  "human_owner": "Quchaosheng",
+  "objective": "Enforce one wall-clock budget for one manifest across both evidence-producing runners, and record the budget that actually applied instead of the manifest value.",
+  "decision_supported": "Should each runner compute its own deadline, or should the budget arithmetic live in one shared place both entry points call?",
+  "allowed_paths": [
+    "tools/scripts/scenario_tools.py",
+    "tools/scripts/sim_cli.py",
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_timeout_parity.py",
+    "tests/unit/test_sim_cli.py",
+    "docs/task_packets/issue-431-timeout-parity.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/architecture/system.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "tools/scripts/scenario_tools.py",
+    "tools/scripts/sim_cli.py",
+    "tools/scripts/run_evaluation.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/scenario_tools.py",
+    "tools/scripts/sim_cli.py",
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_timeout_parity.py",
+    "tests/unit/test_sim_cli.py"
+  ],
+  "acceptance": [
+    "Both entry points return the same budget for the same manifest.",
+    "The budget is the manifest timeout plus the startup grace.",
+    "Both entry points read one shared constant rather than defining their own.",
+    "Each entry point still raises its own input error type.",
+    "A non-integer or non-positive timeout is refused by both.",
+    "sim_cli records the enforced budget and the manifest value separately.",
+    "Neither module contains its own copy of the arithmetic."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_timeout_parity.py -q",
+    "python3 -m pytest tests/unit/test_sim_cli.py tests/unit/test_evaluation_tools.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change a manifest with timeout_s 1 got 1s in sim_cli and 31s in run_evaluation; a slow-starting simulator could be TIMED_OUT by one and produce evidence with the other.",
+    "After the change both return 31 for that manifest, for every timeout tried.",
+    "sim_cli now records timeout_s as the enforced budget and manifest_timeout_s as the manifest value, and its timeout message names both.",
+    "A test asserts neither module contains its own copy of the arithmetic or the constant."
+  ],
+  "stop_conditions": [
+    "A runner that must not get startup grace needs a manifest field for it; the grace is currently unconditional for external runners."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "sim_cli runs now get 30s more wall clock than before for the same manifest; that is the point, and the recorded metadata explains it.",
+    "The existing sim_cli timeout test needed a sleeper longer than the grace, which is a real consequence of the alignment rather than a workaround."
+  ]
+}
