@@ -33,6 +33,23 @@ runtime rather than of one scenario file:
 | `link_loss` | the safety MCU watchdog expires | the MCU reaches its fault state; only an explicit reset clears it |
 | `process_restart` | the process restarts mid-run | the run's correlation is explicitly invalidated |
 
+Three CAN transport faults are declared on the same basis: they are conditions of
+the bus, so they cannot be expressed in a scenario manifest's `fault_type`. Each
+names the `CanDiagnosticCode` the shipped adapter already emits, so the coverage
+claim is checkable against real diagnostics rather than asserted:
+
+| Fault | Trigger | Expected safe behaviour | Observable code |
+| --- | --- | --- | --- |
+| `ack_timeout` | the device never acknowledges a command and the retry budget is exhausted | bounded safe-stop with its stop correlation retained | `CanDiagnosticCode.ACK_TIMEOUT` |
+| `stop_timeout` | a STOP is sent and no STOP ACK arrives inside the stop timeout | the MCU reaches its fault state; link health reported separately | `CanDiagnosticCode.STOP_TIMEOUT` |
+| `stop_rejected` | the device answers a STOP with a rejection | fail closed with the rejected STOP correlation retained | `CanDiagnosticCode.STOP_REJECTED` |
+
+All three are `SIMULATED` until a hardware-tested reference exists; software
+safe-stop is still not a hardware emergency stop.
+
+`tests/unit/test_transport_fault_coverage.py` asserts the three names, that each
+matches a code the bus emits, and that the coverage report never promotes them.
+
 ## Rules
 
 - A fault never becomes a completion. The injectors can only remove evidence,
