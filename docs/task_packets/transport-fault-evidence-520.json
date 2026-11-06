@@ -1,0 +1,50 @@
+{
+  "issue": 504,
+  "human_owner": "Quchaosheng",
+  "objective": "Restore the transport fault coverage test after #520 made a SIMULATED claim require an execution record. The test asserts the intent it always had; it now supplies the injector, outcome and evidence reference the tightened contract asks for.",
+  "decision_supported": "Should an unexecuted transport fault read as covered? No, and the stricter coverage_report is the right place to enforce it.",
+  "allowed_paths": [
+    "tests/unit/test_transport_fault_coverage.py",
+    "docs/task_packets/transport-fault-evidence-520.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "libs/application/workbench/application/fault_injection.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "libs/application/workbench/application/fault_injection.py",
+    "tests/unit/test_transport_fault_coverage.py"
+  ],
+  "outputs": [
+    "tests/unit/test_transport_fault_coverage.py"
+  ],
+  "acceptance": [
+    "The transport fault coverage test passes against the current coverage_report contract.",
+    "An unexecuted transport fault still does not read as SIMULATED.",
+    "No production code changes."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_transport_fault_coverage.py -q"
+  ],
+  "evidence": [
+    "pytest output for tests/unit/test_transport_fault_coverage.py"
+  ],
+  "stop_conditions": [
+    "The fix would require changing fault_injection.py rather than the test."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The test could be satisfied by weakening the assertion rather than supplying evidence; it keeps asserting SIMULATED with hardware_tested false.",
+    "Fallback: revert the single test commit."
+  ]
+}
