@@ -1,0 +1,68 @@
+{
+  "issue": 445,
+  "human_owner": "Quchaosheng",
+  "objective": "Require a fixture net's VERIFIED state to be backed by evidence bound to that net: a hashed file inside the repository, the net it covers, the instrument and the capture time.",
+  "decision_supported": "Is a non-empty evidence_ref pointing at any existing file enough to call a safety-critical net physically verified?",
+  "allowed_paths": [
+    "hardware/pcb/tools/release_readiness.py",
+    "hardware/pcb/fixture-access-plan.csv",
+    "tests/hardware/test_pcb_fixture_evidence.py",
+    "docs/task_packets/issue-445-bound-fixture-evidence.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "hardware/pcb/connector-pinout.csv",
+    "hardware/manufacturing/fixture-budget.csv"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/validation/**"
+  ],
+  "input_refs": [
+    "hardware/pcb/tools/release_readiness.py",
+    "hardware/pcb/fixture-access-plan.csv",
+    "hardware/pcb/connector-pinout.csv",
+    "hardware/manufacturing/fixture-budget.csv",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "hardware/pcb/tools/release_readiness.py",
+    "hardware/pcb/fixture-access-plan.csv",
+    "tests/hardware/test_pcb_fixture_evidence.py"
+  ],
+  "acceptance": [
+    "A bare path in evidence_ref no longer verifies a net.",
+    "evidence_ref must be path#sha256=<digest> with the file inside the repository, and the digest must match.",
+    "The row must name the net the evidence covers, and it must be that row's net.",
+    "The row must name the instrument and the capture time.",
+    "Each refusal has its own reason code so a reader knows what to fix.",
+    "A complete record is accepted, and the committed plan stays non-release-ready.",
+    "release_ready cannot be true while any row is invalid."
+  ],
+  "commands": [
+    "python3 -m pytest tests/hardware/test_pcb_fixture_evidence.py -q",
+    "python3 -m pytest tests/hardware -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, setting every connector-confirmed row to VERIFIED with evidence_ref=hardware/pcb/README.md left invalid_rows empty: six safety-critical nets counted as physically verified on a README.",
+    "After the change the same input reports verified_without_bound_evidence for each of those nets.",
+    "A hashed reference without evidence_net reports verified_without_evidence_net; a reference naming another net reports verified_evidence_covers_another_net; a wrong digest reports verified_evidence_hash_mismatch.",
+    "A complete record with a real file, matching digest, matching net, instrument and timestamp is accepted."
+  ],
+  "stop_conditions": [
+    "A net's evidence legitimately comes from one file covering several nets; that would need an explicit list rather than a single evidence_net."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The CSV gains three columns so a future record has somewhere to put the binding; existing rows stay blank and remain PHYSICAL_VALIDATION_REQUIRED.",
+    "The hash is over the file as committed, so re-encoding a capture invalidates the record; that is the intent of binding."
+  ]
+}

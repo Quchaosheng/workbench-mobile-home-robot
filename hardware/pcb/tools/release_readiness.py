@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import sys
@@ -154,6 +155,44 @@ def check_bringup_plan(rows: list[dict[str, str]]) -> dict[str, object]:
     }
 
 
+# A physical verification record has to say which net it measured, when, with what,
+# and over which file. `evidence_ref` is therefore `path#sha256=<digest>`, and the
+# row has to name the net it covers. A bare path used to be enough, so a README
+# could stand in for the measurement of a safety-critical net (issue #445).
+EVIDENCE_REF_PATTERN = re.compile(r"^(?P<path>[^#]+)#sha256=(?P<digest>[0-9a-f]{64})$")
+
+
+def _evidence_problems(row: dict[str, str], net: str, root: Path) -> list[str]:
+    """Why this row's evidence is not a verification of *this* net."""
+
+    problems: list[str] = []
+    evidence_ref = row.get("evidence_ref", "").strip()
+    match = EVIDENCE_REF_PATTERN.fullmatch(evidence_ref)
+    if match is None:
+        return ["verified_without_bound_evidence"]
+
+    path = (root / match.group("path")).resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError:
+        return ["verified_evidence_outside_repository"]
+    if not path.is_file():
+        return ["verified_evidence_missing"]
+    if hashlib.sha256(path.read_bytes()).hexdigest() != match.group("digest"):
+        problems.append("verified_evidence_hash_mismatch")
+
+    covered = row.get("evidence_net", "").strip()
+    if not covered:
+        problems.append("verified_without_evidence_net")
+    elif covered != net:
+        problems.append("verified_evidence_covers_another_net")
+
+    for field in ("evidence_instrument", "evidence_captured_at"):
+        if not row.get(field, "").strip():
+            problems.append(f"verified_without_{field.removeprefix('evidence_')}")
+    return problems
+
+
 def check_fixture_access_plan(
     rows: list[dict[str, str]],
     pinout: list[dict[str, str]],
@@ -193,17 +232,18 @@ def check_fixture_access_plan(
         else:
             eco_accesses.add(planned_access)
         if verification_state == "VERIFIED":
-            evidence_ref = row.get("evidence_ref", "").strip()
-            if not evidence_ref:
-                reason = reason or "verified_without_evidence"
-            elif not (ROOT.parents[1] / evidence_ref).is_file():
-                reason = reason or "verified_evidence_missing"
+            problems = _evidence_problems(row, net, ROOT.parents[1])
+            if problems:
+                reason = reason or problems[0]
         if reason:
             invalid_rows.append({"net": net, "reason": reason})
     engineering_pass = not missing_nets and not duplicate_nets and not invalid_rows
     design_ready = engineering_pass and all(row.get("design_state") != "ECO_REQUIRED" for row in rows)
-    release_ready = design_ready and all(
-        row.get("verification_state") == "VERIFIED" and bool(row.get("evidence_ref", "").strip()) for row in rows
+    # `release_ready` restates the per-row judgement rather than re-testing the
+    # evidence_ref string: a row that reached this point with a bad reference is
+    # already in `invalid_rows`, and engineering_pass is false.
+    release_ready = (
+        design_ready and engineering_pass and all(row.get("verification_state") == "VERIFIED" for row in rows)
     )
     return {
         "pass": engineering_pass,
