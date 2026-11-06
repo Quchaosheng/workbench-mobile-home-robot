@@ -22,7 +22,9 @@ It then checks the invariants a comparison cannot express:
   NOT_DELIVERED, is reported as such and never as a pass;
 * the markdown page, the release-notes block and both README blocks are the ones
   the same data generates, so a published table cannot disagree with the
-  machine-readable status.
+  machine-readable status;
+* no staging directory of an interrupted generation is left beside them (Issue
+  #465), because residue means the set on disk may be a partial publication.
 
 Exit codes match the other gates here: ``0 PASS``, ``1 FAIL``, ``2 INCOMPLETE``.
 INCOMPLETE is separate because a gate that reports FAIL when it could not read
@@ -220,6 +222,15 @@ def _generated_artifacts(
     return findings
 
 
+def _staging_findings(paths: list[Path]) -> list[str]:
+    from readiness_report import find_staging_residue
+
+    return [
+        f"{residue} is staging residue from an interrupted generation; the published set may be partial"
+        for residue in find_staging_residue("phase-gates", paths)
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check the committed phase status against its generator.")
     parser.add_argument("--status", type=Path, default=ROOT / "docs/releases/phase-status-v1.json")
@@ -252,6 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     findings = _compare(committed, regenerated)
     findings.extend(_invariants(committed))
     findings.extend(_generated_artifacts(committed, args.page, args.release_notes, args.readme, args.readme_zh))
+    findings.extend(_staging_findings([args.status.parent, args.page.parent]))
 
     if args.as_json:
         print(

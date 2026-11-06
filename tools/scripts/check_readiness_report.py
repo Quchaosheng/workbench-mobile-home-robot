@@ -21,7 +21,9 @@ comparison cannot express:
   artifact and a regeneration, because those two describe when and where it was
   built rather than what the software is ready for;
 * the markdown page and the README block are the ones the same data generates,
-  so a published table cannot disagree with the machine-readable report.
+  so a published table cannot disagree with the machine-readable report;
+* no staging directory of an interrupted generation is left beside them (Issue
+  #465), because residue means the set on disk may be a partial publication.
 
 Exit codes match the other gates here: ``0 PASS``, ``1 FAIL``, ``2 INCOMPLETE``.
 INCOMPLETE is separate because a gate that reports FAIL when it could not read
@@ -36,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -195,6 +198,15 @@ def _generated_artifacts(
     return findings
 
 
+def _staging_findings(paths: Iterable[Path]) -> list[str]:
+    from readiness_report import find_staging_residue
+
+    return [
+        f"{residue} is staging residue from an interrupted generation; the published set may be partial"
+        for residue in find_staging_residue("readiness", paths)
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check the committed readiness report against its generator.")
     parser.add_argument(
@@ -237,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     findings = _compare(committed, regenerated)
     findings.extend(_invariants(committed, manifests))
     findings.extend(_generated_artifacts(committed, args.page, args.readme, args.readme_zh))
+    findings.extend(_staging_findings([args.report.parent, args.page.parent]))
 
     if args.as_json:
         print(

@@ -33,9 +33,18 @@ Three properties are deliberate, and each has a test:
   an owner approval records it as ``outstanding``; this module cannot observe a
   human decision, so it refuses to claim one was made.
 
-Everything here is read-only. It starts no simulator, writes no run or event, and
-its verdict never claims a phase ran, that evidence is physical, or that a
-release is approved.
+The status, the page, the release-notes block and both README blocks are five
+views of one generation, so they publish as one atomic set (Issue #465) using the
+staging/publish policy in :mod:`readiness_report`: every output is rendered,
+staged, verified and only then renamed into place, and a failure anywhere leaves
+every target byte-identical to its pre-run state. A run that reproduces the
+committed status exactly keeps the committed ``generated_at`` and
+``source_commit`` and republishes nothing, so regenerating an up-to-date
+checkout does not dirty tracked evidence files.
+
+Apart from the artifacts it is asked to generate, everything here is read-only.
+It starts no simulator, writes no run or event, and its verdict never claims a
+phase ran, that evidence is physical, or that a release is approved.
 """
 
 from __future__ import annotations
@@ -44,6 +53,7 @@ import argparse
 import hashlib
 import json
 import subprocess
+import sys
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,6 +61,16 @@ from typing import Any
 
 from _jsonio import load_json
 from _paths import ROOT, enable_local_packages
+from readiness_report import (
+    DEFAULT_LOCKS_DIR,
+    GeneratedArtifactSetError,
+    PublishedArtifact,
+    StagedArtifact,
+    artifact_set_lock,
+    publish_artifact_set,
+    stabilize_volatile,
+    summarize_published,
+)
 
 enable_local_packages()
 
@@ -870,6 +890,81 @@ def apply_block(text: str, block: str, *, begin: str = README_BEGIN, end: str = 
     return text.rstrip("\n") + "\n\n" + block + "\n"
 
 
+def _committed_document(path: Path) -> Mapping[str, Any] | None:
+    """The artifact currently on disk, or ``None`` when there is nothing to keep."""
+
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return document if isinstance(document, Mapping) else None
+
+
+def render_outputs(
+    status: Mapping[str, Any],
+    *,
+    status_path: Path,
+    page_path: Path,
+    notes_path: Path,
+    readme_path: Path,
+    readme_zh_path: Path | None = None,
+) -> list[StagedArtifact]:
+    """Render every phase-gate output without touching the tree (Issue #465).
+
+    The release-notes and README blocks are spliced into the *current* file,
+    exactly as before, so the published content is byte-identical to what the
+    sequential writer produced.
+    """
+
+    artifacts = [
+        StagedArtifact(status_path, json.dumps(status, indent=2, ensure_ascii=False) + "\n", "phase status"),
+        StagedArtifact(page_path, markdown_page(status), "phase-gate page"),
+    ]
+    if notes_path.is_file():
+        try:
+            notes = notes_path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise GeneratedArtifactSetError(
+                "phase-gates", f"cannot read the release notes {notes_path}: {error}"
+            ) from error
+        artifacts.append(
+            StagedArtifact(
+                notes_path,
+                apply_block(notes, release_notes_block(status), begin=NOTES_BEGIN, end=NOTES_END),
+                "release-notes block",
+                markers=(NOTES_BEGIN, NOTES_END),
+            )
+        )
+    try:
+        readme = readme_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise GeneratedArtifactSetError("phase-gates", f"cannot read the README {readme_path}: {error}") from error
+    artifacts.append(
+        StagedArtifact(
+            readme_path,
+            apply_block(readme, readme_block(status)),
+            "README block",
+            markers=(README_BEGIN, README_END),
+        )
+    )
+    if readme_zh_path is not None and readme_zh_path.is_file():
+        try:
+            readme_zh = readme_zh_path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise GeneratedArtifactSetError(
+                "phase-gates", f"cannot read the README {readme_zh_path}: {error}"
+            ) from error
+        artifacts.append(
+            StagedArtifact(
+                readme_zh_path,
+                apply_block(readme_zh, readme_block(status, language="zh")),
+                "Chinese README block",
+                markers=(README_BEGIN, README_END),
+            )
+        )
+    return artifacts
+
+
 def write_outputs(
     status: Mapping[str, Any],
     *,
@@ -878,30 +973,30 @@ def write_outputs(
     notes_path: Path,
     readme_path: Path,
     readme_zh_path: Path | None = None,
-) -> None:
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    page_path.parent.mkdir(parents=True, exist_ok=True)
-    status_path.write_text(json.dumps(status, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    page_path.write_text(markdown_page(status), encoding="utf-8")
-    if notes_path.is_file():
-        notes_path.write_text(
-            apply_block(
-                notes_path.read_text(encoding="utf-8"),
-                release_notes_block(status),
-                begin=NOTES_BEGIN,
-                end=NOTES_END,
-            )
-        )
-    readme_path.write_text(
-        apply_block(readme_path.read_text(encoding="utf-8"), readme_block(status)),
+    locks_dir: Path | None = None,
+    on_staged: Any = None,
+) -> list[PublishedArtifact]:
+    """Publish the status, page, notes and both README blocks as one atomic set.
+
+    Issue #465: the five files are one generation, so a failure anywhere leaves
+    every target byte-identical to its pre-run state rather than a new status
+    beside old generated views. There is no sequential fallback: when the set
+    cannot be staged the writer raises :class:`GeneratedArtifactSetError` and
+    writes nothing.
+    """
+
+    status = stabilize_volatile(status, _committed_document(status_path))
+    artifacts = render_outputs(
+        status,
+        status_path=status_path,
+        page_path=page_path,
+        notes_path=notes_path,
+        readme_path=readme_path,
+        readme_zh_path=readme_zh_path,
     )
-    if readme_zh_path is not None and readme_zh_path.is_file():
-        readme_zh_path.write_text(
-            apply_block(
-                readme_zh_path.read_text(encoding="utf-8"),
-                readme_block(status, language="zh"),
-            )
-        )
+    locks = locks_dir if locks_dir is not None else DEFAULT_LOCKS_DIR
+    with artifact_set_lock("phase-gates", [staged.target for staged in artifacts], locks_dir=locks):
+        return publish_artifact_set("phase-gates", artifacts, on_staged=on_staged)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -920,19 +1015,26 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(status, indent=2, ensure_ascii=False, sort_keys=True))
         return 0
 
-    write_outputs(
-        status,
-        status_path=args.output,
-        page_path=args.page,
-        notes_path=args.release_notes,
-        readme_path=args.readme,
-        readme_zh_path=args.readme_zh,
-    )
+    try:
+        outcomes = write_outputs(
+            status,
+            status_path=args.output,
+            page_path=args.page,
+            notes_path=args.release_notes,
+            readme_path=args.readme,
+            readme_zh_path=args.readme_zh,
+        )
+    except GeneratedArtifactSetError as error:
+        print(f"FAIL: INCOMPLETE phase-gates artifact set, nothing was published: {error}", file=sys.stderr)
+        return 1
+
+    label = args.output.relative_to(ROOT) if args.output.is_relative_to(ROOT) else args.output
+    published = any(not outcome.unchanged for outcome in outcomes)
     print(
-        f"wrote {args.output.relative_to(ROOT) if args.output.is_relative_to(ROOT) else args.output} "
+        f"{'wrote' if published else 'unchanged'} {label} "
         f"({status['summary']['phase_count']} phase(s), "
         f"{status['summary']['complete_count']} complete, "
-        f"configuration_hash {status['configuration_hash'][:12]})"
+        f"configuration_hash {status['configuration_hash'][:12]}; {summarize_published(outcomes)})"
     )
     return 0
 
