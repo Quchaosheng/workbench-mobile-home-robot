@@ -348,7 +348,13 @@ class ValidationPackageTests(unittest.TestCase):
             "evidence_kind": "physical",
             "instrument_refs": ["SCOPE-01"],
             "calibration_refs": ["CAL-01"],
+            # A physical record has to say which instrument produced the numbers and
+            # that it was in calibration when it did (issue #444).
+            "instrument_serials": ["SN-SCOPE-01"],
+            "calibration_due": {"SN-SCOPE-01": "2027-01-01T00:00:00Z"},
+            "measurement_summary": {"offset_mv": 1.5},
             "raw_files": {"scope.csv": self.module.sha256(self.raw)},
+            "raw_file_kinds": {"scope.csv": "capture"},
             "result": "PASS",
         }
 
