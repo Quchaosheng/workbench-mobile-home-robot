@@ -206,7 +206,12 @@ class SQLiteEventStore:
             raise self._integrity_error(error) from error
         if existing is not None:
             record = self._parse_stored_row(existing, expected_event_id=event_id)
-            if record.run_id == run_id and self._canonical_event_json(record) != self._canonical_event_json(preflight):
+            # The sequence belongs to the store, not to the caller: it was
+            # allocated on the first call, so the retry cannot supply it. Comparing
+            # against the sequence-1 preflight would refuse every exact retry after
+            # a run's first event, for a difference this store created itself.
+            retried = preflight.model_copy(update={"sequence_no": record.sequence_no})
+            if record.run_id == run_id and self._canonical_event_json(record) != self._canonical_event_json(retried):
                 raise EventStoreIntegrityError(
                     f"event_id {event_id!r} already exists with different canonical event content"
                 )
