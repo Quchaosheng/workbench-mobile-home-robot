@@ -1,0 +1,117 @@
+{
+  "issue": 468,
+  "human_owner": "Quchaosheng",
+  "objective": "Bind every published evaluation aggregate to a bounded per-run evidence index, name the run ids behind each numerator, and publish a deterministic aggregate digest a reviewer can recompute from the referenced runs.",
+  "decision_supported": "Do the published aggregate metrics describe a named, reproducible set of runs, or is the total separated from the evidence that produced it?",
+  "allowed_paths": [
+    "docs/task_packets/issue-468-run-evidence-index.json",
+    "docs/evaluation/evidence-index.md",
+    "docs/evaluation/README.md",
+    "tools/scripts/collect_metrics.py",
+    "tools/scripts/compare_evaluations.py",
+    "tools/scripts/generate_report.py",
+    "tests/unit/test_evaluation_tools.py",
+    "tests/unit/test_canonical_replay_metrics.py"
+  ],
+  "read_only_paths": [
+    "tools/scripts/release_eligibility.py",
+    "tools/scripts/check_evaluation_eligibility.py",
+    "tools/scripts/run_evaluation.py",
+    "tools/scripts/_jsonio.py",
+    "tools/scripts/_paths.py",
+    "tools/scripts/check_task_packet.py",
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**",
+    "build/verify.sh",
+    "Makefile",
+    "pyproject.toml"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/world_model/**",
+    "services/agent_runtime/**",
+    "services/perception/**",
+    "services/backend/**",
+    "robot/control/**",
+    "firmware/**",
+    "sim/**",
+    "apps/**",
+    "deploy/**",
+    ".github/**",
+    "mkdocs.yml"
+  ],
+  "input_refs": [
+    "tools/scripts/collect_metrics.py",
+    "tools/scripts/release_eligibility.py",
+    "tools/scripts/compare_evaluations.py",
+    "tools/scripts/generate_report.py",
+    "tools/scripts/check_evaluation_eligibility.py",
+    "tools/scripts/run_evaluation.py",
+    "tests/unit/test_evaluation_tools.py",
+    "tests/unit/test_canonical_replay_metrics.py",
+    "tests/unit/test_release_eligibility.py",
+    "docs/evaluation/release-eligibility.md",
+    ".github/workflows/nightly-regression.yml"
+  ],
+  "outputs": [
+    "tools/scripts/collect_metrics.py",
+    "tools/scripts/compare_evaluations.py",
+    "tools/scripts/generate_report.py",
+    "tests/unit/test_evaluation_tools.py",
+    "tests/unit/test_canonical_replay_metrics.py",
+    "docs/evaluation/evidence-index.md",
+    "docs/evaluation/README.md",
+    "docs/task_packets/issue-468-run-evidence-index.json"
+  ],
+  "acceptance": [
+    "Metrics JSON gains a runs array with a bounded per-run run_id, source_class, event_log_sha256, manifest_sha256, final_outcome, evidence_refs and that run's contributions to every aggregate.",
+    "metric_contributors names, per aggregate, the run ids that supplied its numerator; a metric with no contributor publishes an explicit empty list and the matching metric_exclusions reason instead of being silently absent.",
+    "evidence_index_sha256 is computed over the canonically sorted run records, the contributor sets and the aggregate values, so a reviewer can recompute it.",
+    "Reordering the input run files produces the same evidence_index_sha256.",
+    "Editing a run id, an event-log hash, a manifest hash, a metric contribution or an aggregate value changes evidence_index_sha256.",
+    "The digest excludes run_dir, so the same run set moved to another path keeps its digest.",
+    "verify_evidence_index refuses a metrics record whose aggregate differs from its per-run rebuild, whose contributor set its run records do not support, whose run records are not uniquely ordered, or whose digest does not match its content; collect() calls it before returning.",
+    "Every aggregate metric is rebuildable from runs[] alone, and a metric with no declared zero-contributor value fails closed rather than publishing an invented number.",
+    "A run present in the run directory that cannot contribute to a metric is reported in metric_exclusions with a reason, not dropped.",
+    "A nonzero recovery_rate names at least one run whose contributions carry the recovery numerator, with its log and manifest hash.",
+    "generate_report.py refuses to render a report from metrics without a rebuildable index, and shows a bounded run count plus the digest prefix per column rather than the run list.",
+    "compare_evaluations.py carries each version's evidence_index digest, its VTCR contributor run ids, evidence_indexes_match and every_version_has_an_evidence_index, without changing its Wilson or difference intervals.",
+    "Existing eligibility and percentile calculations keep their current fail-closed behavior; no metric definition, threshold or reader schema changes."
+  ],
+  "commands": [
+    "python -m pytest tests/unit/test_evaluation_tools.py tests/unit/test_canonical_replay_metrics.py -q",
+    "python -m pytest tests/unit/test_release_eligibility.py -q",
+    "python -m ruff check tools/scripts/collect_metrics.py tools/scripts/compare_evaluations.py tools/scripts/generate_report.py tests/unit/test_evaluation_tools.py tests/unit/test_canonical_replay_metrics.py",
+    "python -m ruff format --check tools/scripts/collect_metrics.py tools/scripts/compare_evaluations.py tools/scripts/generate_report.py tests/unit/test_evaluation_tools.py tests/unit/test_canonical_replay_metrics.py",
+    "python tools/scripts/check_task_packet.py docs/task_packets/issue-468-run-evidence-index.json",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Focused unit output for the evidence index: per-aggregate contributor sets, permuted-input digest vectors, edited-run-id/log-hash/manifest-hash/contribution/aggregate digest vectors, an explicit zero-contributor aggregate, and the refused drifted-index, stale-digest and indexless cases.",
+    "A run-to-metric attribution table emitted by collect() for a grasp-failure fixture, showing recovery_rate 1.0 against the run id whose contributions carry numerator 1 and whose event_log_sha256 and manifest_sha256 are both populated.",
+    "Report output showing a bounded run count, the digest prefix and the evidence-index reference instead of the full run list, plus the refusal of an indexless metrics file.",
+    "Comparison output showing vtcr_contributors, recomputed_evidence_index_sha256, evidence_indexes_match and every_version_has_an_evidence_index, with statistically_significant unchanged for identical inputs.",
+    "Full evaluation, eligibility, ruff and ruff-format output for this change, and the Task Packet boundary validation.",
+    "build/verify.sh output for the two named test module targets compared against build/baseline.txt."
+  ],
+  "stop_conditions": [
+    "An interfaces/ or libs/contracts/ schema, Pydantic model or reader-contract change is required rather than an additive metrics field.",
+    "The design would expose raw evidence payloads, camera frames or private participant data; only reference strings may leave the run directory.",
+    "A published aggregate metric cannot be rebuilt from a per-run contribution without changing that metric's definition, threshold or fail-closed behavior.",
+    "A downstream consumer outside tools/scripts/generate_report.py, tools/scripts/compare_evaluations.py and tools/scripts/check_evaluation_eligibility.py would break on the added metrics field.",
+    "A write outside allowed_paths is required, or an allowed path contains unrelated user modifications."
+  ],
+  "max_iterations": 5,
+  "data_classification": "Local deterministic JSON event fixtures and hashes only; no personal data, no camera content and no network access.",
+  "model_policy": "Reuse the existing release_eligibility hashing and predicate helpers; no evaluation-owned hash algorithm, no new dependency and no metric-definition change.",
+  "risks_and_fallbacks": [
+    "collect_metrics.py computes each aggregate twice: once from the events and once from its own per-run contributions. verify_evidence_index refuses the record when the two disagree, so the duplication is a cross-check rather than two definitions that can drift.",
+    "The digest excludes run_dir because it is a local path, not evidence. The consequence is that two collections of the same run set in different directories share a digest by design; the run_dir label beside it still says which directory was read.",
+    "MAX_INDEXED_RUNS is 256. A larger collection is refused rather than truncated, because a partial index cannot cover the run set it claims to explain; raising the bound is a later change if a real collection exceeds it.",
+    "false_completion_count and recovery_rate publish null rather than 0 when no run could contribute. That preserves the existing not-reviewed and no-recoverable-run behavior; the change is that the run ids behind the null are now named.",
+    "compare_evaluations.compare still accepts an indexless metrics dict so the existing percentile tests keep testing percentile math, but its main() refuses to publish a comparison built from one, and the output records every_version_has_an_evidence_index false.",
+    "Rollback is reverting this commit: the index and digest fields are additive, and no consumer stores or migrates a metrics record it cannot regenerate."
+  ]
+}

@@ -42,6 +42,40 @@ def difference_interval(
     return difference, difference - z * standard_error, difference + z * standard_error
 
 
+def _verify_evidence_index(item: dict[str, Any]) -> str:
+    """Check a metrics record's index and return its recomputed digest.
+
+    Imported here rather than at module scope so this tool keeps working as a
+    plain stdlib script: ``collect_metrics`` imports the Pydantic contracts to
+    replay a run, which a comparison of already-collected metrics does not need
+    unless an index is actually present.
+    """
+    from collect_metrics import evidence_index_sha256, verify_evidence_index
+
+    verify_evidence_index(item)
+    return evidence_index_sha256(item)
+
+
+def _index_summary(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Reduce a metrics record to the evidence index a comparison may publish.
+
+    A comparison output is smaller than the metrics it reads, so it carries the
+    digest and the run ids behind VTCR rather than the whole run list. The digest
+    is what lets a reviewer check that the compared file still describes the same
+    run set. A record without an index reports ``None``: it is not upgraded into
+    one, and ``main`` refuses to publish a comparison built from such a record.
+    """
+    records = item.get("runs")
+    if not isinstance(records, list) or not records:
+        return None
+    return {
+        "run_count": len(records),
+        "evidence_index_sha256": item.get("evidence_index_sha256"),
+        "recomputed_evidence_index_sha256": _verify_evidence_index(item),
+        "vtcr_contributors": list(item.get("metric_contributors", {}).get("vtcr", [])),
+    }
+
+
 def compare(metrics: list[dict[str, Any]], labels: list[str]) -> dict[str, Any]:
     if len(metrics) != len(labels):
         raise ValueError("metrics and labels must have the same length")
@@ -59,6 +93,7 @@ def compare(metrics: list[dict[str, Any]], labels: list[str]) -> dict[str, Any]:
                 "total": total,
                 "vtcr": successes / total,
                 "confidence_interval_95": [lower, upper],
+                "evidence_index": _index_summary(item),
             }
         )
 
@@ -78,6 +113,9 @@ def compare(metrics: list[dict[str, Any]], labels: list[str]) -> dict[str, Any]:
         "method": "Wilson score and unpooled normal difference, 95% confidence",
         "versions": versions,
         "pairwise": pairwise,
+        "evidence_indexes_match": all(item["evidence_index"] is not None for item in versions)
+        and len({item["evidence_index"]["evidence_index_sha256"] for item in versions}) == 1,
+        "every_version_has_an_evidence_index": all(item["evidence_index"] is not None for item in versions),
     }
 
 
@@ -88,10 +126,12 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     labels = [label.strip() for label in args.labels.split(",") if label.strip()]
-    payload = compare(
-        [load_json(path) for path in args.metrics],
-        labels,
-    )
+    metrics = [load_json(path) for path in args.metrics]
+    # A comparison is a published artifact, so every input must still explain
+    # its own total before the comparison is written.
+    for item in metrics:
+        _verify_evidence_index(item)
+    payload = compare(metrics, labels)
     args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(json.dumps(payload, indent=2))
     return 0
