@@ -73,6 +73,25 @@ def image_payload(registry_digest: str | None = DIGEST_B) -> dict:
     }
 
 
+def attestation_payload(
+    *,
+    status: str = "signed",
+    digest: str | None = None,
+    result: str = "verified",
+) -> dict:
+    """A signed attestation that carries the evidence promotion requires (#436)."""
+
+    return {
+        "status": status,
+        "subject_digest": DIGEST_B if digest is None else digest,
+        "verification": {
+            "result": result,
+            "reference": "ghcr.io/q/workbench:sha256-aaaa.att",
+            "verifier": "gh attestation verify --owner q",
+        },
+    }
+
+
 def manifest(**overrides: object) -> dict:
     fields = {
         "version": "v0.3.0",
@@ -82,7 +101,7 @@ def manifest(**overrides: object) -> dict:
         "lock": lock_payload(),
         "sbom": sbom_payload(),
         "image": image_payload(),
-        "attestation": {"status": "signed"},
+        "attestation": attestation_payload(),
     }
     fields.update(overrides)
     return build_manifest(**fields)  # type: ignore[arg-type]
@@ -313,8 +332,18 @@ class AttestationRecordingTests(unittest.TestCase):
             path.write_text(json.dumps(manifest(attestation={"status": "unsigned"})), encoding="utf-8")
             self.assertNotEqual(promotion_reasons(json.loads(path.read_text())), ())
 
-            document = record_attestation(path, "signed")
+            document = record_attestation(
+                path,
+                "signed",
+                subject_digest=DIGEST_B,
+                verification={
+                    "result": "verified",
+                    "reference": "ghcr.io/q/workbench:sha256-aaaa.att",
+                    "verifier": "gh attestation verify --owner q",
+                },
+            )
             self.assertEqual(document["attestation"]["status"], "signed")
+            self.assertEqual(document["attestation"]["subject_digest"], DIGEST_B)
             self.assertEqual(promotion_reasons(document), ())
             self.assertTrue(document["release_eligible"])
             # The recorded outcome is persisted, not just returned.
@@ -384,3 +413,69 @@ class WorkflowGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AttestationEvidenceTests(unittest.TestCase):
+    """Issue #436: `signed` has to be backed by a verifiable attestation."""
+
+    def test_a_signed_status_without_evidence_is_not_promotable(self) -> None:
+        document = manifest(attestation={"status": "signed"})
+        reasons = promotion_reasons(document)
+        self.assertNotEqual(reasons, ())
+        self.assertIn("subject_digest", " ".join(reasons))
+        self.assertIn("verification", " ".join(reasons))
+
+    def test_an_attestation_for_a_different_digest_is_not_promotable(self) -> None:
+        document = manifest(attestation=attestation_payload(digest=DIGEST_A))
+        self.assertIn(
+            "attestation.subject_digest does not match image.registry_digest",
+            promotion_reasons(document),
+        )
+
+    def test_a_malformed_subject_digest_is_not_promotable(self) -> None:
+        payload = attestation_payload()
+        payload["subject_digest"] = "not-a-digest"
+        self.assertIn(
+            "attestation.subject_digest must be the sha256 digest the attestation covers",
+            promotion_reasons(manifest(attestation=payload)),
+        )
+
+    def test_an_unverified_result_is_not_promotable(self) -> None:
+        document = manifest(attestation=attestation_payload(result="unverified"))
+        self.assertIn(
+            "attestation.verification.result must be 'verified'",
+            promotion_reasons(document),
+        )
+
+    def test_a_verification_without_a_reference_or_verifier_is_not_promotable(self) -> None:
+        for field in ("reference", "verifier"):
+            with self.subTest(field=field):
+                payload = attestation_payload()
+                payload["verification"] = {k: v for k, v in payload["verification"].items() if k != field}
+                joined = " ".join(promotion_reasons(manifest(attestation=payload)))
+                self.assertIn(field, joined)
+
+    def test_a_verification_that_is_not_an_object_is_not_promotable(self) -> None:
+        payload = attestation_payload()
+        payload["verification"] = "verified"
+        self.assertIn(
+            "attestation.verification must record how the attestation was verified",
+            promotion_reasons(manifest(attestation=payload)),
+        )
+
+    def test_recorded_attestation_without_evidence_stays_unpromotable(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps(manifest(attestation={"status": "unsigned"})), encoding="utf-8")
+
+            document = record_attestation(path, "signed")
+
+            self.assertEqual(document["attestation"]["status"], "signed")
+            self.assertFalse(document["release_eligible"])
+            self.assertNotEqual(promotion_reasons(document), ())
+            # The status is recorded truthfully even when it cannot be promoted.
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["attestation"]["status"], "signed")
+            self.assertFalse(persisted["release_eligible"])
