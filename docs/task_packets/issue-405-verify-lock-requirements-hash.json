@@ -1,0 +1,63 @@
+{
+  "issue": 405,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the lock header's requirements_hash checkable, so a lock regenerated before a pyproject edit cannot keep claiming a provenance it no longer has.",
+  "decision_supported": "Was the stale lock in #398 detectable from the lock alone, or does something have to compare the header against the declared requirements?",
+  "allowed_paths": [
+    "tools/scripts/lock_python_dependencies.py",
+    "tests/unit/test_dependency_lock.py",
+    "docs/task_packets/issue-405-verify-lock-requirements-hash.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "pyproject.toml",
+    "docker/requirements-dev.lock",
+    "Makefile"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    ".github/workflows/**"
+  ],
+  "input_refs": [
+    "tools/scripts/lock_python_dependencies.py",
+    "pyproject.toml",
+    "docker/requirements-dev.lock",
+    "Makefile",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/lock_python_dependencies.py",
+    "tests/unit/test_dependency_lock.py"
+  ],
+  "acceptance": [
+    "verify reports stale_requirements_hash when the header does not equal the hash recomputed from the declared requirements.",
+    "The finding names both hashes and the command that fixes it.",
+    "A lock whose header matches produces no such finding.",
+    "Editing a requirement without regenerating the lock makes verify fail with both the stale hash and the out-of-range pin."
+  ],
+  "commands": [
+    "python3 tools/scripts/lock_python_dependencies.py verify",
+    "python3 -m pytest tests/unit/test_dependency_lock.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "The verifier already required the header key to be present but never compared its value, which is why #398's stale lock passed everything except the pin range check.",
+    "Changing ruff to 0.16.6 in pyproject.toml makes verify report stale_requirements_hash 897488909240... vs 25934c58a5e3... alongside the out_of_range finding; restoring it passes.",
+    "The new test rewrites only the header hash in a rendered lock and expects exactly one finding."
+  ],
+  "stop_conditions": [
+    "The requirements order is not deterministic, which would make the hash unstable; locked_requirements returns the declared order and render_lock hashes that same list."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A stale header is now a hard failure, so a contributor who edits pyproject must run make lock-python; the message says exactly that.",
+    "The check is skipped when the header key is absent, because a missing key is already a separate finding."
+  ]
+}
