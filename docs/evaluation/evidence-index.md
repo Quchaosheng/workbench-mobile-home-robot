@@ -61,8 +61,8 @@ Each aggregate declares how it is rebuilt from the per-run contributions:
 ```python
 from collect_metrics import AGGREGATE_METRICS, aggregate_from_index, verify_evidence_index
 
-verify_evidence_index(metrics)                      # refuses a stale or drifted index
-aggregate_from_index("recovery_rate", metrics["runs"])   # the recomputation itself
+verify_evidence_index(metrics)  # refuses a stale or drifted index
+aggregate_from_index("recovery_rate", metrics["runs"])  # the recomputation itself
 ```
 
 `verify_evidence_index` is the gate: it raises when a published aggregate differs
