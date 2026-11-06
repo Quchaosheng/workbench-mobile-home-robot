@@ -61,3 +61,22 @@ Dashboard costs no requests.
 A critical condition is never hidden by another source reporting healthy. If a
 subsystem is unreachable, the alert says the source is missing rather than
 silently passing.
+
+## Monitoring and instance readiness
+
+`/readyz` composes both configured read surfaces, so a readable event source is
+not on its own enough to keep an instance in rotation:
+
+| Health document | `/readyz` | `reason` |
+| --- | --- | --- |
+| Absent | `200 ready` | absent — health stays `unknown`, not an error |
+| Valid | `200 ready` | absent |
+| Present but malformed or oversized | `503 not_ready` | `health_source_invalid` |
+
+Readiness is withheld rather than reported for a configured health source the
+backend cannot trust, and the response names the failed surface. The `reason`
+token is bounded — `event_source_unavailable`, `health_source_invalid`,
+`health_source_unavailable` or `draining` — and never carries document contents,
+filesystem paths or credentials, because `/readyz` is reachable by an
+orchestrator rather than by an authenticated operator. Draining is reported
+first: an instance that is shutting down is `not_ready` regardless of health.
