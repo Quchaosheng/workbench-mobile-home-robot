@@ -1,0 +1,68 @@
+{
+  "issue": 503,
+  "human_owner": "Quchaosheng",
+  "objective": "Resolve the nine high findings grype reports for the container image's build-time and runtime-tool packages, so the supply-chain scan reports the real state of the image instead of failing on packages that are not reachable.",
+  "decision_supported": "Can the container scan be made honest without lowering any gate — that is, without changing severity-cutoff, disabling fail-build, or adding a blanket VEX entry?",
+  "allowed_paths": [
+    "docker/vex.json",
+    "docker/requirements-dev.lock",
+    "tests/unit/test_container_profiles.py",
+    "docs/task_packets/issue-503-container-scan-high-findings.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    ".github/workflows/container-full-stack.yml",
+    "tests/unit/test_container_baseline.py",
+    "docs/architecture/system.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    ".github/workflows/*.yml"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    ".github/workflows/container-full-stack.yml",
+    ".github/workflows/ci.yml",
+    "docker/vex.json",
+    "docker/requirements-dev.lock",
+    "tests/unit/test_container_baseline.py",
+    "tests/unit/test_container_profiles.py"
+  ],
+  "outputs": [
+    "docker/vex.json",
+    "docker/requirements-dev.lock",
+    "tests/unit/test_container_profiles.py"
+  ],
+  "acceptance": [
+    "The lock resolves with --require-hashes after moving virtualenv to 21.15.1 and filelock to 4.2.4, and both import.",
+    "Every high finding in the grype report names the exact purl the report emitted in docker/vex.json, with a justification and an impact statement that carries the evidence.",
+    "No change to severity-cutoff, fail-build, or the scan action itself.",
+    "tests/unit/test_container_profiles.py enumerates the VEX (vulnerability, purl) set so a blanket ignore entry fails."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_container_baseline.py tests/unit/test_container_profiles.py tests/unit/test_dashboard_accessibility.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 tools/scripts/check_task_packet.py --all"
+  ],
+  "evidence": [
+    "workbench-1-grype.json from run 40643503777: severity High 9, of which 8 are virtualenv/filelock pinned in docker/requirements-dev.lock and 1 is @fastify/busboy vendored inside Ubuntu Noble's nodejs.",
+    "Installing the updated lock into a scratch --target with --require-hashes resolves and both packages import at their new versions."
+  ],
+  "stop_conditions": [
+    "The scan still reports a high finding that is reachable at run time; that would need a real upgrade or removal, not a VEX statement.",
+    "nodejs turns out to be needed for something other than the in-image accessibility tests; removing it would then be possible and preferable to a VEX statement."
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "A VEX statement is an assertion about reachability, so each one names the purl and the reason rather than only a status.",
+    "The lock upgrade changes two build-time tools; if the frozen set was chosen deliberately, the hashes and versions are the only change and the rest of the lock is untouched."
+  ]
+}
