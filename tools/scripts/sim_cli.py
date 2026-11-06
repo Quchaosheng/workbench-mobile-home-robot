@@ -72,6 +72,9 @@ UNSPECIFIED = "unspecified"
 
 MAX_MANIFEST_BYTES = 1 * 1024 * 1024
 MAX_COMMAND_TOKENS = 64
+# Matches run_evaluation's per-invocation ceiling so the two entry points refuse
+# the same matrix (issue #450).
+MAX_SCENARIOS_PER_RUN = 50
 MAX_RUNNER_LOG_BYTES = 4 * 1024 * 1024
 # A caller may label an intentional rerun, but the label is bounded because it
 # is recorded in metadata and read by a reviewer. Omitting it is the default and
@@ -889,6 +892,13 @@ def run_scenarios(
 ) -> dict[str, Any]:
     if not scenarios:
         raise SimulationInputError("at least one scenario is required")
+    # Every scenario is an external process and an artifact, so the list needs the
+    # same ceiling run_evaluation applies to its matrix (issue #450).
+    if len(scenarios) > MAX_SCENARIOS_PER_RUN:
+        raise SimulationInputError(
+            f"{len(scenarios)} scenarios, over the {MAX_SCENARIOS_PER_RUN}-scenario limit; "
+            "split the work into several invocations with distinct --output-dir values"
+        )
     validate_run_nonce(nonce)
     results = [
         run_scenario(scenario, runner=runner, output_dir=output_dir, version=version, command=command, nonce=nonce)
