@@ -1,0 +1,105 @@
+{
+  "issue": 432,
+  "human_owner": "TH3478",
+  "objective": "Remove the pull_request path filter from the workflow that emits the declared required check static-and-cpu-image, replace it with an always-running applicability job plus an always-running verdict job that owns the required check name and reports success, not-applicable or failure, and pin the result with tests that fail on the path-filtered workflow.",
+  "decision_supported": "Does every pull request targeting main emit a terminal result for the declared required check static-and-cpu-image, and is 'no workflow run was created' distinguishable from 'the job ran and skipped' and from 'the image was actually tested'?",
+  "allowed_paths": [
+    ".github/workflows/container-full-stack.yml",
+    "docs/security/branch-protection.md",
+    "docs/task_packets/issue-432-static-image-path-filter.json",
+    "tests/unit/test_branch_protection_gate.py"
+  ],
+  "read_only_paths": [
+    ".github/rulesets/main-protection.json",
+    "AGENTS.md",
+    "docs/task_packets/README.md",
+    "tools/schemas/task-packet-v1.schema.json",
+    "tools/scripts/check_branch_protection.py",
+    "tools/scripts/check_release_commit.py",
+    "tools/scripts/check_task_packet.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/security.yml",
+    ".github/workflows/release-image.yml",
+    ".github/rulesets/main-protection.json",
+    "tools/scripts/check_branch_protection.py",
+    "tools/scripts/check_release_commit.py"
+  ],
+  "input_refs": [
+    ".github/workflows/container-full-stack.yml",
+    ".github/rulesets/main-protection.json",
+    "docs/security/branch-protection.md",
+    "tests/unit/test_branch_protection_gate.py",
+    "tools/scripts/check_branch_protection.py",
+    "tools/scripts/check_release_commit.py",
+    "tools/scripts/check_task_packet.py",
+    "tools/schemas/task-packet-v1.schema.json"
+  ],
+  "outputs": [
+    ".github/workflows/container-full-stack.yml",
+    "docs/security/branch-protection.md",
+    "docs/task_packets/issue-432-static-image-path-filter.json",
+    "tests/unit/test_branch_protection_gate.py"
+  ],
+  "acceptance": [
+    "The container-full-stack workflow declares no paths or paths-ignore filter on pull_request, so GitHub creates the workflow for every pull request that targets main and the declared required check always emits a result.",
+    "The fifteen former trigger patterns survive as data in the always-running static-image-applicability job, which records an applicable output and a human-readable reason on every run.",
+    "The expensive build, CPU smoke, dashboard health, SBOM and Grype scan steps move unchanged into static-image-build, which runs only when the decision reports applicable=true, so an image-relevant change is still fully tested.",
+    "The required check name static-and-cpu-image is owned by an always-running verdict job with if: always() that reports success for a passing build, not-applicable only when the decision job succeeded and the build was skipped, and failure for a failed build, a cancelled build, or a skipped build whose decision did not run.",
+    "A skipped or absent run is never treated as a passing image check: check_release_commit.py still accepts only the success conclusion on a tagged commit.",
+    "Tests execute the committed decision and verdict scripts against documentation-only, tools-only, dashboard-only, ruleset-only and image-relevant changes, refuse an empty path policy, and refuse a decision that cannot record its result, so the suite fails on the previous path-filtered workflow.",
+    "The branch-protection page documents the trigger policy and the required matrix together and states that adding or removing a path filter or a required check requires owner review.",
+    "The workflow YAML parses, every action reference remains pinned to a 40-character commit SHA with a version comment, and the supply-chain scan contract is unchanged."
+  ],
+  "commands": [
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/unit/test_branch_protection_gate.py",
+    "python3 -m ruff check tests/unit/test_branch_protection_gate.py",
+    "python3 -m pytest -q --no-header -p no:cacheprovider tests/unit/test_container_profiles.py tests/unit/test_release_workflow.py",
+    "python3 tools/scripts/check_task_packet.py --all --base 3737d308de936d9d3b55de7fa6309ec59b3afd88",
+    "python3 tools/scripts/check_branch_protection.py --live tests/fixtures/issue-224-legacy-protection.json",
+    "python3 tools/scripts/check_release_commit.py --check-runs tests/fixtures/issue-224-check-runs.json --commit 0000000000000000000000000000000000000000",
+    "make docs",
+    "git diff --check"
+  ],
+  "evidence": [
+    "Focused pytest output for the trigger-policy, applicability-decision, verdict-job and workflow-pin tests, including the same suite run against the pre-change workflow to show it fails there.",
+    "Parsed YAML output showing pull_request carries no paths filter and that static-image-applicability, static-image-build and static-and-cpu-image exist with the recorded needs and if conditions.",
+    "Decision-script output for documentation-only, tools-only, dashboard-only and ruleset-only changes reporting applicable=false with a reason, and for a libs change reporting applicable=true.",
+    "Verdict-script output for success, failure, skipped-with-successful-decision, skipped-without-decision and cancelled build results, showing which exit code each produces.",
+    "check_release_commit.py still refusing a skipped conclusion and reporting a never-created run as missing.",
+    "check_task_packet.py --all --base output proving every Git-visible changed path is inside this packet's allowed_paths.",
+    "build/verify.sh output comparing the full test suite against build/baseline.txt, run with no other pytest process active.",
+    "A strict mkdocs build and a clean whitespace check."
+  ],
+  "stop_conditions": [
+    "The change would have to delete static-and-cpu-image from the declaration or treat an absent run as success; that is explicitly forbidden by the issue.",
+    "A live GitHub check run would have to be observed to claim the required context now reports; this change establishes the trigger defect and its fix from the workflow and its tests only, so a live run stays unclaimed.",
+    "The static-and-cpu-image job fails on main because the base image carries high-severity CVEs; that is a separate defect and is not fixed here.",
+    "A concurrent issue would need the same workflow or .github/rulesets/main-protection.json regions edited, so this change stays inside the static image path filter and its documentation.",
+    "The expensive image build would have to exceed the documented 90-minute budget for an image-relevant change, which would require an owner-approved applicability policy instead.",
+    "A write outside allowed_paths is required, especially to another workflow or to the ruleset declaration."
+  ],
+  "data_classification": "Repository-local workflow configuration, public path names and non-secret check names. No credentials are read, written or logged; the workflow runs with contents: read only.",
+  "model_policy": "Deterministic Python and shell inside the workflow plus local unit tests; no model inference, no training and no external service calls added by this change.",
+  "risks_and_fallbacks": [
+    "Reporting not-applicable as a passing gate result could be mistaken for a tested image. The verdict job prints the decision reason, writes it to the step summary, and the release checker still refuses any conclusion other than success, so a release cannot ride a not-applicable run.",
+    "Moving the fifteen patterns out of the trigger and into a script could drift from GitHub's own matcher. The translation is exercised by tests over the representative documentation-only, tools-only, dashboard-only, ruleset-only and image-relevant paths quoted in the issue.",
+    "Every pull request now starts a short ubuntu-24.04 job that checks out the repository and lists changed paths. That cost is bounded and deliberate: a required check that is never created is more expensive than one that always reports.",
+    "An unknown or zero base revision (manual dispatch, brand-new branch) builds the image rather than reporting not-applicable, so a run without a comparison fails toward doing the work instead of skipping it.",
+    "The image build still fails today because the base image carries high-severity CVEs. That defect is unchanged by this work and remains visible as a failure conclusion, not hidden as a skip."
+  ]
+}

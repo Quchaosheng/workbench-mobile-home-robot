@@ -5,14 +5,28 @@ container, kernel, MCU, CodeQL and dependency-review jobs could fail or be stale
 and the release workflow accepted any ``v*`` tag. Declaring the matrix is not
 enough on its own, so these tests also pin the exit-code contract that keeps
 "could not observe" from being reported as "passed".
+
+Issue #432: a declared required check is only as good as the workflow that emits
+it. ``static-and-cpu-image`` was declared required while its workflow carried a
+``paths:`` trigger filter, so a documentation-only, tools-only, dashboard-only or
+ruleset-only pull request created no workflow run at all and the required context
+never reported. The tests below refuse a path-filtered required check, tell "no
+run was created" apart from "the job ran and skipped", and exercise the
+applicability decision and the verdict that replaced the trigger filter.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "scripts"))
@@ -281,6 +295,298 @@ class ReleaseWorkflowWiringTests(unittest.TestCase):
             workflow.index("--verify release-manifest.json"), workflow.index("actions/attest-build-provenance@")
         )
         self.assertLess(workflow.index("--require-promotion"), workflow.index("workbench-1-release-provenance"))
+
+
+def _workflow() -> dict:
+    return yaml.safe_load(CONTAINER_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def _triggers(workflow: dict) -> dict:
+    # `on:` is parsed by YAML 1.1 as the boolean True, hence the fallback.
+    triggers = workflow.get("on") or workflow.get(True)
+    assert isinstance(triggers, dict), "the container workflow must declare triggers"
+    return triggers
+
+
+def _job(workflow: dict, name: str) -> dict:
+    assert name in workflow["jobs"], f"{name} must be a job in the container workflow"
+    return workflow["jobs"][name]
+
+
+def _needs(job: dict) -> list[str]:
+    needs = job.get("needs") or []
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
+def _image_path_patterns() -> list[str]:
+    patterns = _job(_workflow(), "static-image-applicability")["env"]["IMAGE_PATH_PATTERNS"]
+    return [line.strip() for line in patterns.splitlines() if line.strip()]
+
+
+def _step_script(job_name: str, *, contains: str) -> str:
+    """One inline `run:` script, exactly as GitHub would execute it."""
+
+    for step in _job(_workflow(), job_name)["steps"]:
+        if "run" in step and contains in step["run"]:
+            return step["run"]
+    raise AssertionError(f"{job_name} has no inline script containing {contains!r}")
+
+
+class _ScriptCase(unittest.TestCase):
+    """Run a workflow script in a throwaway repository the way CI runs it."""
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp(prefix="issue432-"))
+        self.addCleanup(shutil.rmtree, self.directory, True)
+
+    def git(self, *arguments: str) -> str:
+        result = subprocess.run(["git", *arguments], cwd=self.directory, check=True, capture_output=True, text=True)
+        return result.stdout.strip()
+
+    def commit(self, files: dict[str, str], message: str) -> str:
+        for name, content in files.items():
+            path = self.directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-qm", message)
+        return self.git("rev-parse", "HEAD")
+
+    def repository(self) -> str:
+        self.git("init", "-q")
+        self.git("config", "user.name", "Issue 432")
+        self.git("config", "user.email", "issue-432@example.invalid")
+        return self.commit({"README.md": "base\n", "docs/guide.md": "base\n"}, "base")
+
+    def run_script(
+        self, script: str, environment: dict[str, str], *, name: str = "script"
+    ) -> subprocess.CompletedProcess:
+        path = self.directory / f"{name}.sh"
+        path.write_text(script, encoding="utf-8")
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+            "HOME": os.environ.get("HOME", str(self.directory)),
+            **environment,
+        }
+        return subprocess.run(
+            ["bash", str(path)], cwd=self.directory, env=env, capture_output=True, text=True, check=False
+        )
+
+
+class RequiredCheckTriggerPolicyTests(unittest.TestCase):
+    """Issue #432: a declared required check may not be path-filtered away."""
+
+    def test_no_required_check_workflow_filters_pull_requests_by_path(self) -> None:
+        triggers = _triggers(_workflow())
+        self.assertIn("pull_request", triggers)
+        # A `paths:`/`paths-ignore:` key makes GitHub create no run at all when
+        # nothing matches, so the declared required check reports no result.
+        filtered = {
+            str(event)
+            for event, config in triggers.items()
+            if isinstance(config, dict) and ("paths" in config or "paths-ignore" in config)
+        }
+        self.assertEqual(filtered, set())
+
+    def test_the_required_check_name_is_owned_by_an_always_running_job(self) -> None:
+        workflow = _workflow()
+        required = load_declaration(DECLARATION)["required_status_checks"]
+        self.assertIn("static-and-cpu-image", required)
+        verdict = _job(workflow, "static-and-cpu-image")
+        # `if: always()` is what makes the verdict run when the build is skipped,
+        # which is the case the old trigger filter hid by creating no run at all.
+        self.assertEqual(verdict.get("if"), "always()")
+        self.assertIn("static-image-build", _needs(verdict))
+
+    def test_the_expensive_image_job_still_runs_for_image_relevant_changes(self) -> None:
+        workflow = _workflow()
+        build = _job(workflow, "static-image-build")
+        self.assertIn("static-image-applicability", _needs(build))
+        self.assertIn("outputs.applicable", build.get("if", ""))
+        # The build keeps every expensive step and the artifact it produces; the
+        # verdict job only reports, so it may not own the scan either.
+        build_yaml = yaml.safe_dump(build)
+        verdict_yaml = yaml.safe_dump(_job(workflow, "static-and-cpu-image"))
+        for marker in (
+            "anchore/scan-action@",
+            "docker/build-push-action@",
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, build_yaml)
+                self.assertNotIn(marker, verdict_yaml)
+
+    def test_the_supply_chain_scan_contract_is_unchanged(self) -> None:
+        text = CONTAINER_WORKFLOW.read_text(encoding="utf-8")
+        scan_block = text.split("anchore/scan-action@", 1)[1].split("- uses:", 1)[0]
+        self.assertIn("fail-build: true", scan_block)
+        self.assertIn("severity-cutoff: high", scan_block)
+        self.assertIn("vex: docker/vex.json", scan_block)
+        self.assertIn("output-file: workbench-1-grype.json", scan_block)
+        self.assertNotIn("only-fixed:", scan_block)
+
+    def test_a_skipped_or_absent_run_is_not_a_passing_required_check(self) -> None:
+        # The release checker consumes the same matrix. A skipped job and a run
+        # that was never created must both refuse the release, which is exactly
+        # what a path-filtered required check used to look like.
+        not_passing, missing = failing_required_checks(
+            ("static-and-cpu-image",),
+            [{"name": "static-and-cpu-image", "status": "completed", "conclusion": "skipped"}],
+        )
+        self.assertEqual(missing, [])
+        self.assertTrue(not_passing)
+        not_passing, missing = failing_required_checks(("static-and-cpu-image",), [])
+        self.assertEqual(not_passing, [])
+        self.assertEqual(missing, ["static-and-cpu-image"])
+
+    def test_the_branch_protection_page_documents_trigger_and_matrix_together(self) -> None:
+        page = (ROOT / "docs" / "security" / "branch-protection.md").read_text(encoding="utf-8")
+        self.assertIn("static-and-cpu-image", page)
+        self.assertIn("path filter", page.lower())
+        self.assertIn("owner review", page.lower())
+
+
+class ApplicabilityDecisionTests(_ScriptCase):
+    """Issue #432: the decision replaces the filter, so it is actually executed."""
+
+    def decide(self, environment: dict[str, str]) -> tuple[subprocess.CompletedProcess, str, str]:
+        output = self.directory / "github-output.txt"
+        output.unlink(missing_ok=True)
+        result = self.run_script(
+            _step_script("static-image-applicability", contains="IMAGE_PATH_PATTERNS"),
+            {
+                "GITHUB_OUTPUT": str(output),
+                "IMAGE_PATH_PATTERNS": "\n".join(_image_path_patterns()),
+                **environment,
+            },
+            name="decide",
+        )
+        recorded = output.read_text(encoding="utf-8") if output.exists() else ""
+        values = dict(line.partition("=")[::2] for line in recorded.splitlines() if "=" in line)
+        return result, values.get("applicable", ""), values.get("reason", "")
+
+    def test_documentation_tools_dashboard_and_ruleset_changes_are_not_applicable(self) -> None:
+        base = self.repository()
+        for label, files in (
+            ("documentation only", {"docs/security/branch-protection.md": "text\n", "README.md": "text\n"}),
+            ("tools only", {"tools/scripts/quality_gates.py": "text\n"}),
+            ("dashboard only", {"apps/dashboard/app.js": "text\n"}),
+            ("ruleset only", {".github/rulesets/main-protection.json": "{}\n"}),
+        ):
+            with self.subTest(label=label):
+                head = self.commit(files, label)
+                result, applicable, reason = self.decide(
+                    {"EVENT_NAME": "pull_request", "PULL_REQUEST_BASE": base, "PULL_REQUEST_HEAD": head}
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(applicable, "false", reason)
+                self.assertIn("none of the", reason)
+
+    def test_an_image_relevant_change_is_applicable(self) -> None:
+        base = self.repository()
+        head = self.commit({"libs/contracts/model.py": "changed\n"}, "library change")
+        result, applicable, reason = self.decide(
+            {"EVENT_NAME": "pull_request", "PULL_REQUEST_BASE": base, "PULL_REQUEST_HEAD": head}
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(applicable, "true")
+        self.assertIn("libs/contracts/model.py", reason)
+
+    def test_an_unknown_base_builds_rather_than_claiming_not_applicable(self) -> None:
+        self.repository()
+        # A manual dispatch and a brand-new branch have nothing to compare, so the
+        # run must build the image instead of reporting that it is irrelevant.
+        for environment in (
+            {"EVENT_NAME": "workflow_dispatch"},
+            {"EVENT_NAME": "push", "PUSH_BEFORE": "0" * 40, "PUSH_AFTER": "a" * 40},
+        ):
+            with self.subTest(environment=environment):
+                result, applicable, _ = self.decide(environment)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(applicable, "true")
+
+    def test_an_empty_policy_fails_instead_of_reporting_not_applicable(self) -> None:
+        self.repository()
+        result = self.run_script(
+            _step_script("static-image-applicability", contains="IMAGE_PATH_PATTERNS"),
+            {"GITHUB_OUTPUT": str(self.directory / "empty.txt"), "IMAGE_PATH_PATTERNS": ""},
+            name="empty-policy",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("IMAGE_PATH_PATTERNS is empty", result.stderr)
+
+    def test_a_decision_that_cannot_be_recorded_is_a_failure(self) -> None:
+        base = self.repository()
+        head = self.commit({"docs/note.md": "text\n"}, "docs")
+        result = self.run_script(
+            _step_script("static-image-applicability", contains="IMAGE_PATH_PATTERNS"),
+            {
+                "IMAGE_PATH_PATTERNS": "\n".join(_image_path_patterns()),
+                "EVENT_NAME": "pull_request",
+                "PULL_REQUEST_BASE": base,
+                "PULL_REQUEST_HEAD": head,
+            },
+            name="no-output",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GITHUB_OUTPUT", result.stderr)
+
+
+class VerdictJobTests(_ScriptCase):
+    """Issue #432: the always-running job must report a truthful conclusion."""
+
+    def verdict(self, build_result: str, apply_result: str) -> subprocess.CompletedProcess:
+        return self.run_script(
+            _step_script("static-and-cpu-image", contains="case "),
+            {
+                "GITHUB_STEP_SUMMARY": str(self.directory / "summary.md"),
+                "BUILD_RESULT": build_result,
+                "APPLY_RESULT": apply_result,
+                "APPLY_REASON": "none of the 15 image path patterns match the two changed paths",
+            },
+            name="verdict",
+        )
+
+    def test_a_real_build_passes_and_a_failing_build_fails(self) -> None:
+        passed = self.verdict("success", "success")
+        self.assertEqual(passed.returncode, 0, passed.stderr)
+        self.assertIn("static-and-cpu-image: success", passed.stdout)
+        failed = self.verdict("failure", "success")
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("static-and-cpu-image: failure", failed.stdout)
+
+    def test_a_not_applicable_change_passes_and_says_why(self) -> None:
+        skipped = self.verdict("skipped", "success")
+        self.assertEqual(skipped.returncode, 0, skipped.stderr)
+        self.assertIn("static-and-cpu-image: not-applicable", skipped.stdout)
+        self.assertIn("none of the 15 image path patterns", skipped.stdout)
+
+    def test_a_skipped_build_without_a_decision_is_a_failure(self) -> None:
+        for apply_result in ("failure", "cancelled", "skipped"):
+            with self.subTest(apply_result=apply_result):
+                result = self.verdict("skipped", apply_result)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("static-and-cpu-image: failure", result.stdout)
+
+    def test_a_cancelled_or_unusable_build_is_not_a_pass(self) -> None:
+        for build_result in ("cancelled", ""):
+            with self.subTest(build_result=build_result):
+                result = self.verdict(build_result, "success")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("static-and-cpu-image: success", result.stdout)
+
+
+class WorkflowPinTests(unittest.TestCase):
+    """Issue #404's pinning rule, applied to the workflow this change edits."""
+
+    def test_every_action_reference_stays_pinned_to_a_commit_sha(self) -> None:
+        import re
+
+        workflow = CONTAINER_WORKFLOW.read_text(encoding="utf-8")
+        action_lines = [line.strip() for line in workflow.splitlines() if "uses:" in line]
+        self.assertTrue(action_lines)
+        self.assertTrue(all(re.search(r"@[0-9a-f]{40}\s+# v[0-9]", line) for line in action_lines), action_lines)
 
 
 if __name__ == "__main__":
