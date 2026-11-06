@@ -538,6 +538,17 @@ def _sweep_stale_staging(output_dir: Path) -> list[str]:
     return removed
 
 
+def _refuse_existing_artifact(final: Path) -> None:
+    """Refuse to publish over a bundle that already names this identity.
+
+    Issue #466 makes the directory name a function of the run's inputs, so the
+    refusal is now reachable by simply running the same scenario twice. That is
+    deliberate: the alternative was to rename or reroll the ID, which is how a
+    deterministic name silently replaced the evidence it collided with. The
+    message names both legal ways forward so an operator does not read it as a
+    crash.
+    """
+
     if final.exists():
         raise SimulationInputError(
             f"refusing to overwrite existing run artifact: {final}; the run ID is derived from the run's inputs, "
