@@ -8,7 +8,18 @@
     "seed": {"type": "integer"},
     "task_id": {"type": "string"},
     "world_version": {"type": "string"},
-    "fault_type": {"type": "string"},
+    "fault_type": {
+      "type": "string",
+      "enum": [
+        "actuator_timeout",
+        "camera_dropout",
+        "grasp_failure",
+        "moving_target",
+        "occlusion",
+        "stale_observation",
+        "none"
+      ]
+    },
     "timeout_s": {"type": "integer", "minimum": 1, "maximum": 600},
     "oracle_allowed": {"type": "boolean"}
   }
