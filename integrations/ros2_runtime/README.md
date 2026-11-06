@@ -61,3 +61,13 @@ accepted = ingest_capture(store, "capture/task_events.jsonl")
 `workflow_id` on `ExecuteTask.Goal`, are the correlation contract this adapter
 reads. A capture from an older runtime build is rejected rather than bound by
 guesswork.
+
+## Not a CAN interoperation claim
+
+This adapter reads a captured file. It says nothing about the CAN bus the runtime drives:
+the runtime's `runtime_can` classic-CAN layout and this repository's MCU CAN Wire V1
+disagree on the version byte, the byte-4 field and how STOP is encoded, and both codecs
+refuse the other's frames on purpose. See
+[`docs/architecture/mcu-wire-v1.md`](../../docs/architecture/mcu-wire-v1.md#not-the-only-classic-can-encoding-in-the-ecosystem).
+A shared `TaskEvent` stream does not make the two encodings interchangeable, and no run
+may be described as end-to-end CAN evidence on the strength of this adapter.

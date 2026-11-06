@@ -29,6 +29,34 @@ metadata and are not transmitted in the eight-byte CAN payload. A bridge owns
 their local generation and retention. They are never reconstructed as remote
 timestamps or used as cross-device freshness evidence.
 
+## Not the only classic-CAN encoding in the ecosystem
+
+A companion runtime (`embodied-agent-runtime`, `ros2_ws/src/runtime_can/`) speaks a
+**different** classic-CAN layout on the same arbitration IDs. This is recorded here so
+nobody discovers it by diffing two headers:
+
+| | Wire V1 (here) | `runtime_can` |
+| --- | --- | --- |
+| byte 0 version | `0x10` | `0x01` |
+| byte 4 | `retry_count` | `argument` bits 31..24 |
+| bytes 5..7 | reserved `0x00` | `argument` bits 23..0 |
+| ordinary command / STOP | IDs `0x100` / `0x080` | both on `0x100` |
+| STOP opcode | `5` | `0xFF` |
+| STOP payload | ID `>= 0x8000` | ID `>= 0x8000`, original ID in `argument` |
+| ACK | `0x101` | `0x101` |
+| telemetry | `0x180` | not implemented |
+
+Both codecs refuse the other's frames, which is the intended fail-closed behaviour:
+feeding a `runtime_can` command frame (`01 00 01 01 ...` on `0x100`) to
+`decode_can_frame` raises `unsupported CAN Wire version`, and that rejection is pinned by
+`tests/unit/test_can_transport.py::test_rejects_a_foreign_classic_can_encoding`.
+
+The two encodings are therefore **not** interoperable, and nothing in this repository may
+claim they are. `integrations/ros2_runtime/` consumes the runtime's `TaskEvent` over a
+captured JSONL file; it is a software-evidence boundary and does not imply bus
+compatibility. Making them interoperable — adopting one layout, or adding a bridge —
+requires an owner decision recorded under `docs/decisions/` before any codec changes.
+
 ## Arbitration identifiers
 
 | CAN ID | Frame kind | Direction | Priority rationale |

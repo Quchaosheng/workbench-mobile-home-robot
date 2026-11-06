@@ -16,6 +16,7 @@ from workbench.hardware import (
     CanExternalRecord,
     CanFrame,
     CanFrameKind,
+    CanFrameValidationError,
     CanLinkLostError,
     CanLinkState,
     CanReceiveStatus,
@@ -586,6 +587,22 @@ def test_uncorrelated_ack_is_observable_but_not_externally_exposed() -> None:
     assert result.external_record is not None
     assert not result.external_record.exposure_allowed
     assert bus.external_records() == ()
+
+
+def test_rejects_a_foreign_classic_can_encoding() -> None:
+    # ``embodied-agent-runtime`` speaks a different classic-CAN layout on the same
+    # arbitration IDs (version byte 0x01, argument in bytes 4..7, STOP as opcode 0xFF
+    # on 0x100). The codecs refuse each other; this pins the refusal so the
+    # incompatibility stays deliberate and documented rather than becoming a bug.
+    from workbench.hardware.can_driver_safe import decode_can_frame
+
+    foreign_command = CanFrame(MCU_CAN_ID_COMMAND, bytes([0x01, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0xF4]))
+    foreign_stop = CanFrame(MCU_CAN_ID_COMMAND, bytes([0x01, 0x80, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x01]))
+
+    with pytest.raises(CanFrameValidationError, match="unsupported CAN Wire version"):
+        decode_can_frame(foreign_command)
+    with pytest.raises(CanFrameValidationError, match="unsupported CAN Wire version"):
+        decode_can_frame(foreign_stop)
 
 
 def test_bus_off_clears_pending_work_and_recovery_does_not_replay_it() -> None:
