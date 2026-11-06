@@ -4,6 +4,8 @@ The tests use a fixed clock rather than the wall clock, so "the retention period
 has expired" is a deterministic statement and never a flaky one.
 """
 
+import hashlib
+import json
 import sys
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -13,8 +15,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "libs" / "application"))
 
 from workbench.application.data_governance import (
+    CONTENT_DIGEST_COVERS,
     DATA_CLASSES,
     GOVERNANCE_RULES_VERSION,
+    PROJECTION_DIGEST_COVERS,
     PUBLIC_PROJECTION_VERSION,
     PUBLIC_RETAINED_FIELDS,
     AccessLevel,
@@ -24,14 +28,22 @@ from workbench.application.data_governance import (
     HoldRegister,
     LifecycleLog,
     authorize_export,
+    content_digest,
     deletion_decision,
     export_projection,
     policy_for,
+    projection_digest,
+    projection_digest_material,
     retention_summary,
 )
 from workbench.application.redaction import EVIDENCE_REDACTED, REDACTION_RULES_VERSION
 
 NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
+
+
+def canonical(value: object) -> str:
+    """The one canonical byte representation the projection digests are defined over."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def run_evidence(**overrides: object) -> dict:
@@ -333,7 +345,10 @@ class PublicProjectionTests(unittest.TestCase):
         self.assertEqual(projection["redaction_rules"], REDACTION_RULES_VERSION)
         self.assertTrue(projection["requires_authorization"])
         self.assertEqual(projection["required_access"], "restricted")
+        self.assertEqual(projection["content_digest_covers"], CONTENT_DIGEST_COVERS)
+        self.assertEqual(projection["projection_digest_covers"], PROJECTION_DIGEST_COVERS)
         self.assertEqual(len(projection["content_sha256"]), 64)
+        self.assertEqual(len(projection["projection_sha256"]), 64)
 
         # Correlation and references survive; restricted payload does not.
         self.assertEqual(projection["run"]["run_id"], "run-1")
@@ -343,6 +358,68 @@ class PublicProjectionTests(unittest.TestCase):
         for secret in ("raw-frame-bytes", "private operator instruction", "sk-live-abcdefghijklmnopqrst"):
             self.assertNotIn(secret, rendered)
         self.assertIn("payload", projection["withheld_fields"])
+
+    def test_content_digest_covers_the_published_run_for_both_access_levels(self) -> None:
+        record = run_evidence()
+        source_digest = hashlib.sha256(canonical(record).encode("utf-8")).hexdigest()
+        for access in (AccessLevel.PUBLIC, AccessLevel.RESTRICTED):
+            with self.subTest(access=access):
+                projection = export_projection(record, requester_access=access)
+                published = hashlib.sha256(canonical(projection["run"]).encode("utf-8")).hexdigest()
+                self.assertEqual(published, projection["content_sha256"])
+                self.assertEqual(content_digest(projection["run"]), projection["content_sha256"])
+                # The digest is over the published bytes, not the unprojected
+                # source: the source cannot be verified from the export.
+                self.assertNotEqual(source_digest, projection["content_sha256"])
+
+    def test_public_and_restricted_projections_have_distinct_content_digests(self) -> None:
+        record = run_evidence()
+        public = export_projection(record, requester_access=AccessLevel.PUBLIC)
+        restricted = export_projection(record, requester_access=AccessLevel.RESTRICTED)
+        self.assertNotEqual(public["run"], restricted["run"])
+        self.assertNotEqual(public["content_sha256"], restricted["content_sha256"])
+        self.assertNotEqual(public["projection_sha256"], restricted["projection_sha256"])
+
+    def test_the_envelope_digest_covers_the_run_digest_and_every_published_field(self) -> None:
+        record = run_evidence()
+        projection = export_projection(record, requester_access=AccessLevel.PUBLIC)
+        expected = {key: value for key, value in projection.items() if key not in {"run", "projection_sha256"}}
+        self.assertEqual(projection_digest_material(projection), expected)
+        self.assertEqual(projection_digest(projection), projection["projection_sha256"])
+
+        # Each mutation edits one published field and leaves the rest alone, so a
+        # digest that ignored a field would be caught by that field's case.
+        mutations = {
+            "withheld_fields": ["payload", "run_id"],
+            "required_access": "operator",
+            "requires_authorization": False,
+            "projection_version": "public-evidence-projection-v1",
+            "content_digest_covers": "source",
+            "redaction_rules": "redaction-rules-v0",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                edited = dict(projection, **{field: value})
+                self.assertNotEqual(projection_digest(edited), edited["projection_sha256"])
+
+    def test_a_redaction_marker_edit_changes_both_digests(self) -> None:
+        projection = export_projection(run_evidence(), requester_access=AccessLevel.PUBLIC)
+        edited = json.loads(json.dumps(projection))
+        edited["run"]["payload"] = "<evidence-ref:visible>"
+        # The payload is inside ``run``, so the content digest moves and the
+        # envelope digest moves with it because it hashes ``content_sha256``.
+        self.assertNotEqual(content_digest(edited["run"]), projection["content_sha256"])
+        edited["content_sha256"] = content_digest(edited["run"])
+        self.assertNotEqual(projection_digest(edited), projection["projection_sha256"])
+
+    def test_a_mismatched_access_projection_is_rejected_by_the_envelope_digest(self) -> None:
+        record = run_evidence()
+        public = export_projection(record, requester_access=AccessLevel.PUBLIC)
+        restricted = export_projection(record, requester_access=AccessLevel.RESTRICTED)
+        # Present the restricted bytes under the public envelope: every field the
+        # public access check added is still there, so only the digest can catch it.
+        spliced = dict(public, run=restricted["run"], content_sha256=restricted["content_sha256"])
+        self.assertNotEqual(projection_digest(spliced), spliced["projection_sha256"])
 
     def test_withheld_fields_are_named_so_omission_is_not_silent(self) -> None:
         record = run_evidence()
@@ -373,6 +450,8 @@ class PublicProjectionTests(unittest.TestCase):
         first = export_projection(record, requester_access=AccessLevel.PUBLIC)
         second = export_projection(record, requester_access=AccessLevel.PUBLIC)
         self.assertEqual(first, second)
+        self.assertEqual(first["content_sha256"], second["content_sha256"])
+        self.assertEqual(first["projection_sha256"], second["projection_sha256"])
 
 
 class LifecycleLogTests(unittest.TestCase):
@@ -457,6 +536,19 @@ class DocumentationTests(unittest.TestCase):
         page = (ROOT / "docs" / "deployment" / "data-governance.md").read_text(encoding="utf-8")
         self.assertIn("../security/hardening.md", page)
         self.assertIn("event-evidence-recovery.md", page)
+
+    def test_policy_page_states_exactly_what_each_digest_covers(self) -> None:
+        page = " ".join((ROOT / "docs" / "deployment" / "data-governance.md").read_text(encoding="utf-8").split())
+        self.assertIn(PUBLIC_PROJECTION_VERSION, page)
+        for expected in (
+            "content_sha256",
+            "projection_sha256",
+            "content_digest_covers",
+            "projection_digest_covers",
+            "unprojected source",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, page)
 
 
 if __name__ == "__main__":
