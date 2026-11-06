@@ -32,5 +32,6 @@ tests:
     result: NOT_EXECUTED
 evidence:
   required_fields: [board_revision, kernel_version, firmware_versions, timestamp_utc, raw_capture_hash, result]
+  binding_fields: [gate, board_model, source_revision, raw_capture]
   allowed_results: [PASS, FAIL, NOT_EXECUTED]
   physical_success_may_not_be_inferred: true
