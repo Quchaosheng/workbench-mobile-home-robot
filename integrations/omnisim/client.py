@@ -60,6 +60,13 @@ class OmniSimClient:
         return self._request("GET", "/healthz")
 
     def load_world(self, path: str, *, wait_seconds: float = 30.0, light: bool = True) -> dict[str, Any]:
+        """Load one world and return the harness's load report.
+
+        The report is trusted to name the world it actually loaded: the pilot
+        reads the world digest from ``world.digest`` (or the top-level
+        ``digest``) and refuses the run when neither is present, so a harness
+        that cannot say which revision it loaded cannot produce a pilot identity.
+        """
         if not isinstance(path, str) or not path.strip():
             raise ValueError("world path must be non-empty")
         if wait_seconds <= 0 or wait_seconds > 120:
@@ -71,6 +78,7 @@ class OmniSimClient:
         )
 
     def capabilities(self) -> dict[str, Any]:
+        """Return the harness capability report, which may also carry the digest."""
         return self._request("GET", "/capabilities")
 
     def reset(self) -> dict[str, Any]:
