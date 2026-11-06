@@ -1,0 +1,58 @@
+{
+  "issue": 504,
+  "human_owner": "Quchaosheng",
+  "objective": "Stop the kernel-module CI job failing at its first step because the runner's kernel is newer than the archive's package set, so the job reports whether wbcan.ko actually builds and loads instead of dying on a missing apt package.",
+  "decision_supported": "Is linux-modules-extra a real dependency of this job, or should the install degrade to a warning so the headers — the only thing the build needs — are still installed?",
+  "allowed_paths": [
+    ".github/workflows/ci.yml",
+    "docs/task_packets/issue-504-kernel-module-apt-fallback.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "kernel/wbcan/Makefile",
+    "tests/unit/test_container_baseline.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**"
+  ],
+  "input_refs": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    ".github/workflows/ci.yml",
+    "kernel/wbcan/Makefile"
+  ],
+  "outputs": [
+    ".github/workflows/ci.yml"
+  ],
+  "acceptance": [
+    "Headers and can-utils install unconditionally, in their own apt-get invocation.",
+    "linux-modules-extra is installed only when apt-cache reports the package exists for the running kernel.",
+    "When it does not exist the step continues and emits a workflow warning naming the package.",
+    "No other step of the kernel-module job changes: the build, the vcan load and the diagnostic report stay as they are.",
+    "No retry wrapper and no change to the job's trigger."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_task_packet.py --all",
+    "python3 -c \"import yaml,sys; yaml.safe_load(open('.github/workflows/ci.yml'))\""
+  ],
+  "evidence": [
+    "The kernel-module job log for run 40643503786: E: Unable to locate package linux-modules-extra-7.0.0-1017-azure, then exit code 100, then a chain of exit codes 2 from later steps.",
+    "The four packages shared one apt-get invocation, so the missing name also prevented the headers from being installed.",
+    "The module loads against vcan, which ships in the base kernel, not in linux-modules-extra."
+  ],
+  "stop_conditions": [
+    "The job turns out to need linux-modules-extra for the vcan path; the module loads against vcan from the base kernel, so this is not expected.",
+    "The archive stops publishing linux-headers-generic for the runner kernel, which would make the required install fail instead."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A warning instead of a failure could hide a genuinely missing dependency, so the message names the exact package and the reason it was skipped.",
+    "Headers stay required, so the failure mode moves from 'nothing installed' to 'headers missing', which still stops the job."
+  ]
+}
