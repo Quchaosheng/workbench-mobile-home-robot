@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from _jsonio import JsonInputError, load_json, read_text
 from _paths import ROOT
 
 READY = 0
@@ -122,13 +123,13 @@ class Verdict:
 
 def _load_gate() -> dict[str, Any]:
     try:
-        definition = json.loads(GATE_DEFINITION.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        definition = load_json(GATE_DEFINITION)
+    except (OSError, json.JSONDecodeError, JsonInputError) as error:
         raise GateError(f"cannot read {GATE_DEFINITION}: {error}") from error
 
     try:
-        schema = json.loads(GATE_SCHEMA.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        schema = load_json(GATE_SCHEMA)
+    except (OSError, json.JSONDecodeError, JsonInputError) as error:
         raise GateError(f"cannot read {GATE_SCHEMA}: {error}") from error
 
     try:
@@ -315,16 +316,16 @@ def check_body(body: str, definition: dict[str, Any], *, source: str = "<stdin>"
 
 def check_file(path: Path, definition: dict[str, Any], *, kind: str = PULL_REQUEST) -> Verdict:
     try:
-        body = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
+        body = read_text(path)
+    except (OSError, UnicodeError, JsonInputError) as error:
         raise GateError(f"cannot read {path}: {error}") from error
     return check_body(body, definition, source=str(path), kind=kind)
 
 
 def _read_template(path: Path) -> tuple[str | None, str | None]:
     try:
-        return path.read_text(encoding="utf-8"), None
-    except (OSError, UnicodeError) as error:
+        return read_text(path), None
+    except (OSError, UnicodeError, JsonInputError) as error:
         return None, f"cannot read {path}: {error}"
 
 
