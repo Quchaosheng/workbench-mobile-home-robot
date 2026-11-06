@@ -1,0 +1,5 @@
+string device_id
+bool clear_latched_fault
+---
+bool accepted
+string message

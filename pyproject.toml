@@ -88,7 +88,7 @@ exclude_lines = [
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-extend-exclude = ["build"]
+extend-exclude = ["build", "integrations/embodied_agent_runtime"]
 
 # Rules are deliberately a small, high-signal set. The point is to catch real
 # defects (undefined names, unused imports, mutable default arguments), not to
@@ -114,6 +114,12 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests repeat setup deliberately and use literal fixtures.
 "tests/**" = ["B011"]
+
+# The ROS 2 runtime was vendored from its own repository, whose CI governs its
+# style: colcon and ament_lint, not ruff. Reformatting it here would bury the
+# move in a thousand-line diff and split it from the lint that actually runs on
+# it (ros2-runtime.yml), so the runtime keeps its own conventions.
+"integrations/embodied_agent_runtime/**" = ["ALL"]
 
 # Format is checked in CI. Run `make fmt` to auto-fix locally.
 [tool.ruff.format]

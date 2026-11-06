@@ -1,0 +1,9 @@
+ai_task_adapter:
+  ros__parameters:
+    request: go to dock_a
+    task_id: ai_demo_1
+    allowed_duration_ms: 1000
+    cancel_after_ms: -1
+    targets:
+      - dock_a
+      - home

@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package runtime_gateway;
+
+service RobotRuntime {
+  rpc SubmitWorkflow(SubmitWorkflowRequest) returns (SubmitWorkflowReply);
+  rpc CancelWorkflow(CancelWorkflowRequest) returns (CancelWorkflowReply);
+  rpc GetTask(GetTaskRequest) returns (TaskRecord);
+  rpc GetStats(GetStatsRequest) returns (RuntimeStats);
+}
+
+message SubmitWorkflowRequest {
+  string request_id = 1;
+  string workflow_id = 2;
+  string task_id = 3;
+  string target_id = 4;
+  uint64 timeout_ms = 5;
+}
+
+message SubmitWorkflowReply {
+  bool accepted = 1;
+  string request_id = 2;
+  string task_id = 3;
+  string state = 4;
+  uint32 outcome = 5;
+  uint32 error_code = 6;
+  string message = 7;
+}
+
+message CancelWorkflowRequest { string request_id = 1; }
+
+message CancelWorkflowReply {
+  bool accepted = 1;
+  string state = 2;
+  uint32 outcome = 3;
+  uint32 error_code = 4;
+  string message = 5;
+}
+
+message GetTaskRequest { string task_id = 1; }
+
+message TaskRecord {
+  bool found = 1;
+  string task_id = 2;
+  string target_id = 3;
+  string state = 4;
+  uint32 action_status = 5;
+  uint32 outcome = 6;
+  uint32 error_code = 7;
+  uint64 duration_ms = 8;
+  string message = 9;
+  int64 completed_at_ns = 10;
+}
+
+message GetStatsRequest {}
+
+message RuntimeStats {
+  bool has_data = 1;
+  uint64 sample_count = 2;
+  repeated uint64 outcome_counts = 3;
+  uint64 p50_ms = 4;
+  uint64 p95_ms = 5;
+  uint64 p99_ms = 6;
+  uint64 max_ms = 7;
+  string state = 8;
+  uint32 error_code = 9;
+  string message = 10;
+}

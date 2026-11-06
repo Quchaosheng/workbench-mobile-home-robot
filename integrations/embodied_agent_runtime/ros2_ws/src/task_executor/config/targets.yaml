@@ -1,0 +1,13 @@
+task_executor:
+  ros__parameters:
+    targets:
+      - dock_a
+      - home
+    target_arguments:
+      - 42
+      - 0
+    device_opcode: 1
+    ack_timeout_ms: 500
+    cancel_timeout_ms: 1000
+    validation_delay_ms: 200
+    diagnostic_period_ms: 1000
