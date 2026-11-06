@@ -219,8 +219,10 @@
         "not_executed_physical_results_cannot_be_ready": true,
         "report_is_object": true,
         "staged_statuses_are_self_consistent": true,
+        "status_is_in_the_package_vocabulary": true,
         "status_is_nonempty_string": true,
-        "structural_pass_field_is_boolean": true
+        "structural_pass_field_is_boolean": true,
+        "structural_pass_field_is_true": true
       },
       "pass": true,
       "path": "hardware/manufacturing/generated/harness_report.json",
@@ -233,8 +235,10 @@
         "not_executed_physical_results_cannot_be_ready": true,
         "report_is_object": true,
         "staged_statuses_are_self_consistent": true,
+        "status_is_in_the_package_vocabulary": true,
         "status_is_nonempty_string": true,
-        "structural_pass_field_is_boolean": true
+        "structural_pass_field_is_boolean": true,
+        "structural_pass_field_is_true": true
       },
       "pass": true,
       "path": "hardware/motor_driver/generated/release-readiness.json",
@@ -247,8 +251,10 @@
         "not_executed_physical_results_cannot_be_ready": true,
         "report_is_object": true,
         "staged_statuses_are_self_consistent": true,
+        "status_is_in_the_package_vocabulary": true,
         "status_is_nonempty_string": true,
-        "structural_pass_field_is_boolean": true
+        "structural_pass_field_is_boolean": true,
+        "structural_pass_field_is_true": true
       },
       "pass": true,
       "path": "hardware/pcb/generated/release_readiness.json",
@@ -261,8 +267,10 @@
         "not_executed_physical_results_cannot_be_ready": true,
         "report_is_object": true,
         "staged_statuses_are_self_consistent": true,
+        "status_is_in_the_package_vocabulary": true,
         "status_is_nonempty_string": true,
-        "structural_pass_field_is_boolean": true
+        "structural_pass_field_is_boolean": true,
+        "structural_pass_field_is_true": true
       },
       "pass": true,
       "path": "hardware/procurement/generated/procurement_report.json",
@@ -275,8 +283,10 @@
         "not_executed_physical_results_cannot_be_ready": true,
         "report_is_object": true,
         "staged_statuses_are_self_consistent": true,
+        "status_is_in_the_package_vocabulary": true,
         "status_is_nonempty_string": true,
-        "structural_pass_field_is_boolean": true
+        "structural_pass_field_is_boolean": true,
+        "structural_pass_field_is_true": true
       },
       "pass": true,
       "path": "hardware/qa/generated/qa_report.json",
@@ -289,8 +299,10 @@
         "not_executed_physical_results_cannot_be_ready": true,
         "report_is_object": true,
         "staged_statuses_are_self_consistent": true,
+        "status_is_in_the_package_vocabulary": true,
         "status_is_nonempty_string": true,
-        "structural_pass_field_is_boolean": true
+        "structural_pass_field_is_boolean": true,
+        "structural_pass_field_is_true": true
       },
       "pass": true,
       "path": "hardware/validation/generated/validation_report.json",
