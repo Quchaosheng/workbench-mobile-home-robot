@@ -164,7 +164,13 @@ class ScenarioRegistry:
     def __init__(self, entries: tuple[ScenarioEntry, ...], *, contract_version: str) -> None:
         self._entries = entries
         self.contract_version = contract_version
-        self._by_id: dict[str, ScenarioEntry] = {entry.scenario_id: entry for entry in entries}
+        # Keyed by the full identity, not by scenario_id. Indexing by id alone let
+        # the last registered version overwrite the others, so an exact lookup for
+        # an earlier version reported a version mismatch against a version the
+        # caller never asked for (issue #422).
+        self._by_identity: dict[tuple[str, str], ScenarioEntry] = {
+            (entry.scenario_id, entry.scenario_version): entry for entry in entries
+        }
 
     @property
     def entries(self) -> tuple[ScenarioEntry, ...]:
@@ -185,23 +191,24 @@ class ScenarioRegistry:
         upgrade this registry refuses.
         """
 
-        entry = self._by_id.get(scenario_id)
-        if entry is None:
+        same_id = [candidate for candidate in self._entries if candidate.scenario_id == scenario_id]
+        if not same_id:
             raise ScenarioRegistryError(
                 f"unknown scenario_id {scenario_id!r}", code="SCENARIO_REGISTRY_UNKNOWN_ID", path=scenario_id
             )
         if scenario_version is None:
-            same_id = [candidate for candidate in self._entries if candidate.scenario_id == scenario_id]
             if len(same_id) > 1:
                 raise ScenarioRegistryError(
                     f"scenario_id {scenario_id!r} has multiple versions; name one explicitly",
                     code="SCENARIO_REGISTRY_AMBIGUOUS_ID",
                     path=scenario_id,
                 )
-            return entry
-        if entry.scenario_version != scenario_version:
+            return same_id[0]
+        entry = self._by_identity.get((scenario_id, scenario_version))
+        if entry is None:
+            registered = sorted(candidate.scenario_version for candidate in same_id)
             raise ScenarioRegistryError(
-                f"{scenario_id!r} is registered at version {entry.scenario_version!r}, not {scenario_version!r}",
+                f"{scenario_id!r} is registered at {registered}, not {scenario_version!r}",
                 code="SCENARIO_REGISTRY_VERSION_MISMATCH",
                 path=scenario_id,
             )

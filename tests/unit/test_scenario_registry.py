@@ -470,3 +470,67 @@ def test_cli_list_is_unchanged_by_the_registry():
     result = run_cli("list")
     assert result.returncode == 0, result.stderr
     assert "normal-001" in result.stdout
+
+
+# --- Issue #422: exact version lookup ----------------------------------------
+
+
+def two_versions(root: Path) -> ScenarioRegistry:
+    """One scenario_id registered at two versions."""
+
+    write_manifests(
+        root,
+        {
+            "v1": valid_manifest(scenario_version="1.0"),
+            "v2": valid_manifest(scenario_version="2.0"),
+        },
+    )
+    return load(root)
+
+
+def test_both_registered_versions_resolve_exactly(registry_root: Path) -> None:
+    """The earlier version used to report a mismatch against the later one."""
+
+    registry = two_versions(registry_root)
+    assert registry.resolve("sample-scenario", "1.0").scenario_version == "1.0"
+    assert registry.resolve("sample-scenario", "2.0").scenario_version == "2.0"
+
+
+def test_an_unregistered_version_lists_the_ones_that_are(registry_root: Path) -> None:
+    registry = two_versions(registry_root)
+    with pytest.raises(ScenarioRegistryError) as caught:
+        registry.resolve("sample-scenario", "3.0")
+    assert caught.value.code == "SCENARIO_REGISTRY_VERSION_MISMATCH"
+    # The diagnostic has to name what is registered, not one arbitrary version.
+    assert "1.0" in str(caught.value) and "2.0" in str(caught.value)
+
+
+def test_omitting_the_version_stays_ambiguous(registry_root: Path) -> None:
+    registry = two_versions(registry_root)
+    with pytest.raises(ScenarioRegistryError) as caught:
+        registry.resolve("sample-scenario")
+    assert caught.value.code == "SCENARIO_REGISTRY_AMBIGUOUS_ID"
+
+
+def test_a_single_version_still_resolves_without_naming_it(registry_root: Path) -> None:
+    write_manifests(registry_root, {"only": valid_manifest(scenario_version="1.0")})
+    registry = load(registry_root)
+    assert registry.resolve("sample-scenario").scenario_version == "1.0"
+
+
+def test_describe_uses_the_same_exact_lookup(registry_root: Path) -> None:
+    registry = two_versions(registry_root)
+    assert registry.describe("sample-scenario", "1.0")["scenario_version"] == "1.0"
+    assert registry.describe("sample-scenario", "2.0")["scenario_version"] == "2.0"
+
+
+def test_every_registered_identity_is_resolvable(registry_root: Path) -> None:
+    """The invariant the id-keyed index broke."""
+
+    registry = two_versions(registry_root)
+    for entry in registry.entries:
+        resolved = registry.resolve(entry.scenario_id, entry.scenario_version)
+        assert (resolved.scenario_id, resolved.scenario_version) == (
+            entry.scenario_id,
+            entry.scenario_version,
+        )
