@@ -48,6 +48,17 @@ SQLITE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
 SCHEMA_VERSION = 2
 SNAPSHOT_FORMAT = "workbench-event-store-snapshot"
 SNAPSHOT_FORMAT_VERSION = 2
+# The manifest field that names which parser a snapshot needs. It is matched
+# against this exact set, never defaulted: a snapshot opened by a parser it was
+# not written for is not a restore, it is a different store that happens to
+# parse.
+SNAPSHOT_BACKENDS = {"jsonl", "sqlite"}
+# A SQLite database identifies itself with these 16 bytes. The magic is checked
+# on the restore path because the label alone cannot tell an empty JSONL snapshot
+# from an empty SQLite one: the driver opens a zero-byte file as a new empty
+# database, so a relabelled manifest would restore as a successful zero-event
+# SQLite store instead of being refused.
+SQLITE_HEADER = b"SQLite format 3\x00"
 
 # The instruction an operator gets when a database cannot be read under the
 # current schema. It names the recovery rather than only the failure, because a
@@ -750,17 +761,47 @@ class EventStore:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise EventStoreError("snapshot manifest is unavailable or malformed") from exc
+        # The backend identity is part of the snapshot contract, so it is
+        # matched against the supported set and never defaulted. It used to be
+        # a two-way test that fell through to JSONL, which meant a missing,
+        # misspelt or non-string ``database`` opened a SQLite snapshot with the
+        # JSONL parser (an empty log, or a parse error) and a SQLite snapshot
+        # under the wrong storage semantics. A refused restore leaves the
+        # destination untouched, which is why this is checked before any file is
+        # opened, copied or replaced.
+        backend = manifest.get("database")
+        if not isinstance(backend, str) or backend not in SNAPSHOT_BACKENDS:
+            raise EventStoreError(
+                f"snapshot declares an unsupported database backend {backend!r}; "
+                f"this build restores only {sorted(SNAPSHOT_BACKENDS)}"
+            )
         if manifest.get("format") != SNAPSHOT_FORMAT or manifest.get("schema_version") != SCHEMA_VERSION:
             raise EventStoreError("snapshot format or schema version mismatch")
         if manifest.get("sha256") != _sha256(snapshot):
             # The checksum is verified before the live store is touched, so a
             # tampered or truncated snapshot cannot replace good evidence.
             raise EventStoreError("snapshot checksum mismatch")
-        backend = "sqlite" if manifest.get("database") == "sqlite" else "jsonl"
-        probe = cls(snapshot, backend=backend)
+        if backend == "sqlite" and not _has_sqlite_header(snapshot):
+            # The label and the bytes must agree. A SQLite connection creates a
+            # database for a file that is not one, so without this check an empty
+            # or text snapshot labelled ``sqlite`` would restore as a successful
+            # zero-event store rather than a refusal.
+            raise EventStoreError(
+                f"snapshot declares database {backend!r} but its bytes are not a SQLite database: {snapshot}"
+            )
+        try:
+            probe = cls(snapshot, backend=backend)
+        except sqlite3.DatabaseError as exc:
+            # The magic check above catches a small file of foreign bytes; a
+            # larger file with a valid header but a damaged interior only fails
+            # when the driver reads it. The refusal keeps that as this store's
+            # error type instead of a raw driver message.
+            raise EventStoreError(
+                f"snapshot declares database {backend!r} but its bytes cannot be read as {backend}: {snapshot}"
+            ) from exc
         try:
             if not probe.verify_integrity():
-                raise EventStoreError("snapshot failed integrity verification")
+                raise EventStoreError(f"snapshot failed integrity verification as a {backend} snapshot")
             if len(probe.replay()) != manifest.get("event_count"):
                 raise EventStoreError("snapshot event count does not match its manifest")
         finally:
@@ -940,6 +981,15 @@ def _is_readable(path: Path) -> bool:
         return probe.verify_integrity()
     finally:
         probe.close()
+
+
+def _has_sqlite_header(path: Path) -> bool:
+    """Report whether a file starts with the SQLite file-format magic."""
+    try:
+        with path.open("rb") as handle:
+            return handle.read(len(SQLITE_HEADER)) == SQLITE_HEADER
+    except OSError:
+        return False
 
 
 def _is_utf8(raw: bytes) -> bool:

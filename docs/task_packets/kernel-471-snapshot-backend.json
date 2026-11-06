@@ -1,0 +1,56 @@
+{
+  "issue": 471,
+  "human_owner": "Quchaosheng",
+  "objective": "Match the snapshot manifest's database label against the exact supported backend set on EventStore.restore and refuse anything else, so recovery never guesses a parser and never opens a snapshot under storage semantics it was not written for.",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/event_store.py",
+    "tests/unit/test_event_evidence_recovery.py",
+    "docs/deployment/event-evidence-recovery.md",
+    "docs/task_packets/kernel-471-snapshot-backend.json"
+  ],
+  "read_only_paths": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**",
+    "services/backend/**",
+    "AGENTS.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "firmware/**",
+    "robot/control/**",
+    "services/world_model/**"
+  ],
+  "acceptance": [
+    "database must be exactly 'sqlite' or 'jsonl'; a missing, unknown, misspelt or non-string value is refused",
+    "a sqlite-labelled snapshot is never opened with the JSONL parser",
+    "a jsonl-labelled snapshot is never opened as SQLite and remains replay-equivalent",
+    "the refusal happens before any destination write or replacement, so pre-existing destination bytes survive unchanged",
+    "existing backup/restore round trips and the schema, hash and event-count checks still pass",
+    "the refusal is an EventStoreError that names the unsupported backend, not a raw sqlite3 driver error"
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_event_evidence_recovery.py",
+    "python3 -m pytest tests/unit/test_kernel_event_store.py",
+    "python3 -m ruff check libs/kernel/workbench/kernel/event_store.py tests/unit/test_event_evidence_recovery.py",
+    "python3 -m ruff format --check libs/kernel/workbench/kernel/event_store.py tests/unit/test_event_evidence_recovery.py",
+    "python3 tools/scripts/check_task_packet.py docs/task_packets/kernel-471-snapshot-backend.json",
+    "python3 tools/scripts/check_ready_gate.py --kind issue --body-file /tmp/issue_bodies/471.md",
+    "git diff --check"
+  ],
+  "evidence": [
+    "focused test output for the supported pair and for the missing, unknown, misspelt and wrong-type labels",
+    "demonstration that the backend-identity tests fail against the previous fall-through-to-jsonl implementation and pass against the fix",
+    "byte-identical destination evidence for a refused restore that targets an existing store",
+    "confirmation that the pre-existing snapshot, restore and recovery tests still pass unchanged"
+  ],
+  "stop_conditions": [
+    "an existing snapshot has to be migrated or rewritten; an explicit version bump is a separate decision",
+    "a new storage backend is added or a supported snapshot format changes",
+    "a modification outside allowed_paths is required",
+    "a live store, robot control or firmware path becomes involved"
+  ]
+}
