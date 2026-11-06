@@ -1,0 +1,62 @@
+{
+  "issue": 427,
+  "human_owner": "Quchaosheng",
+  "objective": "Bind the execution environment the provenance record claims into the release-eligibility verdict, so an edited, absent or incomplete environment claim cannot be promoted as evidence.",
+  "decision_supported": "Is the environment field part of the eligibility contract, or a decorative label the validator may ignore?",
+  "allowed_paths": [
+    "tools/scripts/release_eligibility.py",
+    "tests/unit/test_release_eligibility.py",
+    "docs/task_packets/issue-427-environment-eligibility.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/evaluation/release-eligibility.md",
+    "tools/scripts/run_evaluation.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    ".github/workflows/**"
+  ],
+  "input_refs": [
+    "tools/scripts/release_eligibility.py",
+    "tests/unit/test_release_eligibility.py",
+    "docs/evaluation/release-eligibility.md",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "tools/scripts/release_eligibility.py",
+    "tests/unit/test_release_eligibility.py"
+  ],
+  "acceptance": [
+    "A provenance record whose environment differs from the one the run published is refused.",
+    "A record with the environment key absent is refused.",
+    "A record with a null environment is refused.",
+    "A record whose environment omits any field build_provenance always writes is refused.",
+    "A record with the environment build_provenance writes stays eligible.",
+    "Each refusal names a reason, not a bare false."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_release_eligibility.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, three mutations all returned eligible: true with no reasons: environment replaced by {python: 9.9}, environment set to null, and the environment key deleted.",
+    "After the change those three are refused with REASON_ENVIRONMENT_INVALID or REASON_ENVIRONMENT_MISSING, and the untouched record stays eligible.",
+    "Deleting the new check makes six of the new cases fail; restoring it passes 27."
+  ],
+  "stop_conditions": [
+    "A legitimate producer writes an environment without one of these fields; build_provenance always writes platform, python and machine, so that would be a producer bug to fix there."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The check requires string values, so a producer that writes a non-string platform is refused rather than coerced; that is deliberate for an evidence claim.",
+    "The environment is judged for shape, not compared against this machine, because the verdict is about the record being self-consistent with what was published."
+  ]
+}

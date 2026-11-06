@@ -59,6 +59,8 @@ REASON_AUDIT_MISSING = "no human false-completion audit was supplied"
 REASON_AUDIT_INVALID = "human audit is missing reviewer, timestamp or per-run oracle status"
 REASON_AUDIT_INCOMPLETE = "human audit does not cover every run"
 REASON_FALSE_COMPLETION = "human audit found a false completion"
+REASON_ENVIRONMENT_MISSING = "provenance carries no execution environment"
+REASON_ENVIRONMENT_INVALID = "provenance environment is not a mapping of string fields"
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -216,6 +218,34 @@ def load_provenance(path: Path) -> dict[str, Any]:
     return payload
 
 
+# The fields run_evaluation publishes. A record that names an environment is only
+# provenance if it carries the same shape; an arbitrary label is not a substitute.
+ENVIRONMENT_FIELDS = ("platform", "python", "machine")
+
+
+def _environment_reasons(environment: object) -> list[str]:
+    """Judge the environment claim the record makes.
+
+    ``build_provenance`` writes this field and the docs advertise it as the
+    evidence of *which* environment produced the run, but nothing read it back:
+    an edited or deleted environment still produced ``eligible: true`` (issue
+    #427). A record whose environment is absent, not a mapping, or missing a
+    field the builder always writes cannot distinguish the environment that
+    produced the evidence from a label somebody typed.
+    """
+    if environment is None:
+        return [REASON_ENVIRONMENT_MISSING]
+    if not isinstance(environment, dict):
+        return [REASON_ENVIRONMENT_INVALID]
+    reasons: list[str] = []
+    for field in ENVIRONMENT_FIELDS:
+        value = environment.get(field)
+        if not isinstance(value, str) or not value.strip():
+            reasons.append(REASON_ENVIRONMENT_INVALID)
+            break
+    return reasons
+
+
 def evaluate_eligibility(
     *,
     runs: dict[str, list[dict[str, Any]]],
@@ -243,6 +273,8 @@ def evaluate_eligibility(
         reasons.extend(_audit_reasons(runs, audit))
     if provenance is None:
         return _verdict(False, reasons, {})
+
+    reasons.extend(_environment_reasons(provenance.get("environment")))
 
     provenance_runs = provenance.get("runs") or {}
     if not provenance_runs:
