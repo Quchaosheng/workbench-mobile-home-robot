@@ -10,6 +10,7 @@ import re
 import shlex
 import signal
 import subprocess
+import tempfile
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -53,20 +54,73 @@ TIMESTAMP_WINDOW_SECONDS = 365 * 24 * 60 * 60
 # itself begins; it is added to the manifest budget rather than replacing it.
 EXTERNAL_STARTUP_GRACE_SECONDS = 30
 EXTERNAL_TERMINATION_GRACE_SECONDS = 5.0
+# Runner output is captured to files and polled, never to PIPE: communicate()
+# would buffer a runaway runner's entire stream in memory before it exited.
+EXTERNAL_OUTPUT_BUDGET_BYTES = 4 * 1024 * 1024
+EXTERNAL_DIAGNOSTIC_BYTES = 2048
+EXTERNAL_OUTPUT_POLL_SECONDS = 0.05
 
 
 class EvaluationInputError(ValueError):
     """Raised before execution when an evaluation input is unsafe or ambiguous."""
 
 
-class ExternalRunnerTimeout(RuntimeError):
-    """Raised when an external runner exceeds its manifest-derived budget."""
+class ExternalRunnerBlocked(RuntimeError):
+    """A runner stopped before it produced evidence; the gate reports it blocked."""
 
-    def __init__(self, message: str, *, scenario_id: str, elapsed_s: float, budget_s: int) -> None:
+    reason = "runner_blocked"
+
+    def __init__(self, message: str, *, scenario_id: str, elapsed_s: float) -> None:
         super().__init__(message)
         self.scenario_id = scenario_id
         self.elapsed_s = elapsed_s
+
+    def blocked_summary(self) -> dict[str, Any]:
+        """The bounded summary fields a blocked run is published with."""
+        return {
+            "blocked_reason": self.reason,
+            "blocked_detail": str(self),
+            "elapsed_s": round(self.elapsed_s, 3),
+        }
+
+
+class ExternalRunnerTimeout(ExternalRunnerBlocked):
+    """Raised when an external runner exceeds its manifest-derived budget."""
+
+    reason = "runner_timeout"
+
+    def __init__(self, message: str, *, scenario_id: str, elapsed_s: float, budget_s: int) -> None:
+        super().__init__(message, scenario_id=scenario_id, elapsed_s=elapsed_s)
         self.budget_s = budget_s
+
+    def blocked_summary(self) -> dict[str, Any]:
+        return {**super().blocked_summary(), "timeout_s": self.budget_s}
+
+
+class ExternalRunnerOutputExceeded(ExternalRunnerBlocked):
+    """Raised when an external runner writes past its stdout or stderr budget."""
+
+    reason = "runner_output_exceeded"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        scenario_id: str,
+        elapsed_s: float,
+        stream: str,
+        limit_bytes: int,
+    ) -> None:
+        super().__init__(message, scenario_id=scenario_id, elapsed_s=elapsed_s)
+        self.stream = stream
+        self.limit_bytes = limit_bytes
+
+    def blocked_summary(self) -> dict[str, Any]:
+        return {
+            **super().blocked_summary(),
+            "output_stream": self.stream,
+            "output_budget_bytes": self.limit_bytes,
+        }
 
 
 def parse_rfc3339(value: Any, *, field: str, path: Path, line_number: int, event_id: Any) -> datetime:
@@ -801,6 +855,58 @@ def _terminate_process_group(process: subprocess.Popen[Any]) -> None:
             pass
 
 
+def _output_overrun(stdout_path: Path, stderr_path: Path) -> str | None:
+    """Name the first stream whose captured output passed the budget."""
+    for name, path in (("stdout", stdout_path), ("stderr", stderr_path)):
+        try:
+            if path.stat().st_size > EXTERNAL_OUTPUT_BUDGET_BYTES:
+                return name
+        except OSError:
+            continue
+    return None
+
+
+def _bounded_diagnostic(path: Path) -> str:
+    """Read at most EXTERNAL_DIAGNOSTIC_BYTES from a captured runner stream.
+
+    The tail is kept because a runner's failure reason is its last line, and the
+    limit is applied before redaction so no unbounded text is ever held.
+    """
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            start = max(0, stream.tell() - EXTERNAL_DIAGNOSTIC_BYTES)
+            stream.seek(start)
+            return stream.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _wait_bounded(
+    process: subprocess.Popen[Any],
+    *,
+    started: float,
+    timeout_s: int,
+    stdout_path: Path,
+    stderr_path: Path,
+) -> tuple[bool, str | None]:
+    """Wait for the runner while bounding wall time and captured output.
+
+    Returns ``(timed_out, overrun_stream)``; the caller stops the process tree
+    when either budget was exceeded. Both are sampled from the capture files and
+    the clock, so a runner that never stops writing cannot win the race.
+    """
+    deadline = started + timeout_s
+    while process.poll() is None:
+        stream = _output_overrun(stdout_path, stderr_path)
+        if stream is not None:
+            return False, stream
+        if time.monotonic() >= deadline:
+            return True, None
+        time.sleep(EXTERNAL_OUTPUT_POLL_SECONDS)
+    return False, _output_overrun(stdout_path, stderr_path)
+
+
 def run_external(
     command_template: str,
     manifest_path: Path,
@@ -823,38 +929,63 @@ def run_external(
         raise EvaluationInputError(f"invalid runner command template: {exc}") from exc
     argv: Sequence[str] = shlex.split(command, posix=os.name != "nt")
     started = time.monotonic()
-    try:
-        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-        process = subprocess.Popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=os.name != "nt",
-            creationflags=creation_flags,
-        )
-    except OSError as exc:
-        raise RuntimeError(f"external runner could not start: {exc}") from exc
-    try:
-        _stdout, stderr = process.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        _terminate_process_group(process)
+    # Captured to files, not PIPEs: `communicate()` would buffer whatever the
+    # runner writes, so a runaway stream would exhaust memory before the budget
+    # was ever consulted. The files are temporary and never published.
+    with tempfile.TemporaryDirectory(prefix="workbench-evaluation-") as capture_dir:
+        stdout_path = Path(capture_dir) / "stdout.log"
+        stderr_path = Path(capture_dir) / "stderr.log"
+        with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+            try:
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+                process = subprocess.Popen(
+                    argv,
+                    stdout=stdout,
+                    stderr=stderr,
+                    start_new_session=os.name != "nt",
+                    creationflags=creation_flags,
+                )
+            except OSError as exc:
+                raise RuntimeError(f"external runner could not start: {exc}") from exc
+            timed_out, overrun = _wait_bounded(
+                process,
+                started=started,
+                timeout_s=timeout_s,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+            )
+            if timed_out or overrun is not None:
+                _terminate_process_group(process)
         elapsed = time.monotonic() - started
-        raise ExternalRunnerTimeout(
-            redact_text(
-                f"external runner for {scenario_id} timed out after {elapsed:.1f}s "
-                f"(budget {timeout_s}s including {EXTERNAL_STARTUP_GRACE_SECONDS}s startup grace); "
-                f"command: {command}"
-            ),
-            scenario_id=scenario_id,
-            elapsed_s=elapsed,
-            budget_s=timeout_s,
-        ) from None
-    if process.returncode != 0:
-        # A runner that fails inside a credentialed command echoes the credential
-        # into stderr; this message ends up in a traceback or a report, so it is
-        # scrubbed at the point where it is built.
-        raise RuntimeError(redact_text(f"external runner failed ({process.returncode}): {(stderr or '').strip()}"))
+        if overrun is not None:
+            raise ExternalRunnerOutputExceeded(
+                redact_text(
+                    f"external runner for {scenario_id} exceeded the {EXTERNAL_OUTPUT_BUDGET_BYTES}-byte "
+                    f"{overrun} limit after {elapsed:.1f}s; command: {command}"
+                ),
+                scenario_id=scenario_id,
+                elapsed_s=elapsed,
+                stream=overrun,
+                limit_bytes=EXTERNAL_OUTPUT_BUDGET_BYTES,
+            )
+        if timed_out:
+            raise ExternalRunnerTimeout(
+                redact_text(
+                    f"external runner for {scenario_id} timed out after {elapsed:.1f}s "
+                    f"(budget {timeout_s}s including {EXTERNAL_STARTUP_GRACE_SECONDS}s startup grace); "
+                    f"command: {command}"
+                ),
+                scenario_id=scenario_id,
+                elapsed_s=elapsed,
+                budget_s=timeout_s,
+            )
+        if process.returncode != 0:
+            # A runner that fails inside a credentialed command echoes the
+            # credential into stderr; this message ends up in a traceback or a
+            # report, so it is bounded first and scrubbed at the point where it
+            # is built.
+            detail = redact_text(_bounded_diagnostic(stderr_path).strip())
+            raise RuntimeError(f"external runner failed ({process.returncode}): {detail}")
 
 
 def redacted_summary(summary: dict[str, Any]) -> dict[str, Any]:
@@ -948,7 +1079,7 @@ def main() -> int:
                     )
                     accepted_logs[run_id] = events
                     partial_path.replace(output_path)
-                except ExternalRunnerTimeout as exc:
+                except ExternalRunnerBlocked as exc:
                     summaries.append(
                         {
                             "run_id": run_id,
@@ -961,13 +1092,10 @@ def main() -> int:
                             "verification_status": "blocked",
                             "release_eligible": False,
                             "eligibility_reasons": ["the runner was blocked; no evidence was produced"],
-                            "blocked_reason": "runner_timeout",
-                            "blocked_detail": str(exc),
-                            "elapsed_s": round(exc.elapsed_s, 3),
-                            "timeout_s": exc.budget_s,
+                            **exc.blocked_summary(),
                         }
                     )
-                    print(f"  {run_id}: blocked (runner_timeout after {exc.elapsed_s:.1f}s)")
+                    print(f"  {run_id}: blocked ({exc.reason} after {exc.elapsed_s:.1f}s)")
                     continue
                 finally:
                     # A timed out or failed runner must never leave promotable output.

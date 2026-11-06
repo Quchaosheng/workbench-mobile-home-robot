@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -24,8 +25,10 @@ from compare_evaluations import compare, wilson_interval
 from generate_report import load as load_metrics
 from generate_report import release_reasons
 from run_evaluation import (
+    EXTERNAL_OUTPUT_BUDGET_BYTES,
     EXTERNAL_STARTUP_GRACE_SECONDS,
     EvaluationInputError,
+    ExternalRunnerOutputExceeded,
     ExternalRunnerTimeout,
     external_timeout_budget,
     load_scenario_manifests,
@@ -775,6 +778,251 @@ class ExternalRunnerBoundTests(unittest.TestCase):
                 scenario_id="probe-67",
             )
         self.assertFalse(output.exists())
+
+
+class ExternalRunnerOutputBoundTests(unittest.TestCase):
+    """A runner's captured output must not grow past its budget in memory or on disk."""
+
+    def _manifest(self, timeout_s: int) -> Path:
+        directory = Path(tempfile.mkdtemp())
+        path = directory / "scenario.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "scenario_id": "probe-456",
+                    "seed": 5,
+                    "task_id": "task-place-red-block",
+                    "world_version": "WorkbenchSim-v0",
+                    "fault_type": "none",
+                    "timeout_s": timeout_s,
+                    "oracle_allowed": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def _write_runner(self, directory: Path, body: str) -> Path:
+        runner = directory / "runner.py"
+        runner.write_text(textwrap.dedent(body), encoding="utf-8")
+        return runner
+
+    def test_runner_within_budget_still_succeeds(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        output = directory / "out.jsonl"
+        runner = self._write_runner(
+            directory,
+            """
+            import sys
+            sys.stderr.write("runner started\\n")
+            open(sys.argv[1], "w").write("{}")
+            """,
+        )
+
+        run_external(
+            f"{sys.executable} {runner} {{output}}",
+            self._manifest(5),
+            output,
+            1005,
+            "v-test",
+            timeout_s=5,
+            scenario_id="probe-456",
+        )
+        self.assertTrue(output.exists())
+
+    def test_runner_at_the_exact_output_budget_is_accepted(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        output = directory / "out.jsonl"
+        runner = self._write_runner(
+            directory,
+            f"""
+            import sys
+            sys.stderr.write("x" * {EXTERNAL_OUTPUT_BUDGET_BYTES})
+            sys.stderr.flush()
+            open(sys.argv[1], "w").write("{{}}")
+            """,
+        )
+
+        run_external(
+            f"{sys.executable} {runner} {{output}}",
+            self._manifest(5),
+            output,
+            1005,
+            "v-test",
+            timeout_s=5,
+            scenario_id="probe-456",
+        )
+        self.assertTrue(output.exists())
+
+    def test_runner_one_byte_over_the_output_budget_is_blocked(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        output = directory / "out.jsonl"
+        runner = self._write_runner(
+            directory,
+            f"""
+            import sys
+            sys.stderr.write("x" * {EXTERNAL_OUTPUT_BUDGET_BYTES + 1})
+            sys.stderr.flush()
+            open(sys.argv[1], "w").write("{{}}")
+            """,
+        )
+
+        with self.assertRaises(ExternalRunnerOutputExceeded) as caught:
+            run_external(
+                f"{sys.executable} {runner} {{output}}",
+                self._manifest(5),
+                output,
+                1005,
+                "v-test",
+                timeout_s=5,
+                scenario_id="probe-456",
+            )
+        self.assertEqual(caught.exception.stream, "stderr")
+        self.assertEqual(caught.exception.limit_bytes, EXTERNAL_OUTPUT_BUDGET_BYTES)
+        message = str(caught.exception)
+        self.assertIn("probe-456", message)
+        self.assertIn(str(EXTERNAL_OUTPUT_BUDGET_BYTES), message)
+        self.assertLess(len(message), 4096, "the over-budget diagnostic must itself stay bounded")
+
+    def test_over_budget_runner_is_killed_as_a_process_tree(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        marker = directory / "child.pid"
+        runner = self._write_runner(
+            directory,
+            """
+            import subprocess, sys, time
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+            open(sys.argv[1], "w").write(str(child.pid))
+            chunk = "x" * (256 * 1024)
+            while True:
+                sys.stderr.write(chunk)
+                sys.stderr.flush()
+                time.sleep(0.01)
+            """,
+        )
+
+        with self.assertRaises(ExternalRunnerOutputExceeded):
+            run_external(
+                f"{sys.executable} {runner} {marker}",
+                self._manifest(5),
+                directory / "out.jsonl",
+                1005,
+                "v-test",
+                timeout_s=5,
+                scenario_id="probe-456",
+            )
+
+        child_pid = int(marker.read_text(encoding="utf-8"))
+        deadline = time.monotonic() + 10
+        alive = True
+        while time.monotonic() < deadline:
+            try:
+                os.kill(child_pid, 0)
+            except (ProcessLookupError, PermissionError):
+                alive = False
+                break
+            time.sleep(0.1)
+        self.assertFalse(alive, f"child pid {child_pid} survived the output overrun; the tree was not terminated")
+
+    def test_timeout_with_large_output_stays_a_timeout(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        runner = self._write_runner(
+            directory,
+            """
+            import sys, time
+            sys.stderr.write("x" * (3 * 1024 * 1024))
+            sys.stderr.flush()
+            time.sleep(600)
+            """,
+        )
+
+        with self.assertRaises(ExternalRunnerTimeout) as caught:
+            run_external(
+                f"{sys.executable} {runner}",
+                self._manifest(1),
+                directory / "out.jsonl",
+                1005,
+                "v-test",
+                timeout_s=1,
+                scenario_id="probe-456",
+            )
+        message = str(caught.exception)
+        self.assertIn("timed out", message)
+        self.assertLess(len(message), 4096, "a timeout diagnostic must not embed the runner's output")
+
+    def test_failure_diagnostic_is_bounded_and_redacted(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        runner = self._write_runner(
+            directory,
+            """
+            import sys
+            secret = "ghp_" + "AAAABBBBCCCCDDDDEEEEFFFF111122223333"
+            sys.stderr.write("x" * (3 * 1024 * 1024))
+            # The tail is what the diagnostic keeps, so the secret must be there
+            # for the bounded read and the redaction to be exercised together.
+            sys.stderr.write("\\nauth failed for " + secret + "\\n")
+            sys.stderr.flush()
+            sys.exit(3)
+            """,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, r"failed \(3\)") as caught:
+            run_external(
+                f"{sys.executable} {runner}",
+                self._manifest(5),
+                directory / "out.jsonl",
+                1005,
+                "v-test",
+                timeout_s=5,
+                scenario_id="probe-456",
+            )
+        message = str(caught.exception)
+        self.assertNotIn("AAAABBBBCCCCDDDDEEEEFFFF111122223333", message)
+        self.assertLess(len(message), EXTERNAL_OUTPUT_BUDGET_BYTES, "the failure diagnostic must stay bounded")
+
+    def test_gate_reports_the_output_overrun_instead_of_a_successful_run(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        manifest = self._manifest(5)
+        runner = self._write_runner(
+            directory,
+            f"""
+            import sys
+            open(sys.argv[1], "w").write("{{}}")
+            sys.stderr.write("x" * {EXTERNAL_OUTPUT_BUDGET_BYTES + 1})
+            sys.stderr.flush()
+            """,
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "scripts" / "run_evaluation.py"),
+                "--versions",
+                "v-test",
+                "--scenarios",
+                str(manifest),
+                "--output-dir",
+                str(directory / "runs"),
+                "--runner",
+                "external",
+                "--runner-command",
+                f"{sys.executable} {runner} {{output}}",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+        summary = json.loads((directory / "runs" / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["blocked_count"], 1)
+        self.assertFalse(summary["release_eligible"])
+        run = summary["runs"][0]
+        self.assertEqual(run["verification_status"], "blocked")
+        self.assertEqual(run["blocked_reason"], "runner_output_exceeded")
+        self.assertEqual(run["output_budget_bytes"], EXTERNAL_OUTPUT_BUDGET_BYTES)
+        self.assertIsNone(run["event_log"])
+        self.assertEqual(sorted(path.name for path in (directory / "runs" / "v-test").iterdir()), [])
 
 
 if __name__ == "__main__":
