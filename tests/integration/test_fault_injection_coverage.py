@@ -602,3 +602,83 @@ def test_an_execution_record_for_an_unclaimed_fault_grants_nothing() -> None:
     )
     assert report["simulated_count"] == 0
     assert all(entry["status"] == "NOT_EXECUTED" for entry in report["faults"])
+
+
+# --- Issue #458: contradictory coverage input --------------------------------
+
+
+def test_a_fault_cannot_be_both_simulated_and_hardware_tested() -> None:
+    """The loops overwrote each other, so the status depended on argument order."""
+
+    with pytest.raises(FaultInjectionError, match="cannot be both"):
+        coverage_report(
+            simulated=["occlusion"],
+            hardware_tested=["occlusion"],
+            physical_evidence={"occlusion": "runs/hw.json"},
+        )
+
+
+def test_the_order_of_the_two_lists_does_not_matter() -> None:
+    """Both orders have to be refused, or the report depends on call order."""
+
+    for simulated, hardware in ((["occlusion"], ["occlusion"]), (["occlusion"], ["occlusion"])):
+        with pytest.raises(FaultInjectionError, match="cannot be both"):
+            coverage_report(
+                simulated=simulated,
+                hardware_tested=hardware,
+                physical_evidence={"occlusion": "runs/hw.json"},
+            )
+
+
+def test_a_repeated_name_in_one_list_is_refused() -> None:
+    with pytest.raises(FaultInjectionError, match="more than once"):
+        coverage_report(simulated=["occlusion", "occlusion"])
+
+
+def test_a_repeated_hardware_name_is_refused() -> None:
+    with pytest.raises(FaultInjectionError, match="more than once"):
+        coverage_report(
+            hardware_tested=["occlusion", "occlusion"],
+            physical_evidence={"occlusion": "runs/hw.json"},
+        )
+
+
+def test_a_physical_reference_on_a_not_executed_fault_is_refused() -> None:
+    """The reference was copied onto every entry regardless of its status."""
+
+    with pytest.raises(FaultInjectionError, match="only valid for a hardware-tested fault"):
+        coverage_report(physical_evidence={"link_loss": "runs/hw.json"})
+
+
+def test_a_physical_reference_on_a_simulated_fault_is_refused() -> None:
+    with pytest.raises(FaultInjectionError, match="only valid for a hardware-tested fault"):
+        coverage_report(simulated=["occlusion"], physical_evidence={"occlusion": "runs/hw.json"})
+
+
+def test_the_refusal_names_every_orphan_reference() -> None:
+    with pytest.raises(FaultInjectionError) as caught:
+        coverage_report(physical_evidence={"link_loss": "a", "occlusion": "b"})
+    message = str(caught.value)
+    assert "link_loss" in message and "occlusion" in message
+
+
+def test_a_consistent_report_still_works() -> None:
+    """The checks must not reject a report that says one thing per fault."""
+
+    report = coverage_report(
+        simulated=["occlusion"],
+        # A SIMULATED claim carries its execution record (#424).
+        simulation_evidence={"occlusion": simulation_record()},
+        hardware_tested=["link_loss"],
+        physical_evidence={"link_loss": "runs/hw.json"},
+    )
+    statuses = {entry["fault"]: entry["status"] for entry in report["faults"]}
+    assert statuses["occlusion"] == "SIMULATED"
+    assert statuses["link_loss"] == "HARDWARE_TESTED"
+    assert report["simulated_count"] == 1
+    assert report["hardware_tested_count"] == 1
+    # A physical reference appears only where it was claimed.
+    entries = {entry["fault"]: entry for entry in report["faults"]}
+    assert entries["link_loss"]["physical_evidence_ref"] == "runs/hw.json"
+    assert entries["occlusion"]["physical_evidence_ref"] is None
+    assert entries["grasp_failure"]["physical_evidence_ref"] is None
