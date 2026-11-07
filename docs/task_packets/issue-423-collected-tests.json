@@ -1,0 +1,65 @@
+{
+  "issue": 423,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the conformance gate refuse a declared case that pytest would not run or that fails: a skipped test, a test moved into a class, and a test whose body always fails.",
+  "decision_supported": "Is a line starting with `def <name>` proof that a test runs, or does the gate need to know the test is collectable and passing?",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/scenario_conformance.py",
+    "tests/unit/test_scenario_conformance.py",
+    "tools/scripts/_paths.py",
+    "docs/task_packets/issue-423-collected-tests.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "tools/qa/scenario-conformance-v1.json"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "libs/kernel/workbench/kernel/scenario_conformance.py",
+    "tools/qa/scenario-conformance-v1.json",
+    "tests/unit/test_scenario_conformance.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    "libs/kernel/workbench/kernel/scenario_conformance.py",
+    "tests/unit/test_scenario_conformance.py",
+    "tools/scripts/_paths.py"
+  ],
+  "acceptance": [
+    "A case pointing at a skip-decorated test fails with a stable finding.",
+    "A case pointing at a test whose body always fails the gate.",
+    "A case pointing at a function moved into a class fails as not collected.",
+    "Every committed corpus case passes the new check.",
+    "The conformance module stays read-only: it must not gain subprocess, socket, open(, write_text or a simulator import.",
+    "The existing corpus keeps its seven dimensions per identity."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_scenario_conformance.py -q",
+    "python3 tools/scripts/check_scenario_conformance.py",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check ."
+  ],
+  "evidence": [
+    "Before the change, defined_tests() reported the name for a @pytest.mark.skip function, for a method inside a class and for a normal definition alike.",
+    "After the change the gate reports SCENARIO_CONFORMANCE_TEST_NOT_RUNNABLE with 'is decorated with skip' and 'raises or asserts False unconditionally', and SCENARIO_CONFORMANCE_TEST_NOT_COLLECTED for a method.",
+    "With a skip added to a corpus test the gate exits FAIL naming the identity and dimension; restored, it exits PASS over 5 scenarios.",
+    "The gate never starts a process: the read-only assertion in the suite still passes."
+  ],
+  "stop_conditions": [
+    "A test that is genuinely conditional cannot be distinguished statically; the finding names the decorator so a reviewer can decide, and running pytest inside the gate was rejected because the module is required to stay read-only."
+  ],
+  "max_iterations": 3,
+  "risks_and_fallbacks": [
+    "The static check cannot prove a passing assertion, only the absence of a guaranteed failure. A test with a real but wrong assertion still passes the gate; catching that needs execution, which this module may not do.",
+    "SKIPPING_DECORATORS is a fixed list; a custom decorator that skips would not be seen, so the finding for an unknown decorator stays silent."
+  ]
+}
