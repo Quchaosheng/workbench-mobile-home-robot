@@ -483,6 +483,48 @@ class _StoredSnapshot:
     clock_id: str
     overall: str
     domains: tuple[tuple[str, str], ...]
+    # The metric values that produced this entry's alert, bounded per domain so
+    # the history endpoint can explain an alert without becoming a raw-data
+    # store (issue #420). Each entry is (name, value, unit, state, source).
+    metrics: tuple[tuple[str, object, str, str, str], ...] = ()
+
+
+# How many metrics are retained per domain in a history entry. A domain reports
+# a fixed vocabulary, so this is a ceiling rather than a sample: it keeps the
+# record bounded even if a producer starts emitting more.
+MAX_HISTORY_METRICS_PER_DOMAIN = 12
+
+
+def _bounded_metric_detail(snapshot: object) -> tuple[tuple[str, object, str, str, str], ...]:
+    """The metric values behind one history entry, bounded per domain.
+
+    Values are the same scalars the current-health view shows: a bool, a number
+    or a short string. Nothing here is a path, a credential or a document body,
+    so the retained detail is safe to expose on the bounded history endpoint.
+    """
+    detail: list[tuple[str, object, str, str, str]] = []
+    domains = getattr(snapshot, "domains", ()) or ()
+    for _domain, health in domains:
+        kept = 0
+        for metric in getattr(health, "metrics", ()) or ():
+            if kept >= MAX_HISTORY_METRICS_PER_DOMAIN:
+                break
+            value = getattr(metric, "value", None)
+            # Only scalars: a nested structure would grow the record without
+            # bound and would not be reconstructible from the event vocabulary.
+            if not isinstance(value, (bool, int, float, str)):
+                continue
+            detail.append(
+                (
+                    str(getattr(metric, "name", "")),
+                    value,
+                    str(getattr(metric, "unit", "") or ""),
+                    str(getattr(metric, "state", "") or ""),
+                    str(getattr(metric, "source", "") or ""),
+                )
+            )
+            kept += 1
+    return tuple(detail)
 
 
 class HealthStore:
@@ -542,6 +584,7 @@ class HealthStore:
                     clock_id=snapshot.clock_id,
                     overall=snapshot.overall.value,
                     domains=tuple((domain, health.status.value) for domain, health in snapshot.domains),
+                    metrics=_bounded_metric_detail(snapshot),
                 )
             )
             if len(self._snapshots) > self.max_snapshots:
@@ -638,6 +681,13 @@ class HealthStore:
                     "clock_id": entry.clock_id,
                     "overall": entry.overall,
                     "domains": dict(entry.domains),
+                    # The values behind the verdict, so an alert can be explained
+                    # from the bounded history rather than only counted
+                    # (issue #420).
+                    "metrics": [
+                        {"name": name, "value": value, "unit": unit, "state": state, "source": source}
+                        for name, value, unit, state, source in entry.metrics
+                    ],
                 }
                 for entry in stored
             ],

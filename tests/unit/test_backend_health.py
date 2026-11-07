@@ -47,6 +47,7 @@ from workbench_backend.health import (
     DEFAULT_ALERT_OPEN_AFTER_S,
     HEALTH_HISTORY_VERSION,
     MAX_ALERT_DEBOUNCE_S,
+    MAX_HISTORY_METRICS_PER_DOMAIN,
     MAX_SNAPSHOTS,
     MONITORING_POLICY_VERSION,
     POLICY_ENVIRONMENT,
@@ -882,3 +883,52 @@ class SameSignatureRewriteTests(unittest.TestCase):
                 "a same-size rewrite that restored the timestamp must be re-read",
             )
             self.assertNotEqual(model._stat, None)
+
+
+# --- Issue #420: history carries the values behind the verdict ----------------
+
+
+class HistoryMetricDetailTests(unittest.TestCase):
+    """A reviewer must be able to explain an alert from the bounded history."""
+
+    def _store_with(self, snapshots) -> HealthStore:
+        store = HealthStore()
+        for entry in snapshots:
+            store.ingest(entry)
+        return store
+
+    def test_history_entries_carry_the_metrics_that_produced_the_status(self) -> None:
+        store = self._store_with([snapshot(at=BASE)])
+        payload = store.history_payload()
+        entry = payload["snapshots"][-1]
+        self.assertIn("metrics", entry)
+        self.assertTrue(entry["metrics"], "a history entry must explain its own verdict")
+        names = {metric["name"] for metric in entry["metrics"]}
+        self.assertIn("can.link_ok", names)
+        for metric in entry["metrics"]:
+            self.assertIn("value", metric)
+            self.assertIn("unit", metric)
+            self.assertIn("state", metric)
+            self.assertIn("source", metric)
+
+    def test_the_detail_is_bounded_per_domain(self) -> None:
+        store = self._store_with([snapshot(at=BASE)])
+        entry = store.history_payload()["snapshots"][-1]
+        per_domain: dict[str, int] = {}
+        for metric in entry["metrics"]:
+            domain = metric["name"].split(".", 1)[0]
+            per_domain[domain] = per_domain.get(domain, 0) + 1
+        self.assertTrue(per_domain, "expected at least one domain")
+        self.assertLessEqual(
+            max(per_domain.values()),
+            MAX_HISTORY_METRICS_PER_DOMAIN,
+            "retained detail must stay bounded per domain",
+        )
+
+    def test_only_scalars_are_retained(self) -> None:
+        """A nested value would grow the record without bound."""
+
+        store = self._store_with([snapshot(at=BASE)])
+        for entry in store.history_payload()["snapshots"]:
+            for metric in entry["metrics"]:
+                self.assertIsInstance(metric["value"], (bool, int, float, str))
