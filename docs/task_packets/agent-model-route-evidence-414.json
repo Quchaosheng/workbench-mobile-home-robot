@@ -1,0 +1,29 @@
+{
+  "issue": 414,
+  "human_owner": "Quchaosheng",
+  "objective": "Add a bounded per-run model-route evidence record that states selection, fallback and reason, actual and shadow cost, and local-evidence completeness, without choosing a route.",
+  "decision_supported": "Can a reviewer tell which route ran, whether it fell back and what it cost? Not from a free-form model_route string; the record now answers all five questions.",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/model_route_evidence.py",
+    "tests/unit/test_model_route_evidence.py",
+    "docs/task_packets/agent-model-route-evidence-414.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "docs/context/MODEL_POLICY.yaml"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/backend/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["docs/context/MODEL_POLICY.yaml", "services/agent_runtime/workbench_agent_runtime/local_model.py"],
+  "outputs": ["services/agent_runtime/workbench_agent_runtime/model_route_evidence.py"],
+  "acceptance": [
+    "A record names the selected route, the fallback reason and the costs.",
+    "An unknown fallback reason or evidence state is refused rather than omitted.",
+    "A non-finite or negative cost or latency is refused.",
+    "A run with no records summarises as unrecorded, not compliant."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_model_route_evidence.py -q"],
+  "evidence": ["pytest output for tests/unit/test_model_route_evidence.py"],
+  "stop_conditions": ["The change would approve a cloud provider."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The record is additive and does not change routing; wiring it into every call site is a follow-up.",
+    "Fallback: revert the single commit."
+  ]
+}
