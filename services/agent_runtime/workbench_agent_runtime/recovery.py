@@ -561,8 +561,6 @@ class RecoveryLedger:
                 RECOVERY_POLICY_TERMINAL, f"recovery is already terminal in state {self._state.value}"
             )
 
-        self._attempt += 1
-        self._ticks += 1
         self._failed_at = str(getattr(result, "verified_at", "") or "")
         # A failed attempt closes the observation frontier whether or not it
         # asks for a next step: an attempt that requested nothing still must not
@@ -570,7 +568,13 @@ class RecoveryLedger:
         if self._evidence is not None:
             self._failed_frontier = self._evidence.sequence_no
 
-        if self._attempt > self._policy.max_attempts or self._ticks > self._policy.max_recovery_ticks:
+        # The ceiling is checked before the counter advances, so the terminal
+        # decision carries counters the committed event contract accepts. Counting
+        # first emitted attempt = max_attempts + 1, which the validator rejects:
+        # the exhaustion record could not be persisted or replayed, so the one
+        # audit entry that explains why the run stopped was the one that was lost
+        # (issue #438).
+        if self._attempt >= self._policy.max_attempts or self._ticks >= self._policy.max_recovery_ticks:
             return self._decide(
                 RecoveryAction.ABORT,
                 code=RECOVERY_POLICY_BUDGET_EXHAUSTED,
@@ -579,6 +583,8 @@ class RecoveryLedger:
                     f"and tick {self._ticks} of {self._policy.max_recovery_ticks}"
                 ),
             )
+        self._attempt += 1
+        self._ticks += 1
 
         candidate = _hint_to_action(getattr(result, "recovery_hint", None))
         if candidate is None:

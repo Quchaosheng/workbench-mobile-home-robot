@@ -297,9 +297,26 @@ class TestLedgerBehaviour:
         exhausted = decisions[2]
         assert exhausted.action is RecoveryAction.ABORT
         assert exhausted.reason_code == RECOVERY_POLICY_BUDGET_EXHAUSTED
-        assert exhausted.attempt == 3
+        # The counters stay inside the budget the decision names: attempt = 3
+        # with max_attempts = 2 is rejected by the committed event contract, so
+        # the terminal record could not be persisted at all (issue #438).
+        assert exhausted.attempt == 2
+        assert exhausted.attempt <= exhausted.max_attempts
         assert exhausted.max_attempts == 2
         assert exhausted.terminal is True
+
+    def test_an_exhaustion_decision_payload_satisfies_the_event_contract(self) -> None:
+        """#438: the terminal decision must be representable as a world event."""
+
+        for budget in (1, 10):
+            held = ledger(RecoveryPolicy.parse({"allowed": ["re_observe"], "max_attempts": budget}))
+            decision = None
+            for _ in range(budget + 1):
+                decision = held.record_verification(verification(hint="re_observe"))
+            assert decision is not None
+            assert decision.action is RecoveryAction.ABORT
+            assert decision.attempt <= decision.max_attempts
+            assert decision.ticks <= decision.max_recovery_ticks
 
     def test_retry_counts_are_visible_and_monotonic(self) -> None:
         held = ledger()
