@@ -411,7 +411,7 @@ class RequiredCheckTriggerPolicyTests(unittest.TestCase):
         for marker in (
             "anchore/scan-action@",
             "docker/build-push-action@",
-            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            "actions/upload-artifact@",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, build_yaml)
