@@ -1,0 +1,28 @@
+{
+  "issue": 417,
+  "human_owner": "Quchaosheng",
+  "objective": "Make an unavailable evidence timeline a visible partial failure, distinct from a timeline that has not been requested and from a run with no events.",
+  "decision_supported": "Should a failed timeline read look like an empty one? No: an operator reading a partial evidence view has to be able to tell a missing phase-checked projection from an absent one.",
+  "allowed_paths": [
+    "apps/dashboard/app.js",
+    "tests/unit/test_dashboard_accessibility.py",
+    "docs/task_packets/dashboard-timeline-availability-417.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "apps/dashboard/README.md"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["apps/dashboard/app.js", "tests/unit/test_dashboard_accessibility.py"],
+  "outputs": ["apps/dashboard/app.js", "tests/unit/test_dashboard_accessibility.py"],
+  "acceptance": [
+    "A non-2xx timeline response is rendered as a named failure, not as not-loaded.",
+    "A timeline belonging to another run still reads as not-loaded.",
+    "A timeline loaded for the current run still renders its items."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_dashboard_accessibility.py -q"],
+  "evidence": ["pytest output for tests/unit/test_dashboard_accessibility.py"],
+  "stop_conditions": ["The fix would need a backend response shape change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Treating every non-ok as a failure could hide a 204 no-content; the API returns 200 with an empty list instead.",
+    "Fallback: revert the single commit."
+  ]
+}

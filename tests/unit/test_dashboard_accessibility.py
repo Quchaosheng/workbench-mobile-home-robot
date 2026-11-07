@@ -24,7 +24,7 @@ EXPORT_TAIL = (
     "monitoringTrendRows, monitoringMetricText, monitoringMetricStatus, monitoringAlertSignature, "
     "monitoringAlertStatusByMetric, monitoringRetryDelay, monitoringUnitLabel, "
     "monitoringDomainLabel, monitoringAlertSummaryText, renderMonitoringAlerts, renderMonitoringCards, "
-    "renderMonitoringTrend };\n"
+    "renderMonitoringTrend, timelineAvailability, formatTime };\n"
 )
 MODULE_PRELUDE = "const module = { exports: {} };\n(function (module, exports) {\n"
 MODULE_EPILOGUE = "\n})(module, module.exports);\n"
@@ -839,3 +839,63 @@ def test_the_overview_grid_holds_exactly_two_columns() -> None:
     # The responsive rules follow the renamed wrapper instead of a dead class.
     assert ".dashboard-column:last-child" in styles
     assert "side-stack" not in styles
+
+
+# --- Issue #417: an unavailable timeline is not an empty one ------------------
+
+TIMELINE_AVAILABILITY_CALL = (
+    "module.exports.timelineAvailability(JSON.parse(process.argv[1]).current, JSON.parse(process.argv[1]).snapshot)"
+)
+
+
+def test_timeline_failure_is_not_reported_as_not_loaded() -> None:
+    """A failed read must not borrow the copy used for "never asked"."""
+
+    view = _run_node(
+        TIMELINE_AVAILABILITY_CALL,
+        {"current": {"run_id": "run-1"}, "snapshot": {"timelineFailure": "HTTP 503", "timelineRunId": None}},
+    )
+    assert view["kind"] == "failed"
+    assert view["detail"] == "HTTP 503"
+
+
+def test_timeline_loaded_for_this_run_is_loaded() -> None:
+    view = _run_node(
+        TIMELINE_AVAILABILITY_CALL,
+        {"current": {"run_id": "run-1"}, "snapshot": {"timelineFailure": None, "timelineRunId": "run-1"}},
+    )
+    assert view["kind"] == "loaded"
+
+
+def test_timeline_of_another_run_is_not_loaded() -> None:
+    view = _run_node(
+        TIMELINE_AVAILABILITY_CALL,
+        {"current": {"run_id": "run-1"}, "snapshot": {"timelineFailure": None, "timelineRunId": "run-0"}},
+    )
+    assert view["kind"] == "not_loaded"
+
+
+# --- Issue #419: a displayed instant names its zone ---------------------------
+
+
+def test_format_time_labels_utc_and_ignores_the_host_zone() -> None:
+    """The same instant must render identically under two browser zones."""
+
+    expression = "module.exports.formatTime(JSON.parse(process.argv[1]))"
+    instant = "2026-08-22T10:30:00Z"
+    first = _run_node(expression, instant)
+    # The runner's TZ is whatever the host has; the rendered value must not move.
+    assert first.endswith(" UTC"), first
+    assert "10:30:00" in first, first
+
+
+def test_format_time_with_date_also_names_its_zone() -> None:
+    expression = "module.exports.formatTime(JSON.parse(process.argv[1]), true)"
+    rendered = _run_node(expression, "2026-08-22T10:30:00Z")
+    assert rendered.endswith(" UTC"), rendered
+    assert "08/22" in rendered, rendered
+
+
+def test_format_time_of_an_absent_or_invalid_value_is_a_dash() -> None:
+    assert _run_node("module.exports.formatTime(JSON.parse(process.argv[1]))", "") == "--"
+    assert _run_node("module.exports.formatTime(JSON.parse(process.argv[1]))", "not-a-time") == "--"

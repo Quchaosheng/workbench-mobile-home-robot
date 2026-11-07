@@ -13,6 +13,10 @@ const state = {
   maxPageSize: 200,
   timeline: [],
   timelineRunId: null,
+  // A timeline read that failed is not the same as one that has not been asked
+  // for, and neither is an empty run. Keeping the failure here lets the panel
+  // say which of the three it is instead of showing the not-loaded copy for all.
+  timelineFailure: null,
   playing: false,
   timer: null,
   runRequest: null,
@@ -251,6 +255,11 @@ function refreshIcons() {
   }
 }
 
+// The run, health and evidence contracts are UTC, so a displayed instant names
+// its zone. Without this the same event reads differently on two operators'
+// machines and neither screenshot says which zone it was in.
+const DISPLAY_TIME_ZONE = "UTC";
+
 function formatTime(value, withDate = false) {
   if (!value) return "--";
   const date = new Date(value);
@@ -258,7 +267,11 @@ function formatTime(value, withDate = false) {
   const options = withDate
     ? { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }
     : { hour: "2-digit", minute: "2-digit", second: "2-digit" };
-  return new Intl.DateTimeFormat("zh-CN", options).format(date);
+  const formatted = new Intl.DateTimeFormat("zh-CN", {
+    ...options,
+    timeZone: DISPLAY_TIME_ZONE,
+  }).format(date);
+  return `${formatted} ${DISPLAY_TIME_ZONE}`;
 }
 
 function describeEvent(event) {
@@ -479,10 +492,30 @@ function renderScenarioFilters() {
 
 // The evidence timeline keeps each event's committed phase. Context events are
 // shown, but under a phase that cannot be read as verification.
+// Three states that used to share one sentence: a read that failed, a read that
+// has not happened for this run, and a run that genuinely has no events. An
+// operator reading a partial evidence view has to be able to tell them apart.
+function timelineAvailability(current, snapshot) {
+  if (snapshot.timelineFailure) {
+    return { kind: "failed", detail: String(snapshot.timelineFailure) };
+  }
+  if (snapshot.timelineRunId !== current?.run_id) {
+    return { kind: "not_loaded", detail: "" };
+  }
+  return { kind: "loaded", detail: "" };
+}
+
 function renderEvidenceTimeline() {
   const target = get("evidence-timeline");
   if (!target) return;
-  if (state.timelineRunId !== state.currentRun?.run_id) {
+  const availability = timelineAvailability(state.currentRun, state);
+  if (availability.kind === "failed") {
+    target.innerHTML = `<div class="timeline-empty timeline-failure" role="status">时间线不可用：${escapeHtml(
+      availability.detail,
+    )}</div>`;
+    return;
+  }
+  if (availability.kind === "not_loaded") {
     target.innerHTML = '<div class="timeline-empty">尚未载入该运行的时间线</div>';
     return;
   }
@@ -1663,18 +1696,25 @@ async function selectRun(runId) {
     // if it had been phase-checked.
     state.timeline = [];
     state.timelineRunId = null;
+    state.timelineFailure = null;
     try {
       const timelineResponse = await fetch(`/api/runs/${encodeURIComponent(runId)}/timeline`, {
         signal: controller.signal,
       });
+      if (generation !== state.requestGeneration) return;
       if (timelineResponse.ok) {
         const timelinePayload = await timelineResponse.json();
         if (generation !== state.requestGeneration) return;
         state.timeline = timelinePayload.timeline || [];
         state.timelineRunId = timelinePayload.run_id ?? runId;
+      } else {
+        // A partial failure: the events are readable and the phase-checked
+        // projection is not, so the run must not look fully evidenced.
+        state.timelineFailure = `HTTP ${timelineResponse.status}`;
       }
     } catch (error) {
       if (error.name === "AbortError") throw error;
+      state.timelineFailure = error.message || "时间线请求失败";
     }
     renderRunList();
     renderCurrent();
