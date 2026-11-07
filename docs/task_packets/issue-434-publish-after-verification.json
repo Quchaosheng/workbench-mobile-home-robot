@@ -1,0 +1,64 @@
+{
+  "issue": 434,
+  "human_owner": "Quchaosheng",
+  "objective": "Publish the release tags only after the manifest verification, attestation and promotion check have all passed, so a failed release leaves no tagged artifact behind.",
+  "decision_supported": "Can the release tags be published last, after the evidence that authorizes them, while still attesting a real registry digest rather than a local image id?",
+  "allowed_paths": [
+    ".github/workflows/release-image.yml",
+    "tests/unit/test_release_workflow.py",
+    "docs/task_packets/issue-434-publish-after-verification.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "tools/scripts/release_manifest.py",
+    "tests/unit/test_release_provenance.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "tools/scripts/**"
+  ],
+  "input_refs": [
+    ".github/workflows/release-image.yml",
+    "tests/unit/test_release_workflow.py",
+    "tools/scripts/release_manifest.py",
+    "AGENTS.md"
+  ],
+  "outputs": [
+    ".github/workflows/release-image.yml",
+    "tests/unit/test_release_workflow.py"
+  ],
+  "acceptance": [
+    "No release tag is pushed before the manifest is written, verified, attested and checked for promotion.",
+    "The image is still attested against a real registry digest, so a staging push happens first under a tag no consumer resolves as a release.",
+    "Every release tag is moved onto that staged digest rather than onto a local image id.",
+    "A run that publishes zero tags fails instead of passing quietly.",
+    "The attestation step targets the staged digest, not a publish-step output that no longer exists.",
+    "A test asserts the step order and fails when a publish step is moved earlier."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_release_workflow.py -q",
+    "python3 -m ruff check .",
+    "python3 -m ruff format --check .",
+    "python3 tools/scripts/check_task_packet.py --all"
+  ],
+  "evidence": [
+    "Before the change the workflow pushed the release tags at the Publish tested image step, wrote the manifest 28 lines later and verified promotion after that.",
+    "A failure in any of the later steps therefore left the pushed tag in GHCR with no successful provenance or attestation evidence for it.",
+    "Moving the publish block back before the manifest step makes the new ordering test fail; restoring it passes 11."
+  ],
+  "stop_conditions": [
+    "The attestation action cannot target a digest that is not a release tag; it can, because it takes subject-name and subject-digest separately.",
+    "The registry rejects a push that moves an existing tag; tags are immutable in this repository only if configured so, and moving one is the intended behaviour on a re-run."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A failed release now leaves a staging-<sha> tag in the registry instead of a release tag; that is visible in the registry but does not resolve as a version.",
+    "Pulling by digest before retagging costs one extra image pull per release tag, which is small next to the build."
+  ]
+}
