@@ -70,3 +70,30 @@ becomes a wrong conclusion. An unusable `page` or `page_size` answers
 verification of anything. The projection is bounded by the same
 `MAX_EVENTS_PER_RUN` ceiling as the event stream, and `POST`, `PUT`, `PATCH` and
 `DELETE` on both routes still answer `405 read_only`.
+
+### Response redaction (Issue #430)
+
+A payload is producer-controlled, so `/timeline` and `/events` are artifact
+boundaries like a log file: a producer can put a credential or raw camera/prompt
+text in a payload, and the read API must not serve it. Both routes pass their
+response objects through `workbench.application.redaction`, the same versioned
+rule table the structured log sink uses - this is not a second redaction scheme.
+
+- Credential-shaped keys become `"<redacted>"`, raw prompt/frame/image fields
+  become `"<evidence-ref:redacted>"`. The rules and their limits are documented
+  in `docs/security/hardening.md`.
+- A scrubbed object carries
+  `"redaction": {"rules": "redaction-rules-v1", "redacted_values": <count>}`.
+  A clean object is returned unchanged and carries no marker, so "was this
+  redacted, and by which rules?" is answerable from the response itself.
+- Correlation fields survive: `run_id`, `event_id`, `sequence_no`, `event_type`,
+  `occurred_at` and `evidence_refs` are copied through, so a scrubbed item still
+  joins to its run. A hash or a reference is not content.
+- The source event store is append-only and is never rewritten; only the
+  serialized response copy is scrubbed. Re-reading the same run yields the same
+  scrubbed response, and the `.jsonl` on disk still holds the original bytes.
+
+Counts and other non-credential scalars are unaffected, so a payload with no
+credential-shaped key and no raw-evidence field is returned equal to what the
+store holds.
+
