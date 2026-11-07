@@ -1,0 +1,29 @@
+{
+  "issue": 411,
+  "human_owner": "Quchaosheng",
+  "objective": "Let a reviewer ask one bounded what-if about a recorded run without editing it: apply a named in-memory transformation, recompute canonical state, report the difference.",
+  "decision_supported": "Can a reviewer test a hypothetical input without mutating the bundle? Not before this; the only way to change the stream was to edit the run.",
+  "allowed_paths": [
+    "tools/scripts/counterfactual_replay.py",
+    "tests/unit/test_counterfactual_replay.py",
+    "docs/task_packets/evaluation-counterfactual-replay-411.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "libs/kernel/workbench/kernel/run_provenance.py"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/backend/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["libs/kernel/workbench/kernel/run_provenance.py", "services/world_model/workbench_world_model/reducer.py"],
+  "outputs": ["tools/scripts/counterfactual_replay.py"],
+  "acceptance": [
+    "One named transformation is applied per invocation.",
+    "The run bundle is never modified.",
+    "The report labels itself a counterfactual and states observed_run false.",
+    "A transformation that makes the stream invalid is reported, not raised."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_counterfactual_replay.py -q"],
+  "evidence": ["pytest output for tests/unit/test_counterfactual_replay.py"],
+  "stop_conditions": ["The change would grant release or physical-validation authority."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A counterfactual could be mistaken for an observed run; the payload states observed_run false for that reason.",
+    "Fallback: revert the single commit."
+  ]
+}
