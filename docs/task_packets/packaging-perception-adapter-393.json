@@ -1,0 +1,28 @@
+{
+  "issue": 393,
+  "human_owner": "Quchaosheng",
+  "objective": "Ship the perception adapter in the built wheel and add a test that fails when any runtime package in the tree is missing from the explicit setuptools list.",
+  "decision_supported": "Is the install boundary the source tree? No: a wheel is what gets installed, and a package absent from the list is silently dropped.",
+  "allowed_paths": [
+    "pyproject.toml",
+    "tests/unit/test_package_manifest.py",
+    "docs/task_packets/packaging-perception-adapter-393.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "services/perception/workbench_perception/ingestion.py"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["pyproject.toml", "services/perception/workbench_perception/ingestion.py"],
+  "outputs": ["pyproject.toml"],
+  "acceptance": [
+    "workbench_perception is in the packages list and the package-dir mapping.",
+    "The built wheel contains workbench_perception/ingestion.py.",
+    "A test fails if a runtime package is not declared."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_package_manifest.py -q"],
+  "evidence": ["pytest output for tests/unit/test_package_manifest.py", "wheel member listing"],
+  "stop_conditions": ["The adapter would need a dependency the image does not install."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Shipping the adapter adds its imports to the installed surface; it imports only the standard library.",
+    "Fallback: revert the single commit."
+  ]
+}

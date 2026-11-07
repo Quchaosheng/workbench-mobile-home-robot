@@ -38,6 +38,7 @@ packages = [
   "workbench_contracts",
   "workbench_virtual_mcu",
   "workbench_world_model",
+  "workbench_perception",
 ]
 
 [tool.setuptools.package-dir]
@@ -50,6 +51,7 @@ workbench_backend = "services/backend/workbench_backend"
 workbench_contracts = "libs/contracts/workbench_contracts"
 workbench_virtual_mcu = "firmware/virtual_mcu/workbench_virtual_mcu"
 workbench_world_model = "services/world_model/workbench_world_model"
+workbench_perception = "services/perception/workbench_perception"
 
 [tool.setuptools.package-data]
 workbench_backend = ["api-openapi-v1.json"]
