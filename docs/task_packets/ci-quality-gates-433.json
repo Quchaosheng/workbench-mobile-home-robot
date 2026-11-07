@@ -1,0 +1,28 @@
+{
+  "issue": 433,
+  "human_owner": "Quchaosheng",
+  "objective": "Put the property and mutation gates on the merge and release decision path instead of leaving them to a weekly schedule.",
+  "decision_supported": "Does a gate that runs on a schedule gate anything? No: nothing on the merge path consults it, so a regression can land and only show up days later.",
+  "allowed_paths": [
+    "Makefile",
+    ".github/workflows/ci.yml",
+    "docs/task_packets/ci-quality-gates-433.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", ".github/rulesets/main-protection.json"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["Makefile", ".github/workflows/ci.yml", ".github/workflows/quality-gates.yml"],
+  "outputs": ["Makefile", ".github/workflows/ci.yml"],
+  "acceptance": [
+    "make check includes property-gate and mutation-gate.",
+    "ci.yml runs both gates in the required foundation-checks job.",
+    "The scheduled workflow still exists for its own cadence."
+  ],
+  "commands": ["make -n check"],
+  "evidence": ["make -n check output naming both targets"],
+  "stop_conditions": ["The gates would exceed the job timeout."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Adding them to foundation-checks lengthens every PR run; they are seeded and bounded.",
+    "Fallback: keep them scheduled and revert the ci.yml step only."
+  ]
+}
