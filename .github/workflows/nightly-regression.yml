@@ -21,7 +21,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install --require-hashes -r docker/requirements-dev.lock
+          python -m pip install --no-deps -e .
 
       - name: Run 90 scripted pipeline fixtures
         run: make evaluation-scripted
