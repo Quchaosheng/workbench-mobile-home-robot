@@ -1,0 +1,29 @@
+{
+  "issue": 452,
+  "human_owner": "Quchaosheng",
+  "objective": "Parse OmniLink responses with the same strict duplicate-key and finite-JSON rules the other integration clients use, failing closed with a bounded diagnostic.",
+  "decision_supported": "Is the OmniLink response a trusted document? No: it is an external boundary, and a duplicate key or NaN has no unambiguous reading.",
+  "allowed_paths": [
+    "integrations/omnilink/client.py",
+    "tests/integration/test_omnilink_client.py",
+    "docs/task_packets/omnilink-strict-response-452.json",
+    "docs/task_packets/omnilink-content-length-453.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["integrations/omnilink/client.py", "integrations/omnisim/client.py"],
+  "outputs": ["integrations/omnilink/client.py"],
+  "acceptance": [
+    "A response with a duplicate object key is refused.",
+    "A response carrying NaN or Infinity is refused.",
+    "A well-formed response still parses."
+  ],
+  "commands": ["python3 -m pytest tests/integration/test_omnilink_client.py -q"],
+  "evidence": ["pytest output for tests/integration/test_omnilink_client.py"],
+  "stop_conditions": ["The change would need an OmniLink API change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Stricter parsing could reject a real server that emits duplicate keys; that response is ambiguous and refusing it is the point.",
+    "Fallback: revert the single commit."
+  ]
+}
