@@ -551,3 +551,103 @@ def test_committed_corpus_matches_the_registry_identity_set():
     )
     on_disk = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
     assert on_disk == corpus
+
+
+# --- Issue #425: the stale dimension has to come from the aging path ----------
+
+
+@pytest.fixture
+def conformance(monkeypatch):
+    """This checkout's conformance module, for the lifetime of one test.
+
+    A sibling test prepends `libs/application`, and `workbench` exists as a regular
+    package there too, so an import made after that one can resolve to the
+    application copy. Pinning the module here keeps the assertions about the code
+    under test without changing what other tests import.
+    """
+
+    import importlib
+    import importlib.util
+
+    entry = str(ROOT / "libs/kernel")
+    monkeypatch.syspath_prepend(entry)
+
+    source = ROOT / "libs/kernel/workbench/kernel/scenario_conformance.py"
+    spec = importlib.util.spec_from_file_location("workbench.kernel.scenario_conformance", source)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def probe_identity(conformance):
+    return sorted(conformance.PROBE_FAMILIES)[0]
+
+
+def _stale_outcome(conformance, identity):
+    return next(outcome for outcome in conformance.reference_probes(identity) if outcome.dimension == "stale_evidence")
+
+
+def test_the_stale_state_is_produced_by_the_aging_path(conformance, probe_identity) -> None:
+    state, _ = conformance._stale_state(probe_identity)
+    assert state.freshness_evaluated
+    beliefs = set(state.entity_beliefs.values()) | set(state.entity_location_beliefs.values())
+    assert {belief.value for belief in beliefs} == {"lost"}
+
+
+def test_the_probe_reports_the_policy_it_used(conformance, probe_identity) -> None:
+    detail = _stale_outcome(conformance, probe_identity).detail
+    assert conformance.PROBE_STALE_AS_OF in detail
+    stale_after, lost_after = conformance.PROBE_STALE_THRESHOLDS
+    assert f"{stale_after}s/{lost_after}s" in detail
+
+
+def test_the_probe_passes_on_the_committed_aging_path(conformance, probe_identity) -> None:
+    assert _stale_outcome(conformance, probe_identity).ok
+
+
+def test_the_thresholds_decide_the_belief(conformance, probe_identity) -> None:
+    """A boundary inside the thresholds must not produce LOST.
+
+    This is the property the old probe could not see: it wrote LOST directly, so
+    the age thresholds never mattered.
+    """
+
+    from workbench_contracts import ClockId, WorldEvent, WorldEventType
+    from workbench_world_model import reducer as reducer_module
+    from workbench_world_model.aging import (
+        FreshnessThresholds,
+        ObservationAgingBoundary,
+        ObservationFreshnessPolicy,
+    )
+
+    family = conformance.PROBE_FAMILIES[probe_identity]
+    events = conformance._probe_events(family, WorldEvent, WorldEventType, ClockId)
+    entity_types = sorted({observation.entity_type for observation in family.observations})
+    policy = ObservationFreshnessPolicy(
+        rules={
+            (conformance.PROBE_OBSERVATION_SOURCE, entity_type): FreshnessThresholds(
+                stale_after_s=5.0, lost_after_s=30.0
+            )
+            for entity_type in entity_types
+        }
+    )
+
+    def belief_at(as_of: str) -> set[str]:
+        boundary = ObservationAgingBoundary(as_of=as_of, clock_id=ClockId.WALL)
+        state = reducer_module.reduce_events(
+            conformance.PROBE_RUN_ID, events, freshness_policy=policy, aging_boundary=boundary
+        )
+        return {belief.value for belief in state.entity_beliefs.values()}
+
+    # The probe stream observes at 00:00:00Z..02Z.
+    assert belief_at("2026-08-04T00:00:04Z") == {"observed"}
+    assert belief_at("2026-08-04T00:00:20Z") == {"stale"}
+    assert belief_at("2026-08-04T00:01:00Z") == {"lost"}
+
+
+def test_the_probe_refuses_an_unsupported_identity(conformance) -> None:
+    with pytest.raises(conformance.ScenarioConformanceError):
+        conformance._stale_state("not-a-family@9.9")

@@ -13,8 +13,8 @@
       "authority to waive a required check or human approval"
     ]
   },
-  "generated_at": "2026-09-20T02:59:38.055572+00:00",
-  "source_commit": "19f6943e035162508eb4320406c4920081d02c58",
+  "generated_at": "2026-10-28T15:30:41.460216+00:00",
+  "source_commit": "3737d308de936d9d3b55de7fa6309ec59b3afd88",
   "configuration_hash": "9f386db8558c866526da10beed940801f4c2dd79518b31ca5db4e60b659f5c8c",
   "evidence_class_vocabulary": {
     "classes": [
@@ -111,7 +111,7 @@
           "test": "tests/unit/test_scenario_conformance.py::test_cleaning_unsafe_field_rejected"
         }
       ],
-      "replay_hash": "4f431b159d6877c13b4d3a5e548acf8b06139f6f05429115796cbaa02a62bec6",
+      "replay_hash": "df81839e3d62e02c188f32238b4d0983bbdfce1dc90d2541164e69ad2543dc7d",
       "verifier": "services/world_model/workbench_world_model/verifier.py::verify_workspace_clearance",
       "semantic_actions": [
         "observe",
@@ -194,7 +194,7 @@
           "test": "tests/unit/test_scenario_conformance.py::test_inspection_unsafe_field_rejected"
         }
       ],
-      "replay_hash": "78083df0d382c350cdfaf29b063615cb39b99322da715dc779642564a2caf29d",
+      "replay_hash": "535cb0fdcffeea05bb40281e9d5a311688920285fcc52b977b0f55aa5f36ab38",
       "verifier": "services/world_model/workbench_world_model/verifier.py::verify_inspection_evidence",
       "semantic_actions": [
         "observe"
@@ -273,7 +273,7 @@
           "test": "tests/unit/test_scenario_conformance.py::test_kitting_unsafe_field_rejected"
         }
       ],
-      "replay_hash": "82448239eae986c89c874dc759ef7d848cfe5d15fa50b71aff254473cb654b6a",
+      "replay_hash": "7d8faa820e783265dae1fd84cf277c956bd2fb7b0e8ba300a3ece5b6336c2f14",
       "verifier": "services/world_model/workbench_world_model/verifier.py::verify_kit_contents",
       "semantic_actions": [
         "observe",
@@ -356,7 +356,7 @@
           "test": "tests/unit/test_scenario_conformance.py::test_pick_place_unsafe_field_rejected"
         }
       ],
-      "replay_hash": "23b1c3ab5c8530c0d27bae6935b6a38b624d0afc0e26ac46b07d8a2855770b2b",
+      "replay_hash": "c5af07537dcc600d732842d5121cfbbe6f2799e21f6797e3d9ec388564ec305a",
       "verifier": "services/world_model/workbench_world_model/verifier.py::verify_object_in_tray",
       "semantic_actions": [
         "observe",
@@ -440,7 +440,7 @@
           "test": "tests/unit/test_scenario_conformance.py::test_parcels_unsafe_field_rejected"
         }
       ],
-      "replay_hash": "7645a9d62faceae014c733eb57025067af06d98d9b1677bb1c790aeccb3bf567",
+      "replay_hash": "ef9b3b05580e263495f35bcfe59df82e86b51eca7e080c69f6d3820a969ec801",
       "verifier": "services/world_model/workbench_world_model/verifier.py::verify_parcel_sorting",
       "semantic_actions": [
         "observe",
