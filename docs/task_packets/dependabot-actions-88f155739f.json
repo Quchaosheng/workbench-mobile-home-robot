@@ -1,0 +1,58 @@
+{
+  "issue": 532,
+  "human_owner": "Quchaosheng",
+  "objective": "Take the dependabot github-actions bump, and stop one contract test from pinning the digest of the action it only uses to identify a step's owner.",
+  "decision_supported": "Should a test that asserts which job owns the artifact upload also pin the action's commit sha? No: the sha is the dependency, and pinning it in the test makes every bump edit an unrelated assertion.",
+  "allowed_paths": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/container-full-stack.yml",
+    ".github/workflows/daily-smoke.yml",
+    ".github/workflows/nightly-regression.yml",
+    ".github/workflows/performance-budget.yml",
+    ".github/workflows/quality-gates.yml",
+    ".github/workflows/release-image.yml",
+    ".github/workflows/security.yml",
+    "tests/unit/test_branch_protection_gate.py",
+    "docs/task_packets/dependabot-actions-88f155739f.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "Makefile"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    ".github/workflows/ci.yml",
+    "tests/unit/test_branch_protection_gate.py"
+  ],
+  "outputs": [
+    "tests/unit/test_branch_protection_gate.py"
+  ],
+  "acceptance": [
+    "Every action reference keeps a commit sha rather than a floating tag.",
+    "The required-check ownership contract still passes.",
+    "The marker no longer has to change when the action is bumped."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_branch_protection_gate.py -q"
+  ],
+  "evidence": [
+    "pytest output for tests/unit/test_branch_protection_gate.py"
+  ],
+  "stop_conditions": [
+    "A workflow would reference an action by tag rather than sha."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Dropping the sha from the marker could mask a workflow that pins a tag; a separate check already enforces sha pinning.",
+    "Fallback: keep the sha in the marker and update it with each bump."
+  ]
+}
