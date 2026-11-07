@@ -1,0 +1,29 @@
+{
+  "issue": 412,
+  "human_owner": "Quchaosheng",
+  "objective": "Produce a bounded, deterministic, read-only report of which recorded claims cite evidence since found invalid, without rewriting history or granting deletion authority.",
+  "decision_supported": "Can the system answer which conclusions must be reopened when one frame turns out invalid? Not from a flat reference set; the dependency is derivable from the log and is now computed.",
+  "allowed_paths": [
+    "libs/kernel/workbench/kernel/event_store.py",
+    "tests/unit/test_event_evidence_recovery.py",
+    "docs/task_packets/evidence-lineage-invalidation-412.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "libs/application/workbench/application/data_governance.py"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["libs/kernel/workbench/kernel/event_store.py"],
+  "outputs": ["libs/kernel/workbench/kernel/event_store.py"],
+  "acceptance": [
+    "An invalid reference names every recorded event that cited it.",
+    "The report is deterministic: sorted inputs and outputs.",
+    "The projection never modifies the log or the event store.",
+    "An empty invalid set reports a computed empty result, not a missing one."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_event_evidence_recovery.py -q"],
+  "evidence": ["pytest output for tests/unit/test_event_evidence_recovery.py"],
+  "stop_conditions": ["The change would need deletion or rewrite authority."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The projection replays the whole log, so it is O(events); that is the same cost as the existing audit.",
+    "Fallback: revert the single commit."
+  ]
+}

@@ -24,6 +24,7 @@ from workbench.kernel.event_store import (
     EventStore,
     EventStoreError,
     audit_evidence_refs,
+    evidence_lineage,
     migrate_jsonl,
     recover_torn_jsonl,
 )
@@ -555,3 +556,49 @@ class TestServiceTargets:
         restored.close()
 
         assert elapsed < 300, f"restore took {elapsed:.3f}s, above the documented RTO"
+
+
+class TestEvidenceLineage:
+    """Issue #412: which recorded claims cite evidence since found invalid."""
+
+    def test_an_invalid_reference_names_the_events_that_cited_it(self, tmp_path: Path) -> None:
+        store = populated(tmp_path / "events.sqlite3", count=3)
+        report = evidence_lineage(store, ["frame-1"])
+        store.close()
+
+        assert report["invalid_refs"] == ["frame-1"]
+        assert report["invalid_count"] == 1
+        assert report["affected_event_count"] == 1
+        assert report["affected_events"] == ["event-1"]
+        assert report["dependents"] == {"frame-1": ["event-1"]}
+
+    def test_nothing_invalid_means_nothing_affected(self, tmp_path: Path) -> None:
+        store = populated(tmp_path / "events.sqlite3", count=2)
+        report = evidence_lineage(store, [])
+        store.close()
+
+        assert report["affected_event_count"] == 0
+        assert report["affected_events"] == []
+        assert report["dependents"] == {}
+        # An empty family is a computed answer, not a missing one.
+        assert report["complete"] is True
+
+    def test_several_invalid_references_report_their_own_dependents(self, tmp_path: Path) -> None:
+        store = populated(tmp_path / "events.sqlite3", count=3)
+        report = evidence_lineage(store, ["frame-2", "frame-0"])
+        store.close()
+
+        # Sorted, so the same log always produces the same report.
+        assert report["invalid_refs"] == ["frame-0", "frame-2"]
+        assert report["dependents"]["frame-0"] == ["event-0"]
+        assert report["dependents"]["frame-2"] == ["event-2"]
+        assert report["affected_events"] == ["event-0", "event-2"]
+
+    def test_the_projection_does_not_modify_the_log(self, tmp_path: Path) -> None:
+        store = populated(tmp_path / "events.sqlite3", count=2)
+        before = store.replay()
+        evidence_lineage(store, ["frame-0"])
+        after = store.replay()
+        assert after == before, "lineage is a read-only projection"
+        assert store.verify_integrity()
+        store.close()

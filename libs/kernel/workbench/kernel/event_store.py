@@ -974,6 +974,46 @@ def audit_evidence_refs(store: EventStore, available: Iterable[str]) -> dict[str
     }
 
 
+def evidence_lineage(store: EventStore, invalid: Iterable[str]) -> dict[str, Any]:
+    """Which recorded claims cite evidence now known to be invalid.
+
+    A read-only projection, not a repair: nothing is rewritten, nothing is
+    deleted, and a claim is never re-opened automatically. The store answers the
+    operational question the audit above cannot — if one frame or motion log is
+    later found invalid, which conclusions consumed it (issue #412).
+
+    The projection is deterministic: events are replayed in committed order and
+    every list is sorted, so the same log and the same invalid set always produce
+    the same report.
+    """
+    invalid_refs = sorted({str(reference) for reference in invalid})
+    invalid_set = set(invalid_refs)
+    dependents: dict[str, list[str]] = {reference: [] for reference in invalid_refs}
+    affected_events: list[str] = []
+    for event in store.replay():
+        references = event.get("evidence_refs", []) or []
+        hit = sorted({str(reference) for reference in references} & invalid_set)
+        if not hit:
+            continue
+        event_id = str(event.get("event_id", ""))
+        affected_events.append(event_id)
+        for reference in hit:
+            dependents[reference].append(event_id)
+    return {
+        "invalid_refs": invalid_refs,
+        "invalid_count": len(invalid_refs),
+        # Every recorded event that cited at least one invalid reference.
+        "affected_event_count": len(affected_events),
+        "affected_events": affected_events,
+        # The per-reference fan-out, so one bad frame can be traced to the
+        # specific claims that must be revisited.
+        "dependents": {reference: dependents[reference] for reference in invalid_refs},
+        # A claim citing nothing invalid is not affected; saying so explicitly
+        # keeps "no dependents" from being read as "not computed".
+        "complete": True,
+    }
+
+
 def _is_readable(path: Path) -> bool:
     """Report whether a candidate file is a readable, contract-valid event log."""
     probe = EventStore(path, backend="jsonl")
