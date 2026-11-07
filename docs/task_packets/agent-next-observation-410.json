@@ -1,0 +1,51 @@
+{
+  "issue": 410,
+  "human_owner": "Quchaosheng",
+  "objective": "Derive a deterministic, bounded next-best-observation proposal from the verification reason, so a retry asks for a view that could close the gap instead of repeating the same request.",
+  "decision_supported": "Is retrying the same observation with a fixed budget active perception? No: it can spend every attempt on the same uninformative view.",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/next_observation.py",
+    "tests/unit/test_next_observation.py",
+    "docs/task_packets/agent-next-observation-410.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "services/agent_runtime/workbench_agent_runtime/post_action.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**",
+    "services/perception/**"
+  ],
+  "input_refs": [
+    "services/agent_runtime/workbench_agent_runtime/post_action.py"
+  ],
+  "outputs": [
+    "services/agent_runtime/workbench_agent_runtime/next_observation.py"
+  ],
+  "acceptance": [
+    "A reason with a gap yields ranked proposals naming the view and the gap.",
+    "A view already tried is not proposed again.",
+    "A reason with no gap yields an empty list rather than a repeat.",
+    "verdict_changed records whether the new sample moved the verdict."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_next_observation.py -q"
+  ],
+  "evidence": [
+    "pytest output for tests/unit/test_next_observation.py"
+  ],
+  "stop_conditions": [
+    "The change would need an observer signature change."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Proposing a view does not guarantee realising it; wiring a viewpoint into ObservationPort is a follow-up the issue keeps out of scope.",
+    "Fallback: revert the single commit."
+  ]
+}
