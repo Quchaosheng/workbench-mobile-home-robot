@@ -1,0 +1,31 @@
+{
+  "issue": 438,
+  "human_owner": "Quchaosheng",
+  "objective": "The exhaustion decision is representable under the committed event contract: the ceiling is checked before the counter advances, so attempt and ticks never exceed the budget they name.",
+  "decision_supported": "Should the counters advance past the ceiling before the abort is emitted? No: the resulting payload is rejected, so the one audit record that explains the stop is the one that cannot be persisted.",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/recovery.py",
+    "tests/unit/test_recovery_policy.py",
+    "docs/task_packets/agent-recovery-exhaustion-438.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "services/world_model/workbench_world_model/event_payloads.py"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": [
+    "services/agent_runtime/workbench_agent_runtime/recovery.py",
+    "services/world_model/workbench_world_model/event_payloads.py"
+  ],
+  "outputs": ["services/agent_runtime/workbench_agent_runtime/recovery.py"],
+  "acceptance": [
+    "An exhaustion decision has attempt <= max_attempts and ticks <= max_recovery_ticks.",
+    "The abort still names the budget and stays terminal.",
+    "The reason code is unchanged."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_recovery_policy.py -q"],
+  "evidence": ["pytest output for tests/unit/test_recovery_policy.py"],
+  "stop_conditions": ["The change would need an event contract change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The abort now fires one verification earlier in counter terms; the number of retries is the same because the ceiling is the same.",
+    "Fallback: revert the single commit."
+  ]
+}

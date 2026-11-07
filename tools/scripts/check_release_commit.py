@@ -90,15 +90,67 @@ def commit_is_ancestor(repository: str, ancestor: str, descendant: str, token: s
     return payload["status"] in {"identical", "behind"}
 
 
+_MAX_CHECK_RUN_PAGES = 20
+
+
+def _all_check_runs(repository: str, commit: str, token: str) -> list[dict[str, Any]]:
+    """Every check run for a commit, following pagination.
+
+    One page is 100 entries and a busy commit can exceed it, so a required check
+    that fell past the first page used to be reported as missing — which reads
+    exactly like a check that never ran (issue #401).
+    """
+    runs: list[dict[str, Any]] = []
+    for page in range(1, _MAX_CHECK_RUN_PAGES + 1):
+        payload = _api(
+            f"{API_ROOT}/repos/{repository}/commits/{commit}/check-runs?per_page=100&page={page}",
+            token,
+        )
+        if not isinstance(payload, dict):
+            raise UnobservableError("the check-runs API returned an unexpected payload")
+        page_runs = payload.get("check_runs")
+        if not isinstance(page_runs, list):
+            raise UnobservableError("the check-runs API returned an unexpected payload")
+        runs.extend(run for run in page_runs if isinstance(run, dict))
+        total = payload.get("total_count")
+        if len(page_runs) < 100:
+            return runs
+        if isinstance(total, int) and len(runs) >= total:
+            return runs
+    raise UnobservableError("the check-runs API kept returning full pages past the page limit")
+
+
+def _run_recency(run: dict[str, Any]) -> str:
+    """A sortable key for when a check run finished, falling back to when it started.
+
+    ISO-8601 timestamps in the same format sort lexicographically, which is what
+    the API returns. A run with neither timestamp sorts before any run that has
+    one, so a well-formed rerun always wins.
+    """
+    completed = run.get("completed_at")
+    if isinstance(completed, str) and completed:
+        return completed
+    started = run.get("started_at")
+    if isinstance(started, str) and started:
+        return started
+    return ""
+
+
 def failing_required_checks(
     required: tuple[str, ...],
     check_runs: list[dict[str, Any]],
 ) -> tuple[list[str], list[str]]:
     """Split required checks into those that did not pass and those not reported."""
+    # The newest run per name, by the timestamps the API reports rather than by
+    # response order. A stale failed run appearing after a successful rerun used
+    # to win, which turned a green commit red for the wrong reason (issue #401).
     latest: dict[str, dict[str, Any]] = {}
     for run in check_runs:
         name = run.get("name")
-        if isinstance(name, str) and name:
+        if not isinstance(name, str) or not name:
+            continue
+        current = latest.get(name)
+        if current is None or _run_recency(run) >= _run_recency(current):
             latest[name] = run
 
     not_passing: list[str] = []
@@ -151,15 +203,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             return INCOMPLETE
         try:
-            payload = _api(
-                f"{API_ROOT}/repos/{args.repository}/commits/{args.commit}/check-runs?per_page=100", args.token
-            )
+            check_runs = _all_check_runs(args.repository, args.commit, args.token)
         except UnobservableError as exc:
             print(f"INCOMPLETE: {exc}", file=sys.stderr)
-            return INCOMPLETE
-        check_runs = payload.get("check_runs") if isinstance(payload, dict) else None
-        if not isinstance(check_runs, list):
-            print("INCOMPLETE: the check-runs API returned an unexpected payload", file=sys.stderr)
             return INCOMPLETE
 
     branch = args.protected_branch

@@ -28,6 +28,11 @@ jobs:
       - run: python tools/scripts/lock_python_dependencies.py verify
       - run: make lint
       - run: make test
+      # The property and mutation gates used to run only on a weekly schedule, so
+      # nothing on the merge or release path consulted them (issue #433). They are
+      # cheap enough to run here, and `make check` now includes them.
+      - run: make property-gate
+      - run: make mutation-gate
       - run: make contract
       - run: make scenario-check
       - run: make scenario-conformance

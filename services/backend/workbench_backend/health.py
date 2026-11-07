@@ -575,7 +575,12 @@ class HealthStore:
                 return "unknown"
             return overall_status(self._current, self._tracker.active())
 
-    def current_payload(self) -> dict[str, Any]:
+    def has_snapshot(self) -> bool:
+        """Whether a snapshot has ever been ingested."""
+        with self._lock:
+            return self._current is not None
+
+    def current_payload(self, *, lost_source: bool = False) -> dict[str, Any]:
         """The payload for the current-health endpoint."""
         with self._lock:
             current = self._current
@@ -604,8 +609,11 @@ class HealthStore:
             "integrity": {"malformed_documents": malformed, "source_restarts": restarts},
         }
         if current is None:
-            # "We have never seen a snapshot" is unknown, never healthy.
-            payload["reason"] = "no_health_snapshot"
+            # "We have never seen a snapshot" is unknown, never healthy. A
+            # document that was read and then went away is a different unknown:
+            # the operator needs to know a source they were relying on is gone,
+            # not that one was never configured (issue #416).
+            payload["reason"] = "source_unavailable" if lost_source else "no_health_snapshot"
         return payload
 
     def history_payload(self, *, since: float | None = None) -> dict[str, Any]:
@@ -613,6 +621,11 @@ class HealthStore:
         with self._lock:
             stored = tuple(self._snapshots)
             cleared = self._tracker.history(since=since)
+        # `since` bounds snapshots as well as cleared alerts. The OpenAPI
+        # parameter says so, and returning every stored snapshot for a far-future
+        # `since` made the filter look applied when it was not (issue #463).
+        if since is not None:
+            stored = tuple(entry for entry in stored if entry.collected_at >= since)
         return {
             "read_only": True,
             "rules_version": ALERT_RULES_VERSION,
@@ -672,6 +685,13 @@ class HealthReadModel:
         self._lock = threading.RLock()
         self._stat: tuple[int, int] | None = None
         self._loaded = False
+        # Digest of the bytes last ingested. The stat signature alone cannot tell
+        # a same-size rewrite from an untouched file (issue #457).
+        self._content_digest: str | None = None
+        # Whether a document that had been read has since disappeared. It lives
+        # on the model, not the store: the store is rebuilt on every refresh, so
+        # a flag kept there would be lost the moment it mattered (issue #416).
+        self._lost_source = False
 
     @property
     def policy(self) -> AlertPolicy:
@@ -688,13 +708,41 @@ class HealthReadModel:
                 stat = self.path.stat()
             except OSError:
                 # Absent is a valid state: the robot may simply never have
-                # written health yet. It stays "unknown", not an error.
+                # written health yet, so this is "unknown" rather than an error.
+                #
+                # What it must not be is the *previous* state. Leaving the store
+                # in place meant a document that had been read once kept serving
+                # its last healthy snapshot after it was deleted, which is the
+                # stale-green failure the monitoring view exists to prevent
+                # (issue #416). The transition is recorded so the payload can say
+                # the source went away rather than that it was never there.
+                # Sticky: once a read source has gone away, a later refresh must
+                # not reset it to "never configured". current_payload() refreshes
+                # before answering, so this branch runs more than once after the
+                # file disappears.
+                if self._loaded and self._store.has_data:
+                    self._lost_source = True
+                self._store = HealthStore(
+                    max_snapshots=self._store.max_snapshots,
+                    policy=self._store.policy,
+                    policy_source=self.policy_source,
+                )
                 self._stat = None
                 self._loaded = True
                 return
             signature = (stat.st_mtime_ns, stat.st_size)
             if self._loaded and signature == self._stat:
-                return
+                # The signature is a hint, not proof. A same-size rewrite that
+                # restores the timestamp — or a filesystem with coarse resolution
+                # — leaves it unchanged while the bytes differ, so the document is
+                # read and hashed before the cached store is trusted (issue #457).
+                try:
+                    current = self.path.read_bytes()
+                except OSError:
+                    self._stat = None
+                    return
+                if hashlib.sha256(current).hexdigest() == self._content_digest:
+                    return
             snapshots = load_health_documents(self.path)
             self._store = HealthStore(
                 max_snapshots=self._store.max_snapshots,
@@ -702,12 +750,17 @@ class HealthReadModel:
                 policy_source=self.policy_source,
             )
             self._store.ingest_documents(snapshots, source=self.path.name)
+            try:
+                self._content_digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+            except OSError:
+                self._content_digest = None
+            self._lost_source = False
             self._stat = signature
             self._loaded = True
 
     def current_payload(self) -> dict[str, Any]:
         self.refresh()
-        return self._store.current_payload()
+        return self._store.current_payload(lost_source=self._lost_source)
 
     def history_payload(self, *, since: float | None = None) -> dict[str, Any]:
         self.refresh()

@@ -1,0 +1,28 @@
+{
+  "issue": 415,
+  "human_owner": "Quchaosheng",
+  "objective": "Report pairwise comparisons with an explicit multiplicity correction, and refuse a metrics file whose vtcr and run_count imply a fractional success count.",
+  "decision_supported": "Is a 95% interval per comparison an honest claim across a family? No: three versions make three comparisons, so the chance of a false significant result exceeds 5%.",
+  "allowed_paths": [
+    "tools/scripts/compare_evaluations.py",
+    "docs/task_packets/evaluation-multiplicity-415.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "tools/scripts/wilson.py"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["tools/scripts/compare_evaluations.py"],
+  "outputs": ["tools/scripts/compare_evaluations.py"],
+  "acceptance": [
+    "The report names the family, its size, alpha and the correction used.",
+    "Pairwise intervals use the adjusted alpha and state their confidence level.",
+    "A vtcr outside 0..1 is refused.",
+    "A vtcr and run_count that do not imply a whole success count are refused."
+  ],
+  "commands": ["python3 -c \"from compare_evaluations import compare; print(compare([{'run_count':10,'vtcr':0.5},{'run_count':10,'vtcr':0.7}],['a','b']))\""],
+  "evidence": ["compare() output showing the multiplicity block and the adjusted interval"],
+  "stop_conditions": ["The change would require a new benchmark run."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Bonferroni is conservative, so some previously significant pairs are no longer; that is the correction doing its job.",
+    "Fallback: revert the single commit."
+  ]
+}

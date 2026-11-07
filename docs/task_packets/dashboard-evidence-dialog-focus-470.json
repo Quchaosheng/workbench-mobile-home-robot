@@ -1,0 +1,29 @@
+{
+  "issue": 470,
+  "human_owner": "Quchaosheng",
+  "objective": "The evidence dialog has an accessible name, a single close path covering the button, Escape and cancel, and returns focus to whatever opened it.",
+  "decision_supported": "Is the fallback open attribute a modal? No, so focus must be moved and returned explicitly rather than relying on the platform.",
+  "allowed_paths": [
+    "apps/dashboard/app.js",
+    "apps/dashboard/index.html",
+    "tests/unit/test_dashboard_accessibility.py",
+    "docs/task_packets/dashboard-evidence-dialog-focus-470.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "apps/dashboard/README.md"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["apps/dashboard/app.js", "apps/dashboard/index.html"],
+  "outputs": ["apps/dashboard/app.js", "apps/dashboard/index.html"],
+  "acceptance": [
+    "The dialog is named by its title and described by its metadata.",
+    "Escape, cancel and the close button all run one close path.",
+    "Focus returns to the element that opened the dialog."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_dashboard_accessibility.py -q"],
+  "evidence": ["pytest output for tests/unit/test_dashboard_accessibility.py"],
+  "stop_conditions": ["The change would need a browser-only test harness."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Moving focus on open could fight a native dialog that already does it; the close button is a stable target either way.",
+    "Fallback: revert the single commit."
+  ]
+}

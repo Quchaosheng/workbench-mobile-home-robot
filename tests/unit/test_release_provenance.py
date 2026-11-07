@@ -527,3 +527,30 @@ class AttestationEvidenceTests(unittest.TestCase):
             persisted = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(persisted["attestation"]["status"], "signed")
             self.assertFalse(persisted["release_eligible"])
+
+
+# --- Issue #402: a lock without artifact hashes pins nothing -----------------
+
+
+class UnhashedLockTests(unittest.TestCase):
+    """A version pin that is not tied to bytes is not a lock."""
+
+    def test_a_lock_whose_packages_carry_no_hashes_is_refused(self) -> None:
+        unhashed = {
+            "packages": [
+                {"name": "pydantic", "version": "2.13.5"},
+                {"name": "pytest", "version": "9.1.1"},
+            ],
+            "package_count": 2,
+            "hashed_package_count": 0,
+        }
+        document = manifest(lock=unhashed)
+        reasons = verify_manifest(document)
+        self.assertTrue(
+            any("artifact hashes" in reason for reason in reasons),
+            f"a lock with no hashes must be refused, got {reasons}",
+        )
+
+    def test_a_lock_with_hashes_still_verifies(self) -> None:
+        # The existing good fixture keeps passing, so the refusal is targeted.
+        self.assertEqual(verify_manifest(manifest()), ())

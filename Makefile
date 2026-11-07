@@ -42,7 +42,7 @@ test:
 	$(PYTHON) -m pytest -v
 
 # Everything CI runs, in one command. Run this before opening a PR.
-check: lint test contract scenario-check scenario-conformance assurance-check run-identity-check run-provenance-check golden-check readiness-report-check phase-gates-check context-check demo-scripted demo-offline
+check: lint test contract scenario-check scenario-conformance assurance-check run-identity-check run-provenance-check golden-check readiness-report-check phase-gates-check context-check property-gate mutation-gate demo-scripted demo-offline
 
 contract:
 	$(PYTHON) tools/scripts/validate_contracts.py

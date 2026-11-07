@@ -1,0 +1,29 @@
+{
+  "issue": 469,
+  "human_owner": "Quchaosheng",
+  "objective": "The evidence dialog derives its source and integrity labels from the selected run and the resolved reference, and says unknown where the record does not say.",
+  "decision_supported": "May the dialog assert 'scripted fixture' and 'event stream reference' for every item? No: a Gazebo or external run never made that claim, and a reviewer reads it as proof.",
+  "allowed_paths": [
+    "apps/dashboard/app.js",
+    "tests/unit/test_dashboard_accessibility.py",
+    "docs/task_packets/dashboard-evidence-provenance-469.json",
+    "docs/task_packets/dashboard-evidence-dialog-focus-470.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "apps/dashboard/README.md"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["apps/dashboard/app.js"],
+  "outputs": ["apps/dashboard/app.js"],
+  "acceptance": [
+    "The source label names the run's mode rather than a fixed string.",
+    "An unresolved reference is not claimed as an artifact.",
+    "A run without a mode reports unknown."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_dashboard_accessibility.py -q"],
+  "evidence": ["pytest output for tests/unit/test_dashboard_accessibility.py"],
+  "stop_conditions": ["The change would need a run schema change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A run whose mode is absent now reads unknown where it used to read scripted; that is the honest answer.",
+    "Fallback: revert the single commit."
+  ]
+}

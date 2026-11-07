@@ -121,7 +121,10 @@
                 <span><i data-lucide="clock-3"></i><time id="updated-at">--</time></span>
               </div>
               <div class="progress-row">
-                <div class="progress-label"><span>事件进度</span><strong id="progress-value">0%</strong></div>
+                <div class="progress-label">
+                  <span>事件回放位置 <small id="progress-count">0 / 0</small></span>
+                  <strong id="progress-value">0%</strong>
+                </div>
                 <div class="progress-track"><span id="progress-bar"></span></div>
               </div>
             </div>
@@ -292,7 +295,12 @@
       </main>
     </div>
 
-    <dialog id="evidence-dialog" class="evidence-dialog">
+    <dialog
+      id="evidence-dialog"
+      class="evidence-dialog"
+      aria-labelledby="evidence-title"
+      aria-describedby="evidence-meta"
+    >
       <div class="dialog-head">
         <div>
           <p class="eyebrow">证据详情</p>

@@ -1,0 +1,28 @@
+{
+  "issue": 407,
+  "human_owner": "Quchaosheng",
+  "objective": "A failed health-history read is a visible partial failure, not an empty trend. Current cards stay, the trend panel says it is unavailable.",
+  "decision_supported": "Should a failed trend read look like a run with no snapshots? No: the two are indistinguishable to an operator and only one is true.",
+  "allowed_paths": [
+    "apps/dashboard/app.js",
+    "tests/unit/test_dashboard_accessibility.py",
+    "docs/task_packets/dashboard-history-failure-407.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "apps/dashboard/README.md"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["apps/dashboard/app.js", "tests/unit/test_dashboard_accessibility.py"],
+  "outputs": ["apps/dashboard/app.js"],
+  "acceptance": [
+    "Health 200 plus history 503 renders the current cards and a named trend failure.",
+    "A successful history read reports no failure.",
+    "The trend failure is exposed separately from the health failure."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_dashboard_accessibility.py -q"],
+  "evidence": ["pytest output for tests/unit/test_dashboard_accessibility.py"],
+  "stop_conditions": ["The fix would need a backend response change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Keeping the cards while the trend fails is a product decision; the issue allows it provided the trend is labelled.",
+    "Fallback: revert the single commit."
+  ]
+}

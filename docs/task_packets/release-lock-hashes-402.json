@@ -1,0 +1,28 @@
+{
+  "issue": 402,
+  "human_owner": "Quchaosheng",
+  "objective": "A dependency lock whose packages carry no artifact hashes is refused, so provenance cannot report itself complete while pinning versions to nothing.",
+  "decision_supported": "Is name==version a lock? No: without hashes nothing ties the version to bytes, and the manifest reported hashed_package_count 0 as complete.",
+  "allowed_paths": [
+    "tools/scripts/release_manifest.py",
+    "tests/unit/test_release_provenance.py",
+    "docs/task_packets/release-lock-hashes-402.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "docker/python-constraints.txt"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["tools/scripts/release_manifest.py", "docker/python-constraints.txt"],
+  "outputs": ["tools/scripts/release_manifest.py"],
+  "acceptance": [
+    "A lock whose packages omit hashes is refused by verify_manifest.",
+    "A lock whose packages carry sha256 hashes still verifies.",
+    "promotion_reasons follows the same rule."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_release_provenance.py -q"],
+  "evidence": ["pytest output for tests/unit/test_release_provenance.py"],
+  "stop_conditions": ["The change would need a lock format change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A constraints file without hashes can no longer build a promotable manifest; the fix is to generate a hashed lock, which lock-python already does.",
+    "Fallback: revert the single commit."
+  ]
+}

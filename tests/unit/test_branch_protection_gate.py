@@ -234,8 +234,38 @@ class ReleaseSafetyMatrixTests(unittest.TestCase):
 
     def test_the_latest_run_for_a_name_wins(self) -> None:
         runs = [
+            {"name": "a", "status": "completed", "conclusion": "failure", "completed_at": "2026-08-22T10:00:00Z"},
+            {"name": "a", "status": "completed", "conclusion": "success", "completed_at": "2026-08-22T10:05:00Z"},
+        ]
+        not_passing, missing = failing_required_checks(("a",), runs)
+        self.assertEqual((not_passing, missing), ([], []))
+
+    def test_a_stale_run_in_response_order_does_not_win(self) -> None:
+        """#401: order in the response is not order in time."""
+
+        runs = [
+            {"name": "a", "status": "completed", "conclusion": "success", "completed_at": "2026-08-22T10:05:00Z"},
+            # A newer failure cannot be overridden by an older success, and an
+            # older failure arriving last must not override a newer success.
+            {"name": "a", "status": "completed", "conclusion": "failure", "completed_at": "2026-08-22T10:00:00Z"},
+        ]
+        not_passing, missing = failing_required_checks(("a",), runs)
+        self.assertEqual((not_passing, missing), ([], []))
+
+    def test_a_newer_failure_beats_an_older_success(self) -> None:
+        runs = [
+            {"name": "a", "status": "completed", "conclusion": "failure", "completed_at": "2026-08-22T10:05:00Z"},
+            {"name": "a", "status": "completed", "conclusion": "success", "completed_at": "2026-08-22T10:00:00Z"},
+        ]
+        not_passing, missing = failing_required_checks(("a",), runs)
+        self.assertEqual(missing, [])
+        self.assertEqual(len(not_passing), 1)
+        self.assertIn("failure", not_passing[0])
+
+    def test_a_run_without_timestamps_sorts_before_one_with_them(self) -> None:
+        runs = [
+            {"name": "a", "status": "completed", "conclusion": "success", "completed_at": "2026-08-22T10:00:00Z"},
             {"name": "a", "status": "completed", "conclusion": "failure"},
-            {"name": "a", "status": "completed", "conclusion": "success"},
         ]
         not_passing, missing = failing_required_checks(("a",), runs)
         self.assertEqual((not_passing, missing), ([], []))

@@ -1,0 +1,29 @@
+{
+  "issue": 401,
+  "human_owner": "Quchaosheng",
+  "objective": "Required check selection picks the newest run by timestamp and follows API pagination, so a stale run cannot win and a required check past page one is not reported missing.",
+  "decision_supported": "Is the last run in the API response the latest? No: response order is not time order, which made a green commit red and a red one green.",
+  "allowed_paths": [
+    "tools/scripts/check_release_commit.py",
+    "tests/unit/test_branch_protection_gate.py",
+    "docs/task_packets/release-check-selection-401.json",
+    "docs/task_packets/release-lock-hashes-402.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", ".github/workflows/quality-gates.yml"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["tools/scripts/check_release_commit.py"],
+  "outputs": ["tools/scripts/check_release_commit.py"],
+  "acceptance": [
+    "The newest run per name is selected by completed_at, falling back to started_at.",
+    "A run with no timestamps sorts before one that has them.",
+    "Check runs are read across pages until a short page or total_count is reached."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_branch_protection_gate.py -q"],
+  "evidence": ["pytest output for tests/unit/test_branch_protection_gate.py"],
+  "stop_conditions": ["The change would need a GitHub API version change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Following pagination costs extra requests on a busy commit; the page count is bounded.",
+    "Fallback: revert the single commit."
+  ]
+}

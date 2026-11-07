@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
@@ -284,7 +284,12 @@ def _parse_instant(value: object, label: str) -> datetime:
     except ValueError as error:
         raise PostActionError(f"{label} is not an RFC3339 timestamp: {value!r}") from error
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+        # A naive timestamp is a producer that forgot an offset, not a producer
+        # that meant UTC. Guessing UTC here made this path accept instants the
+        # rest of the repository refuses, so the same event could be usable in
+        # one place and not another (issue #421). The caller turns this into a
+        # named correlation defect.
+        raise PostActionError(f"{label} must carry a timezone offset: {value!r}")
     return parsed
 
 
