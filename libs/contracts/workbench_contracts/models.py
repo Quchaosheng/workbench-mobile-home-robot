@@ -692,6 +692,9 @@ class ReasonCode(StrEnum):
     CONFIDENCE_BELOW_THRESHOLD = "confidence_below_threshold"
     CONFLICTING_OBSERVATIONS = "conflicting_observations"
     EVIDENCE_MISSING = "evidence_missing"
+    # Two observations disagree and neither can be preferred from the evidence
+    # (issue #409). Distinct from EVIDENCE_MISSING, which says nothing arrived.
+    EVIDENCE_CONFLICTING = "evidence_conflicting"
     STALE_OBSERVATION = "stale_observation"
 
 

@@ -1,0 +1,40 @@
+{
+  "issue": 409,
+  "human_owner": "Quchaosheng",
+  "objective": "Represent a bounded set of incompatible location beliefs without inventing probabilities, and make the verifier return insufficient_evidence when the evidence supports neither a confirmation nor a refutation.",
+  "decision_supported": "Should the newest observation silently replace a contradictory one? No: that collapses an unresolved belief into a confident answer the evidence does not support.",
+  "allowed_paths": [
+    "services/world_model/workbench_world_model/reducer.py",
+    "services/world_model/workbench_world_model/verifier.py",
+    "libs/contracts/workbench_contracts/models.py",
+    "tests/unit/test_world_model_hypotheses.py",
+    "docs/architecture/world-model-conflicting-beliefs.md",
+    "docs/task_packets/world-model-conflicting-beliefs-409.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "docs/algorithms/world-model.md"],
+  "forbidden": ["robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**", "interfaces/**"],
+  "input_refs": [
+    "services/world_model/workbench_world_model/reducer.py",
+    "services/world_model/workbench_world_model/verifier.py",
+    "libs/contracts/workbench_contracts/models.py"
+  ],
+  "outputs": [
+    "services/world_model/workbench_world_model/reducer.py",
+    "services/world_model/workbench_world_model/verifier.py"
+  ],
+  "acceptance": [
+    "Two contradictory observations are both retained, bounded to two.",
+    "A conflict yields insufficient_evidence with EVIDENCE_CONFLICTING.",
+    "An undisputed observation still confirms, and an undisputed absence still refutes.",
+    "Conflicting and missing are distinct reason codes.",
+    "A migration note records that old snapshots are not relabelled."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_world_model_hypotheses.py -q"],
+  "evidence": ["pytest output for tests/unit/test_world_model_hypotheses.py"],
+  "stop_conditions": ["The change would need a public schema-version bump."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A verifier that previously said refuted now says insufficient_evidence for a conflicting entity; that is the correction, and the claim names both readings.",
+    "Fallback: revert the single commit."
+  ]
+}

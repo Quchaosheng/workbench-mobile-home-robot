@@ -443,12 +443,26 @@ def verify_object_in_tray(
     if not isinstance(object_id, str) or not object_id.strip() or not isinstance(tray_id, str) or not tray_id.strip():
         raise ValueError("object_id and tray_id must be non-empty")
     expected_location = f"in:{tray_id}"
+    # Competing observations the reducer retained. When the entity has been seen
+    # in more than one place and the expected one is among them, the evidence
+    # supports neither a confirmation nor a refutation: one sample says the goal
+    # holds and another says it does not, and the newest one winning silently is
+    # the collapse the contract promised not to do (issue #409).
+    hypotheses = list(getattr(state, "entity_location_hypotheses", {}).get(object_id, ()))
+    unresolved = len(hypotheses) > 1 and expected_location in hypotheses
     actual_location = state.entity_locations.get(object_id)
     if actual_location is None:
         status = VerificationStatus.INSUFFICIENT_EVIDENCE
         reason_code = ReasonCode.TARGET_NOT_OBSERVED
         recovery_hint = RecoveryHint.RE_OBSERVE
         claim = f"{object_id} inside {tray_id}: never observed"
+    elif unresolved:
+        status = VerificationStatus.INSUFFICIENT_EVIDENCE
+        reason_code = ReasonCode.EVIDENCE_CONFLICTING
+        recovery_hint = RecoveryHint.RE_OBSERVE
+        # Both readings are named, so a reviewer can see which two samples
+        # disagree rather than being told the belief is simply unresolved.
+        claim = f"{object_id} inside {tray_id}: conflicting observations {hypotheses}"
     elif actual_location == expected_location and not state.entity_evidence_refs.get(object_id):
         status = VerificationStatus.INSUFFICIENT_EVIDENCE
         reason_code = ReasonCode.EVIDENCE_MISSING

@@ -32,6 +32,10 @@ from .aging import (
 )
 from .event_payloads import WorldEventPayloadValidationError, normalize_world_event
 
+# How many competing locations are retained per entity. Two is the smallest
+# number that can represent a conflict; the ceiling keeps the state bounded.
+MAX_LOCATION_HYPOTHESES = 2
+
 
 class WorldState(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -44,6 +48,12 @@ class WorldState(BaseModel):
     entity_observation_sources: dict[str, str] = Field(default_factory=dict)
     entity_beliefs: dict[str, WorldBelief] = Field(default_factory=dict)
     entity_locations: dict[str, str] = Field(default_factory=dict)
+    # Competing locations this entity has been observed at, most recent first.
+    # A list, not a probability distribution: the issue asks for a bounded set of
+    # incompatible beliefs without inventing calibrated probabilities
+    # (issue #409). The newest value also stays in `entity_locations`, so a
+    # reader that does not know about hypotheses sees exactly what it saw before.
+    entity_location_hypotheses: dict[str, list[str]] = Field(default_factory=dict)
     entity_location_evidence_refs: dict[str, list[str]] = Field(default_factory=dict)
     entity_location_last_observed_at: dict[str, str] = Field(default_factory=dict)
     entity_location_clock_ids: dict[str, str] = Field(default_factory=dict)
@@ -74,6 +84,14 @@ def _update_location(state: WorldState, entity_id: str, location: str, evidence_
         location_evidence = state.entity_location_evidence_refs.setdefault(entity_id, [])
         location_evidence.extend(reference for reference in evidence_refs if reference not in location_evidence)
     state.entity_locations[entity_id] = location
+    hypotheses = state.entity_location_hypotheses.setdefault(entity_id, [])
+    if location in hypotheses:
+        hypotheses.remove(location)
+    hypotheses.insert(0, location)
+    # Bounded: the two most recent incompatible readings are enough to know the
+    # belief is unresolved. Keeping more would grow the state without telling a
+    # reader anything extra.
+    del hypotheses[MAX_LOCATION_HYPOTHESES:]
 
 
 def _replace_observation_metadata(
