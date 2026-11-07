@@ -24,7 +24,8 @@ EXPORT_TAIL = (
     "monitoringTrendRows, monitoringMetricText, monitoringMetricStatus, monitoringAlertSignature, "
     "monitoringAlertStatusByMetric, monitoringRetryDelay, monitoringUnitLabel, "
     "monitoringDomainLabel, monitoringAlertSummaryText, renderMonitoringAlerts, renderMonitoringCards, "
-    "renderMonitoringTrend, timelineAvailability, formatTime, deriveSummary, monitoringViewState };\n"
+    "renderMonitoringTrend, timelineAvailability, formatTime, deriveSummary, "
+    "monitoringViewState, evidenceProvenance };\n"
 )
 MODULE_PRELUDE = "const module = { exports: {} };\n(function (module, exports) {\n"
 MODULE_EPILOGUE = "\n})(module, module.exports);\n"
@@ -967,3 +968,54 @@ def test_a_successful_history_read_reports_no_history_failure() -> None:
     )
     assert view["historyFailure"] is None
     assert view["trendAvailable"] is True
+
+
+# --- Issue #469: the evidence dialog derives its claims from the run ----------
+
+
+def test_evidence_provenance_is_read_from_the_run_not_hard_coded() -> None:
+    """A Gazebo run must not be labelled a scripted fixture."""
+
+    call = (
+        "module.exports.evidenceProvenance("
+        "JSON.parse(process.argv[1]).run, "
+        "JSON.parse(process.argv[1]).event, "
+        "JSON.parse(process.argv[1]).ref)"
+    )
+    gazebo = _run_node(
+        call,
+        {"run": {"mode": "gazebo"}, "event": {"event_type": "observation"}, "ref": "log://x"},
+    )
+    assert gazebo["source"] == "gazebo run"
+    assert "scripted" not in gazebo["source"]
+
+    scripted = _run_node(
+        call,
+        {"run": {"mode": "scripted"}, "event": {"event_type": "observation"}, "ref": "log://x"},
+    )
+    assert scripted["source"] == "scripted run"
+
+
+def test_an_unresolved_reference_is_not_claimed_as_an_artifact() -> None:
+    call = "module.exports.evidenceProvenance(JSON.parse(process.argv[1]).run, null, JSON.parse(process.argv[1]).ref)"
+    view = _run_node(call, {"run": {"mode": "scripted"}, "ref": "sha256:abc"})
+    assert view["integrity"] == "unresolved reference"
+
+
+def test_a_missing_run_mode_is_reported_as_unknown() -> None:
+    call = "module.exports.evidenceProvenance({}, null, 'x')"
+    view = _run_node(call, {})
+    assert view["source"] == "unknown"
+
+
+def test_the_dialog_names_itself_and_returns_focus() -> None:
+    """Issue #470: the dialog has an accessible name and one close path."""
+
+    markup = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+    assert 'aria-labelledby="evidence-title"' in markup
+    assert 'aria-describedby="evidence-meta"' in markup
+    source = SCRIPT.read_text(encoding="utf-8")
+    # Escape, cancel and the button all go through one function.
+    assert "function closeEvidence()" in source
+    assert 'addEventListener("cancel"' in source
+    assert 'addEventListener("click", closeEvidence)' in source

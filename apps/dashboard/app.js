@@ -1062,6 +1062,25 @@ function renderCurrent() {
   refreshIcons();
 }
 
+// What the selected run can actually say about one evidence reference. Both
+// answers are read from the record; neither is a fixed string.
+function evidenceProvenance(run, sourceEvent, reference) {
+  const mode = typeof run?.mode === "string" && run.mode.trim() ? run.mode.trim() : null;
+  const resolved = Boolean(sourceEvent);
+  const source = mode ? `${mode} run` : "unknown";
+  let integrity;
+  if (!resolved) {
+    // A reference no event carries is a string, not a resolved artifact.
+    integrity = "unresolved reference";
+  } else if (typeof reference === "string" && reference.startsWith("frame://")) {
+    // The frame view is a local reconstruction, not the stored artifact.
+    integrity = "local reconstruction from the event stream";
+  } else {
+    integrity = "event stream reference";
+  }
+  return { source, integrity };
+}
+
 function openEvidence(reference) {
   const kind = evidenceKind(reference);
   get("evidence-title").textContent = kind.label;
@@ -1071,9 +1090,12 @@ function openEvidence(reference) {
   if (reference.startsWith("frame://")) {
     const snapshot = buildWorkbenchState(state.events, sourceIndex);
     visual.className = "evidence-visual camera-frame";
+    // The label names the reconstruction, not a fixture: this view is built from
+    // the event stream and says nothing about where the original frame lives
+    // (issue #469).
     visual.innerHTML = `${snapshot.entities
       .map((entity, index) => entityVisual(entity, index, "evidence-frame-entity"))
-      .join("")}<span class="evidence-frame-label">${escapeHtml(reference)} · SCRIPTED FIXTURE</span>`;
+      .join("")}<span class="evidence-frame-label">${escapeHtml(reference)} · 本地重建</span>`;
     applyEntityPositions(visual);
   } else {
     visual.className = "evidence-visual motion-log";
@@ -1082,14 +1104,43 @@ function openEvidence(reference) {
       .join("\n");
     visual.textContent = `${sourceEvent?.occurred_at || "--"}  ${sourceEvent?.event_type || "evidence"}\n${payloadLines || reference}`;
   }
+  // Derived, not asserted. The dialog used to claim "scripted fixture" and
+  // "event stream reference" for every item regardless of the run, so a reviewer
+  // read a fixture claim out of a Gazebo or external run that never made one
+  // (issue #469). What the run does not say is reported as unknown.
+  const provenance = evidenceProvenance(state.currentRun || summary, sourceEvent, reference);
   get("evidence-meta").innerHTML = `
     <dt>Reference</dt><dd>${escapeHtml(reference)}</dd>
     <dt>Run ID</dt><dd>${escapeHtml(state.currentRun?.run_id)}</dd>
-    <dt>Source</dt><dd>scripted fixture</dd>
-    <dt>Integrity</dt><dd>event stream reference</dd>`;
+    <dt>Source</dt><dd>${escapeHtml(provenance.source)}</dd>
+    <dt>Integrity</dt><dd>${escapeHtml(provenance.integrity)}</dd>`;
   const dialog = get("evidence-dialog");
-  if (typeof dialog.showModal === "function") dialog.showModal();
-  else dialog.setAttribute("open", "");
+  // Where focus came from, so closing returns it there instead of to the top of
+  // the document (issue #470).
+  state.evidenceReturnFocus = document.activeElement;
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    // The fallback is not modal, so focus is moved explicitly and trapped by the
+    // dialog's own keydown handler rather than by the platform.
+    dialog.setAttribute("open", "");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+  }
+  const close = get("evidence-close");
+  if (close) close.focus();
+}
+
+// Closing is one path, whether it came from the button, Escape or the platform's
+// cancel event, so focus return and the open attribute cannot disagree.
+function closeEvidence() {
+  const dialog = get("evidence-dialog");
+  if (!dialog) return;
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+  else dialog.removeAttribute("open");
+  const back = state.evidenceReturnFocus;
+  state.evidenceReturnFocus = null;
+  if (back && typeof back.focus === "function") back.focus();
 }
 
 const monitoringCards = [
@@ -1820,7 +1871,20 @@ function bindControls() {
     state.cursor = Number(event.target.value);
     renderCurrent();
   });
-  get("evidence-close").addEventListener("click", () => get("evidence-dialog").close());
+  get("evidence-close").addEventListener("click", closeEvidence);
+  // Escape reaches a native <dialog> as `cancel`; the fallback path has no such
+  // event, so the key is handled here as well. One handler for both keeps the
+  // focus return and the open attribute in step (issue #470).
+  get("evidence-dialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeEvidence();
+  });
+  get("evidence-dialog").addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeEvidence();
+    }
+  });
   document.addEventListener("visibilitychange", () => {
     const monitoringVisible = !get("monitoring-view").hidden;
     if (document.hidden) stopMonitoring();
