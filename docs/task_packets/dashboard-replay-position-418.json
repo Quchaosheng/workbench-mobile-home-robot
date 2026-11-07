@@ -1,0 +1,29 @@
+{
+  "issue": 418,
+  "human_owner": "Quchaosheng",
+  "objective": "Stop presenting the event replay ratio as task progress. The bar names what it counts, exposes numerator and denominator, and no longer implies a completion claim.",
+  "decision_supported": "Is visible/total events a measure of task progress? No: it is replay position, and a run can sit at 90% with nothing succeeded.",
+  "allowed_paths": [
+    "apps/dashboard/app.js",
+    "apps/dashboard/index.html",
+    "tests/unit/test_dashboard_accessibility.py",
+    "docs/task_packets/dashboard-replay-position-418.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "apps/dashboard/README.md"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["apps/dashboard/app.js", "apps/dashboard/index.html"],
+  "outputs": ["apps/dashboard/app.js", "apps/dashboard/index.html"],
+  "acceptance": [
+    "The bar is labelled as event replay position, not task progress.",
+    "The numerator and denominator are both rendered.",
+    "Task completion is never derived from the ratio."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_dashboard_accessibility.py -q"],
+  "evidence": ["pytest output for tests/unit/test_dashboard_accessibility.py"],
+  "stop_conditions": ["The change would need an event schema change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Renaming the field could break a consumer; the read model is derived client-side and no test referenced the old name.",
+    "Fallback: keep progress as a deprecated alias."
+  ]
+}

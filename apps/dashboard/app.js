@@ -331,7 +331,13 @@ function deriveSummary(events, cursor = events.length - 1) {
     status_label: statusLabels[status] || "未知状态",
     expression,
     current_step: current ? stepLabels[current.event_type] || current.event_type : "等待任务",
-    progress: events.length ? Math.round((visible.length / events.length) * 100) : 0,
+    // The ratio is replay position, not task progress: a run can sit at 90%
+    // here with no action having succeeded, and one with three events jumps
+    // 0 → 100. Naming it for what it counts keeps the bar from reading as a
+    // completion claim (issue #418).
+    event_replay_position: events.length ? Math.round((visible.length / events.length) * 100) : 0,
+    visible_event_count: visible.length,
+    event_count: events.length,
     updated_at: current?.occurred_at,
     evidence_refs: evidence,
     missing_evidence: verification?.payload?.missing_evidence || [],
@@ -1039,8 +1045,9 @@ function renderCurrent() {
   get("task-goal").textContent = summary.goal;
   get("current-step").textContent = summary.current_step;
   get("updated-at").textContent = formatTime(summary.updated_at, true);
-  get("progress-value").textContent = `${summary.progress}%`;
-  get("progress-bar").style.width = `${summary.progress}%`;
+  get("progress-value").textContent = `${summary.event_replay_position}%`;
+  get("progress-bar").style.width = `${summary.event_replay_position}%`;
+  get("progress-count").textContent = `${summary.visible_event_count} / ${summary.event_count}`;
   get("event-count").textContent = `${state.events.length} 个事件`;
   renderAttention(summary);
   renderExpression(summary);

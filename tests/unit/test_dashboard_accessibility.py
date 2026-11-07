@@ -24,7 +24,7 @@ EXPORT_TAIL = (
     "monitoringTrendRows, monitoringMetricText, monitoringMetricStatus, monitoringAlertSignature, "
     "monitoringAlertStatusByMetric, monitoringRetryDelay, monitoringUnitLabel, "
     "monitoringDomainLabel, monitoringAlertSummaryText, renderMonitoringAlerts, renderMonitoringCards, "
-    "renderMonitoringTrend, timelineAvailability, formatTime };\n"
+    "renderMonitoringTrend, timelineAvailability, formatTime, deriveSummary };\n"
 )
 MODULE_PRELUDE = "const module = { exports: {} };\n(function (module, exports) {\n"
 MODULE_EPILOGUE = "\n})(module, module.exports);\n"
@@ -899,3 +899,43 @@ def test_format_time_with_date_also_names_its_zone() -> None:
 def test_format_time_of_an_absent_or_invalid_value_is_a_dash() -> None:
     assert _run_node("module.exports.formatTime(JSON.parse(process.argv[1]))", "") == "--"
     assert _run_node("module.exports.formatTime(JSON.parse(process.argv[1]))", "not-a-time") == "--"
+
+
+# --- Issue #418: the bar is replay position, not task progress ----------------
+
+
+def test_event_replay_position_is_not_labelled_as_task_progress() -> None:
+    """A run whose events are all replayed may still have done nothing."""
+
+    events = [
+        {"event_type": "task_accepted", "payload": {"task_id": "t1", "goal": "g"}},
+        {"event_type": "observation", "payload": {}},
+        {"event_type": "observation", "payload": {}},
+        {"event_type": "observation", "payload": {}},
+    ]
+    summary = _run_node(
+        "module.exports.deriveSummary(JSON.parse(process.argv[1]))",
+        events,
+    )
+    # The count is exposed, so the bar cannot imply more than it counts.
+    assert summary["visible_event_count"] == 4
+    assert summary["event_count"] == 4
+    assert summary["event_replay_position"] == 100
+    # And nothing here claims the task finished: no terminal event exists.
+    assert summary["status"] != "succeeded"
+
+
+def test_replay_position_reports_its_numerator_and_denominator() -> None:
+    events = [
+        {"event_type": "task_accepted", "payload": {"task_id": "t1", "goal": "g"}},
+        {"event_type": "observation", "payload": {}},
+        {"event_type": "observation", "payload": {}},
+        {"event_type": "observation", "payload": {}},
+    ]
+    summary = _run_node(
+        "module.exports.deriveSummary(JSON.parse(process.argv[1]), 1)",
+        events,
+    )
+    assert summary["visible_event_count"] == 2
+    assert summary["event_count"] == 4
+    assert summary["event_replay_position"] == 50
