@@ -1,0 +1,28 @@
+{
+  "issue": 457,
+  "human_owner": "Quchaosheng",
+  "objective": "The health cache revalidates the document content before trusting a cached store, so a same-size rewrite that restores the timestamp is noticed.",
+  "decision_supported": "Does an unchanged (mtime_ns, size) prove the bytes are unchanged? No: a same-size in-place rewrite defeats it, so the signature is a hint rather than proof.",
+  "allowed_paths": [
+    "services/backend/workbench_backend/health.py",
+    "tests/unit/test_backend_health.py",
+    "docs/task_packets/monitoring-stat-signature-457.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "services/backend/workbench_backend/read_model.py"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["services/backend/workbench_backend/health.py", "services/backend/workbench_backend/read_model.py"],
+  "outputs": ["services/backend/workbench_backend/health.py"],
+  "acceptance": [
+    "A same-size rewrite with a restored mtime is re-read.",
+    "An untouched document is not re-ingested.",
+    "The digest is recorded alongside the stat signature."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_backend_health.py -q"],
+  "evidence": ["pytest output for tests/unit/test_backend_health.py"],
+  "stop_conditions": ["The change would need a control-path change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Hashing on every refresh costs a read; the document is bounded and small, and correctness wins here.",
+    "Fallback: revert the single commit."
+  ]
+}

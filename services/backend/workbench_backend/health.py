@@ -621,6 +621,11 @@ class HealthStore:
         with self._lock:
             stored = tuple(self._snapshots)
             cleared = self._tracker.history(since=since)
+        # `since` bounds snapshots as well as cleared alerts. The OpenAPI
+        # parameter says so, and returning every stored snapshot for a far-future
+        # `since` made the filter look applied when it was not (issue #463).
+        if since is not None:
+            stored = tuple(entry for entry in stored if entry.collected_at >= since)
         return {
             "read_only": True,
             "rules_version": ALERT_RULES_VERSION,
@@ -680,6 +685,9 @@ class HealthReadModel:
         self._lock = threading.RLock()
         self._stat: tuple[int, int] | None = None
         self._loaded = False
+        # Digest of the bytes last ingested. The stat signature alone cannot tell
+        # a same-size rewrite from an untouched file (issue #457).
+        self._content_digest: str | None = None
         # Whether a document that had been read has since disappeared. It lives
         # on the model, not the store: the store is rebuilt on every refresh, so
         # a flag kept there would be lost the moment it mattered (issue #416).
@@ -724,7 +732,17 @@ class HealthReadModel:
                 return
             signature = (stat.st_mtime_ns, stat.st_size)
             if self._loaded and signature == self._stat:
-                return
+                # The signature is a hint, not proof. A same-size rewrite that
+                # restores the timestamp — or a filesystem with coarse resolution
+                # — leaves it unchanged while the bytes differ, so the document is
+                # read and hashed before the cached store is trusted (issue #457).
+                try:
+                    current = self.path.read_bytes()
+                except OSError:
+                    self._stat = None
+                    return
+                if hashlib.sha256(current).hexdigest() == self._content_digest:
+                    return
             snapshots = load_health_documents(self.path)
             self._store = HealthStore(
                 max_snapshots=self._store.max_snapshots,
@@ -732,6 +750,10 @@ class HealthReadModel:
                 policy_source=self.policy_source,
             )
             self._store.ingest_documents(snapshots, source=self.path.name)
+            try:
+                self._content_digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+            except OSError:
+                self._content_digest = None
             self._lost_source = False
             self._stat = signature
             self._loaded = True

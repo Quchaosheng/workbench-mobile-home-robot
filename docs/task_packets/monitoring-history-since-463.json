@@ -1,0 +1,29 @@
+{
+  "issue": 463,
+  "human_owner": "Quchaosheng",
+  "objective": "The health-history since parameter bounds snapshots as well as cleared alerts, matching the OpenAPI description and stopping a far-future since from returning everything.",
+  "decision_supported": "Does since filter only alerts? No: the documented parameter filters both, and the test that asserted the full set codified the defect.",
+  "allowed_paths": [
+    "services/backend/workbench_backend/health.py",
+    "tests/unit/test_backend_health.py",
+    "docs/task_packets/monitoring-history-since-463.json",
+    "docs/task_packets/monitoring-stat-signature-457.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "services/backend/workbench_backend/api-openapi-v1.json"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["services/backend/workbench_backend/health.py", "services/backend/workbench_backend/api-openapi-v1.json"],
+  "outputs": ["services/backend/workbench_backend/health.py"],
+  "acceptance": [
+    "since=BASE+2 over four snapshots returns the last two.",
+    "A far-future since returns no snapshots.",
+    "Cleared alerts remain filtered by the same parameter."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_backend_health.py -q"],
+  "evidence": ["pytest output for tests/unit/test_backend_health.py"],
+  "stop_conditions": ["The change would need an API schema change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A consumer relying on the unfiltered set would see fewer rows; that is what the parameter promised.",
+    "Fallback: revert the single commit."
+  ]
+}

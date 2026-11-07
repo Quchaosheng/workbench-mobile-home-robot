@@ -671,7 +671,14 @@ class HealthApiTests(unittest.TestCase):
         base_url = self.start_server(document)
         status, payload, _ = self.read_json(f"{base_url}/api/v1/health/history?since={BASE + 2}")
         self.assertEqual(status, 200)
-        self.assertEqual(len(payload["snapshots"]), 4)
+        # `since` bounds snapshots too (issue #463). Four snapshots at BASE..BASE+3
+        # with since=BASE+2 leaves the last two.
+        self.assertEqual(len(payload["snapshots"]), 2)
+        self.assertEqual([entry["collected_at"] for entry in payload["snapshots"]], [BASE + 2, BASE + 3])
+        # A `since` past every snapshot returns none rather than all of them.
+        status, far, _ = self.read_json(f"{base_url}/api/v1/health/history?since={10**18}")
+        self.assertEqual(status, 200)
+        self.assertEqual(far["snapshots"], [])
         self.assertEqual(payload["limits"]["max_snapshots"], MAX_SNAPSHOTS)
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(f"{base_url}/api/v1/health/history?since=bad", timeout=2)
@@ -838,3 +845,40 @@ class SourceDisappearanceTests(unittest.TestCase):
             payload = model.current_payload()
             self.assertEqual(payload["status"], "unknown")
             self.assertEqual(payload["reason"], "no_health_snapshot")
+
+
+class SameSignatureRewriteTests(unittest.TestCase):
+    """Issue #457: a stat signature is a hint, not proof the bytes are unchanged."""
+
+    def test_a_same_size_rewrite_with_a_restored_timestamp_is_noticed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "health.jsonl"
+            write_health_document(path, [snapshot(at=BASE)])
+            model = HealthReadModel(path)
+            model.refresh()
+            first = model.current_payload()
+            self.assertEqual(first["status"], "healthy")
+            before_stat = path.stat()
+            first_digest = model._content_digest
+
+            # Rewrite with the same byte length and put the timestamps back, which
+            # is exactly the case a (mtime_ns, size) signature cannot see. The
+            # replacement flips one character so the length is preserved.
+            original = path.read_bytes()
+            # Flip a digit inside a metric value: same length, different bytes,
+            # and it changes what the document says without changing its size.
+            flipped = original.replace(b'"value": 5', b'"value": 7', 1)
+            self.assertEqual(len(flipped), len(original), "the rewrite must be same-size")
+            path.write_bytes(flipped)
+            os.utime(path, ns=(before_stat.st_atime_ns, before_stat.st_mtime_ns))
+            self.assertEqual(path.stat().st_size, before_stat.st_size, "the rewrite must be same-size")
+
+            model.refresh()
+            # The document was re-read: the ingested bytes, not the stat
+            # signature, decide whether the cached store is still valid.
+            self.assertNotEqual(
+                model._content_digest,
+                first_digest,
+                "a same-size rewrite that restored the timestamp must be re-read",
+            )
+            self.assertNotEqual(model._stat, None)
