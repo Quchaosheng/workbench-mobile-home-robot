@@ -1,0 +1,48 @@
+{
+  "issue": 421,
+  "human_owner": "Quchaosheng",
+  "objective": "A timestamp without a timezone offset is a named correlation defect, never a guessed UTC instant, so this ingest path agrees with the rest of the repository.",
+  "decision_supported": "Does a naive timestamp mean UTC? No: it means the producer forgot an offset, and guessing made the same event usable here and refused elsewhere.",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/post_action.py",
+    "tests/unit/test_post_action_gate.py",
+    "docs/task_packets/agent-naive-timestamps-421.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "services/agent_runtime/workbench_agent_runtime/post_action.py"
+  ],
+  "outputs": [
+    "services/agent_runtime/workbench_agent_runtime/post_action.py"
+  ],
+  "acceptance": [
+    "A naive completion time yields OBSERVATION_UNREADABLE_TIME.",
+    "A naive observation time yields OBSERVATION_UNREADABLE_TIME.",
+    "An offset-bearing timestamp still correlates."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_post_action_gate.py -q"
+  ],
+  "evidence": [
+    "pytest output for tests/unit/test_post_action_gate.py"
+  ],
+  "stop_conditions": [
+    "The fix would need an event schema change."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Tightening this could refuse a producer that was relying on the guess; the failure is named and the fix is on the producer side.",
+    "Fallback: revert the single commit."
+  ]
+}

@@ -677,6 +677,39 @@ class DependencyOrderTests(unittest.TestCase):
         self.assertEqual(report.steps[0].reason_code, GateReasonCode.OBSERVATION_UNREADABLE_TIME)
         self.assertFalse(report.may_advance)
 
+    def test_a_naive_completion_time_is_a_defect_not_a_utc_guess(self) -> None:
+        """#421: no offset means the producer forgot one, not that it meant UTC."""
+
+        adapter = ScriptedAdapter(ended_at="2026-08-22T10:00:00")
+        controller = ExecutionController(
+            policy_validator=PolicyValidator(policy_config=POLICY_CONFIG),
+            adapter=adapter,
+        )
+        observer = ScriptedObserver(ObservationAttempt.observed(ObservationSample("a-grasp", observation())))
+        loop = PostActionLoop(controller=controller, observer=observer, verifier=RecordingVerifier())
+        report = loop.run(
+            graph(step("s1", action("a-grasp", ActionType.GRASP, target_id="red_block"))),
+            run_id="run-1",
+        )
+        self.assertEqual(report.steps[0].reason_code, GateReasonCode.OBSERVATION_UNREADABLE_TIME)
+        self.assertFalse(report.may_advance)
+
+    def test_a_naive_observation_time_is_a_defect_not_a_utc_guess(self) -> None:
+        adapter = ScriptedAdapter(ended_at="2026-08-22T10:00:00+00:00")
+        controller = ExecutionController(
+            policy_validator=PolicyValidator(policy_config=POLICY_CONFIG),
+            adapter=adapter,
+        )
+        naive = observation(observed_at="2026-08-22T10:00:01")
+        observer = ScriptedObserver(ObservationAttempt.observed(ObservationSample("a-grasp", naive)))
+        loop = PostActionLoop(controller=controller, observer=observer, verifier=RecordingVerifier())
+        report = loop.run(
+            graph(step("s1", action("a-grasp", ActionType.GRASP, target_id="red_block"))),
+            run_id="run-1",
+        )
+        self.assertEqual(report.steps[0].reason_code, GateReasonCode.OBSERVATION_UNREADABLE_TIME)
+        self.assertFalse(report.may_advance)
+
 
 def loop_version_of(report) -> str:
     return report.steps[0].loop_version

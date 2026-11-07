@@ -24,7 +24,7 @@ EXPORT_TAIL = (
     "monitoringTrendRows, monitoringMetricText, monitoringMetricStatus, monitoringAlertSignature, "
     "monitoringAlertStatusByMetric, monitoringRetryDelay, monitoringUnitLabel, "
     "monitoringDomainLabel, monitoringAlertSummaryText, renderMonitoringAlerts, renderMonitoringCards, "
-    "renderMonitoringTrend, timelineAvailability, formatTime, deriveSummary };\n"
+    "renderMonitoringTrend, timelineAvailability, formatTime, deriveSummary, monitoringViewState };\n"
 )
 MODULE_PRELUDE = "const module = { exports: {} };\n(function (module, exports) {\n"
 MODULE_EPILOGUE = "\n})(module, module.exports);\n"
@@ -939,3 +939,31 @@ def test_replay_position_reports_its_numerator_and_denominator() -> None:
     assert summary["visible_event_count"] == 2
     assert summary["event_count"] == 4
     assert summary["event_replay_position"] == 50
+
+
+# --- Issue #407: a failed trend read is not an empty trend --------------------
+
+
+def test_a_history_failure_is_visible_and_separate_from_current_health() -> None:
+    """Health 200 + history 503 must not look like a run with no snapshots."""
+
+    payload = health_payload()
+    view = _run_node(
+        "module.exports.monitoringViewState(JSON.parse(process.argv[1]), null, 'HTTP 503')",
+        payload,
+    )
+    # Current health is still readable, and says so.
+    assert view["available"] is True
+    assert view["cards"], "the current cards must still render"
+    # The trend is not merely empty: it failed.
+    assert view["historyFailure"] == "HTTP 503"
+    assert view["trendAvailable"] is False
+
+
+def test_a_successful_history_read_reports_no_history_failure() -> None:
+    view = _run_node(
+        "module.exports.monitoringViewState(JSON.parse(process.argv[1]), null, null)",
+        health_payload(),
+    )
+    assert view["historyFailure"] is None
+    assert view["trendAvailable"] is True

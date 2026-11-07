@@ -30,6 +30,8 @@ const state = {
   monitoringGeneration: 0,
   monitoringBackoff: null,
   monitoringAlertKey: null,
+  // A failed trend read, kept apart from a failed health read (issue #407).
+  monitoringHistoryFailure: null,
 };
 
 const statusLabels = {
@@ -1391,7 +1393,7 @@ function monitoringTrendRows(history) {
 
 // The view state is derived from the last payload *or* the last failure. A
 // failure clears availability, so a stale green card can never remain on screen.
-function monitoringViewState(payload, failure) {
+function monitoringViewState(payload, failure, historyFailure = null) {
   if (failure) {
     return { available: false, status: "unavailable", source: null, reason: failure, alerts: [], cards: [] };
   }
@@ -1407,6 +1409,11 @@ function monitoringViewState(payload, failure) {
     reason: typeof payload.reason === "string" ? payload.reason : null,
     cards: monitoringCardsFor(payload),
     alerts: monitoringAlertsFor(payload),
+    // Current health and the trend are two reads. A trend that failed is a
+    // partial failure: the cards are still true, the trend is not merely empty
+    // (issue #407).
+    historyFailure: historyFailure ? String(historyFailure) : null,
+    trendAvailable: !historyFailure,
   };
 }
 
@@ -1507,6 +1514,15 @@ function renderMonitoringAlerts(view) {
 function renderMonitoringTrend(view) {
   const panel = get("monitoring-trend");
   const rows = view.trend || [];
+  if (view.available && view.historyFailure) {
+    // Visible, and distinct from an empty trend: the cards above are current,
+    // the trend could not be read (issue #407).
+    panel.hidden = false;
+    panel.innerHTML = `<p class="monitoring-empty monitoring-failure" role="status">趋势不可用：${escapeHtml(
+      view.historyFailure,
+    )}</p>`;
+    return;
+  }
   if (!view.available || !rows.length) {
     panel.innerHTML = "";
     panel.hidden = true;
@@ -1542,7 +1558,7 @@ function renderMonitoringTrend(view) {
 function renderMonitoring() {
   // `view` is the derived projection; `state.monitoring*` keeps the raw payload
   // so a later render can reuse it without re-fetching.
-  const view = monitoringViewState(state.monitoring, state.monitoringFailure);
+  const view = monitoringViewState(state.monitoring, state.monitoringFailure, state.monitoringHistoryFailure);
   view.trend = state.monitoring?.trend || [];
   const overall = get("monitoring-overall");
   overall.className = `monitoring-overall monitoring-${view.status}`;
@@ -1575,6 +1591,13 @@ async function refreshMonitoring() {
     if (history.ok) {
       const historyPayload = await history.json();
       payload.trend = monitoringTrendRows(historyPayload);
+      state.monitoringHistoryFailure = null;
+    } else {
+      // Not "no history": the request failed. Keeping the two apart is the point
+      // of the issue — an empty trend and an unreadable one look the same
+      // otherwise (issue #407).
+      payload.trend = [];
+      state.monitoringHistoryFailure = `HTTP ${history.status}`;
     }
     state.monitoring = payload;
     state.monitoringFailure = null;
@@ -1607,7 +1630,7 @@ function monitoringRetryDelay(view, monitoring, backoff) {
 }
 
 function startMonitoring() {
-  const view = monitoringViewState(state.monitoring, state.monitoringFailure);
+  const view = monitoringViewState(state.monitoring, state.monitoringFailure, state.monitoringHistoryFailure);
   if (state.monitoring || state.monitoringFailure) {
     renderMonitoring();
     const delay = monitoringRetryDelay(view, state.monitoring, state.monitoringBackoff);
