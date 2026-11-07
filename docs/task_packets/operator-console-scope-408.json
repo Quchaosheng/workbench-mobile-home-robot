@@ -1,0 +1,52 @@
+{
+  "issue": 408,
+  "human_owner": "Quchaosheng",
+  "objective": "Remove the operator console stub and record the control-plane boundary it would require, rather than leaving a directory that describes capabilities it does not have.",
+  "decision_supported": "Should this deliverable carry an operator console? No: the backend is deliberately read-only, and a console needs a control boundary, identity and an audit model that do not exist.",
+  "allowed_paths": [
+    "apps/operator_console/README.md",
+    "apps/operator_console/.gitkeep",
+    "docs/architecture/operator-console-scope.md",
+    "Dockerfile",
+    "docs/task_packets/operator-console-scope-408.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "apps/dashboard/README.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "apps/operator_console/README.md",
+    "docs/architecture/"
+  ],
+  "outputs": [
+    "docs/architecture/operator-console-scope.md"
+  ],
+  "acceptance": [
+    "No directory promises an unimplemented control surface.",
+    "The architecture doc states what a future console would have to settle.",
+    "The read-only boundary of the current API is restated."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_container_baseline.py -q"
+  ],
+  "evidence": [
+    "pytest output for tests/unit/test_container_baseline.py"
+  ],
+  "stop_conditions": [
+    "The change would require implementing a control plane."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "If a console is wanted this release, option 2 in the issue is a much larger change; this takes option 1.",
+    "Fallback: revert the single commit."
+  ]
+}
