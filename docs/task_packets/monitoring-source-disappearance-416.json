@@ -1,0 +1,28 @@
+{
+  "issue": 416,
+  "human_owner": "Quchaosheng",
+  "objective": "Make a health source that disappears an explicit state transition. The last healthy snapshot must stop being served, and the payload must say the source went away rather than that it was never configured.",
+  "decision_supported": "Is an absent health document a no-op that may keep the previous snapshot? No: that is the stale-green failure the monitoring view exists to prevent.",
+  "allowed_paths": [
+    "services/backend/workbench_backend/health.py",
+    "tests/unit/test_backend_health.py",
+    "docs/task_packets/monitoring-source-disappearance-416.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "docs/api.md"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["services/backend/workbench_backend/health.py", "tests/unit/test_backend_health.py"],
+  "outputs": ["services/backend/workbench_backend/health.py"],
+  "acceptance": [
+    "A document that is deleted stops contributing to the current payload.",
+    "The payload reports status unknown and reason source_unavailable.",
+    "A source that never existed still reports no_health_snapshot."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_backend_health.py -q"],
+  "evidence": ["pytest output for tests/unit/test_backend_health.py"],
+  "stop_conditions": ["The fix would need a control or robot-motion change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Clearing the store on every absent read could drop history an operator wanted; only the current snapshot is cleared and the history endpoint keeps its own record.",
+    "Fallback: revert the single commit."
+  ]
+}

@@ -51,6 +51,7 @@ from workbench_backend.health import (
     MONITORING_POLICY_VERSION,
     POLICY_ENVIRONMENT,
     HealthHistoryError,
+    HealthReadModel,
     HealthStore,
     MonitoringPolicyError,
     alert_policy_digest,
@@ -802,3 +803,38 @@ class HealthApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- Issue #416: a source that disappears is not a source that never existed --
+
+
+class SourceDisappearanceTests(unittest.TestCase):
+    """Deleting a health document must not leave its last snapshot serving."""
+
+    def test_a_deleted_document_reports_source_unavailable_not_stale_health(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "health.jsonl"
+            write_health_document(path, [snapshot()])
+            model = HealthReadModel(path)
+            model.refresh()
+            before = model.current_payload()
+            self.assertEqual(before["status"], "healthy")
+            self.assertIsNotNone(before["current"])
+
+            path.unlink()
+            model.refresh()
+            after = model.current_payload()
+            self.assertTrue(model._lost_source, "the disappearance must be recorded")
+            # The point of the fix: the last healthy snapshot is gone, and the
+            # reason says the source went away rather than that it was never there.
+            self.assertEqual(after["status"], "unknown")
+            self.assertIsNone(after["current"])
+            self.assertEqual(after["reason"], "source_unavailable")
+
+    def test_a_source_that_never_existed_still_reports_no_snapshot(self) -> None:
+        with TemporaryDirectory() as tmp:
+            model = HealthReadModel(Path(tmp) / "absent.jsonl")
+            model.refresh()
+            payload = model.current_payload()
+            self.assertEqual(payload["status"], "unknown")
+            self.assertEqual(payload["reason"], "no_health_snapshot")
