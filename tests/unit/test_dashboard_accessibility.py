@@ -24,7 +24,8 @@ EXPORT_TAIL = (
     "monitoringTrendRows, monitoringMetricText, monitoringMetricStatus, monitoringAlertSignature, "
     "monitoringAlertStatusByMetric, monitoringRetryDelay, monitoringUnitLabel, "
     "monitoringDomainLabel, monitoringAlertSummaryText, renderMonitoringAlerts, renderMonitoringCards, "
-    "renderMonitoringTrend };\n"
+    "renderMonitoringTrend, timelineAvailability, formatTime, deriveSummary, "
+    "monitoringViewState, evidenceProvenance };\n"
 )
 MODULE_PRELUDE = "const module = { exports: {} };\n(function (module, exports) {\n"
 MODULE_EPILOGUE = "\n})(module, module.exports);\n"
@@ -839,3 +840,182 @@ def test_the_overview_grid_holds_exactly_two_columns() -> None:
     # The responsive rules follow the renamed wrapper instead of a dead class.
     assert ".dashboard-column:last-child" in styles
     assert "side-stack" not in styles
+
+
+# --- Issue #417: an unavailable timeline is not an empty one ------------------
+
+TIMELINE_AVAILABILITY_CALL = (
+    "module.exports.timelineAvailability(JSON.parse(process.argv[1]).current, JSON.parse(process.argv[1]).snapshot)"
+)
+
+
+def test_timeline_failure_is_not_reported_as_not_loaded() -> None:
+    """A failed read must not borrow the copy used for "never asked"."""
+
+    view = _run_node(
+        TIMELINE_AVAILABILITY_CALL,
+        {"current": {"run_id": "run-1"}, "snapshot": {"timelineFailure": "HTTP 503", "timelineRunId": None}},
+    )
+    assert view["kind"] == "failed"
+    assert view["detail"] == "HTTP 503"
+
+
+def test_timeline_loaded_for_this_run_is_loaded() -> None:
+    view = _run_node(
+        TIMELINE_AVAILABILITY_CALL,
+        {"current": {"run_id": "run-1"}, "snapshot": {"timelineFailure": None, "timelineRunId": "run-1"}},
+    )
+    assert view["kind"] == "loaded"
+
+
+def test_timeline_of_another_run_is_not_loaded() -> None:
+    view = _run_node(
+        TIMELINE_AVAILABILITY_CALL,
+        {"current": {"run_id": "run-1"}, "snapshot": {"timelineFailure": None, "timelineRunId": "run-0"}},
+    )
+    assert view["kind"] == "not_loaded"
+
+
+# --- Issue #419: a displayed instant names its zone ---------------------------
+
+
+def test_format_time_labels_utc_and_ignores_the_host_zone() -> None:
+    """The same instant must render identically under two browser zones."""
+
+    expression = "module.exports.formatTime(JSON.parse(process.argv[1]))"
+    instant = "2026-08-22T10:30:00Z"
+    first = _run_node(expression, instant)
+    # The runner's TZ is whatever the host has; the rendered value must not move.
+    assert first.endswith(" UTC"), first
+    assert "10:30:00" in first, first
+
+
+def test_format_time_with_date_also_names_its_zone() -> None:
+    expression = "module.exports.formatTime(JSON.parse(process.argv[1]), true)"
+    rendered = _run_node(expression, "2026-08-22T10:30:00Z")
+    assert rendered.endswith(" UTC"), rendered
+    assert "08/22" in rendered, rendered
+
+
+def test_format_time_of_an_absent_or_invalid_value_is_a_dash() -> None:
+    assert _run_node("module.exports.formatTime(JSON.parse(process.argv[1]))", "") == "--"
+    assert _run_node("module.exports.formatTime(JSON.parse(process.argv[1]))", "not-a-time") == "--"
+
+
+# --- Issue #418: the bar is replay position, not task progress ----------------
+
+
+def test_event_replay_position_is_not_labelled_as_task_progress() -> None:
+    """A run whose events are all replayed may still have done nothing."""
+
+    events = [
+        {"event_type": "task_accepted", "payload": {"task_id": "t1", "goal": "g"}},
+        {"event_type": "observation", "payload": {}},
+        {"event_type": "observation", "payload": {}},
+        {"event_type": "observation", "payload": {}},
+    ]
+    summary = _run_node(
+        "module.exports.deriveSummary(JSON.parse(process.argv[1]))",
+        events,
+    )
+    # The count is exposed, so the bar cannot imply more than it counts.
+    assert summary["visible_event_count"] == 4
+    assert summary["event_count"] == 4
+    assert summary["event_replay_position"] == 100
+    # And nothing here claims the task finished: no terminal event exists.
+    assert summary["status"] != "succeeded"
+
+
+def test_replay_position_reports_its_numerator_and_denominator() -> None:
+    events = [
+        {"event_type": "task_accepted", "payload": {"task_id": "t1", "goal": "g"}},
+        {"event_type": "observation", "payload": {}},
+        {"event_type": "observation", "payload": {}},
+        {"event_type": "observation", "payload": {}},
+    ]
+    summary = _run_node(
+        "module.exports.deriveSummary(JSON.parse(process.argv[1]), 1)",
+        events,
+    )
+    assert summary["visible_event_count"] == 2
+    assert summary["event_count"] == 4
+    assert summary["event_replay_position"] == 50
+
+
+# --- Issue #407: a failed trend read is not an empty trend --------------------
+
+
+def test_a_history_failure_is_visible_and_separate_from_current_health() -> None:
+    """Health 200 + history 503 must not look like a run with no snapshots."""
+
+    payload = health_payload()
+    view = _run_node(
+        "module.exports.monitoringViewState(JSON.parse(process.argv[1]), null, 'HTTP 503')",
+        payload,
+    )
+    # Current health is still readable, and says so.
+    assert view["available"] is True
+    assert view["cards"], "the current cards must still render"
+    # The trend is not merely empty: it failed.
+    assert view["historyFailure"] == "HTTP 503"
+    assert view["trendAvailable"] is False
+
+
+def test_a_successful_history_read_reports_no_history_failure() -> None:
+    view = _run_node(
+        "module.exports.monitoringViewState(JSON.parse(process.argv[1]), null, null)",
+        health_payload(),
+    )
+    assert view["historyFailure"] is None
+    assert view["trendAvailable"] is True
+
+
+# --- Issue #469: the evidence dialog derives its claims from the run ----------
+
+
+def test_evidence_provenance_is_read_from_the_run_not_hard_coded() -> None:
+    """A Gazebo run must not be labelled a scripted fixture."""
+
+    call = (
+        "module.exports.evidenceProvenance("
+        "JSON.parse(process.argv[1]).run, "
+        "JSON.parse(process.argv[1]).event, "
+        "JSON.parse(process.argv[1]).ref)"
+    )
+    gazebo = _run_node(
+        call,
+        {"run": {"mode": "gazebo"}, "event": {"event_type": "observation"}, "ref": "log://x"},
+    )
+    assert gazebo["source"] == "gazebo run"
+    assert "scripted" not in gazebo["source"]
+
+    scripted = _run_node(
+        call,
+        {"run": {"mode": "scripted"}, "event": {"event_type": "observation"}, "ref": "log://x"},
+    )
+    assert scripted["source"] == "scripted run"
+
+
+def test_an_unresolved_reference_is_not_claimed_as_an_artifact() -> None:
+    call = "module.exports.evidenceProvenance(JSON.parse(process.argv[1]).run, null, JSON.parse(process.argv[1]).ref)"
+    view = _run_node(call, {"run": {"mode": "scripted"}, "ref": "sha256:abc"})
+    assert view["integrity"] == "unresolved reference"
+
+
+def test_a_missing_run_mode_is_reported_as_unknown() -> None:
+    call = "module.exports.evidenceProvenance({}, null, 'x')"
+    view = _run_node(call, {})
+    assert view["source"] == "unknown"
+
+
+def test_the_dialog_names_itself_and_returns_focus() -> None:
+    """Issue #470: the dialog has an accessible name and one close path."""
+
+    markup = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+    assert 'aria-labelledby="evidence-title"' in markup
+    assert 'aria-describedby="evidence-meta"' in markup
+    source = SCRIPT.read_text(encoding="utf-8")
+    # Escape, cancel and the button all go through one function.
+    assert "function closeEvidence()" in source
+    assert 'addEventListener("cancel"' in source
+    assert 'addEventListener("click", closeEvidence)' in source

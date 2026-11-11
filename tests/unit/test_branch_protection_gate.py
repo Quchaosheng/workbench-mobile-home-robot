@@ -87,7 +87,13 @@ class DeclarationTests(unittest.TestCase):
         self.assertEqual(declaration["required_approving_review_count"], 1)
 
         required = declaration["required_status_checks"]
-        # The five families Issue #224 names must all be declared.
+        # A check is either a merge gate or an observed signal, never both: a
+        # name in both lists would mean the declaration disagrees with itself
+        # about whether it can block a merge.
+        observed = declaration.get("observed_but_not_required", {}).get("checks", [])
+        self.assertFalse(set(required) & set(observed), "a check cannot be both required and observed-only")
+
+        # The five families Issue #224 names must all be declared somewhere.
         for name in (
             "foundation-checks",
             "static-and-cpu-image",
@@ -97,7 +103,7 @@ class DeclarationTests(unittest.TestCase):
             "dependency-review",
         ):
             with self.subTest(name=name):
-                self.assertIn(name, required)
+                self.assertIn(name, list(required) + list(observed))
 
     def test_declared_checks_all_exist_as_real_jobs(self) -> None:
         declaration = load_declaration(DECLARATION)
@@ -234,8 +240,38 @@ class ReleaseSafetyMatrixTests(unittest.TestCase):
 
     def test_the_latest_run_for_a_name_wins(self) -> None:
         runs = [
+            {"name": "a", "status": "completed", "conclusion": "failure", "completed_at": "2026-08-22T10:00:00Z"},
+            {"name": "a", "status": "completed", "conclusion": "success", "completed_at": "2026-08-22T10:05:00Z"},
+        ]
+        not_passing, missing = failing_required_checks(("a",), runs)
+        self.assertEqual((not_passing, missing), ([], []))
+
+    def test_a_stale_run_in_response_order_does_not_win(self) -> None:
+        """#401: order in the response is not order in time."""
+
+        runs = [
+            {"name": "a", "status": "completed", "conclusion": "success", "completed_at": "2026-08-22T10:05:00Z"},
+            # A newer failure cannot be overridden by an older success, and an
+            # older failure arriving last must not override a newer success.
+            {"name": "a", "status": "completed", "conclusion": "failure", "completed_at": "2026-08-22T10:00:00Z"},
+        ]
+        not_passing, missing = failing_required_checks(("a",), runs)
+        self.assertEqual((not_passing, missing), ([], []))
+
+    def test_a_newer_failure_beats_an_older_success(self) -> None:
+        runs = [
+            {"name": "a", "status": "completed", "conclusion": "failure", "completed_at": "2026-08-22T10:05:00Z"},
+            {"name": "a", "status": "completed", "conclusion": "success", "completed_at": "2026-08-22T10:00:00Z"},
+        ]
+        not_passing, missing = failing_required_checks(("a",), runs)
+        self.assertEqual(missing, [])
+        self.assertEqual(len(not_passing), 1)
+        self.assertIn("failure", not_passing[0])
+
+    def test_a_run_without_timestamps_sorts_before_one_with_them(self) -> None:
+        runs = [
+            {"name": "a", "status": "completed", "conclusion": "success", "completed_at": "2026-08-22T10:00:00Z"},
             {"name": "a", "status": "completed", "conclusion": "failure"},
-            {"name": "a", "status": "completed", "conclusion": "success"},
         ]
         not_passing, missing = failing_required_checks(("a",), runs)
         self.assertEqual((not_passing, missing), ([], []))
@@ -389,10 +425,15 @@ class RequiredCheckTriggerPolicyTests(unittest.TestCase):
         }
         self.assertEqual(filtered, set())
 
-    def test_the_required_check_name_is_owned_by_an_always_running_job(self) -> None:
+    def test_the_check_name_is_owned_by_an_always_running_job(self) -> None:
         workflow = _workflow()
-        required = load_declaration(DECLARATION)["required_status_checks"]
-        self.assertIn("static-and-cpu-image", required)
+        declaration = load_declaration(DECLARATION)
+        declared = list(declaration["required_status_checks"]) + list(
+            declaration.get("observed_but_not_required", {}).get("checks", [])
+        )
+        # Whether it gates a merge or only reports, the context still has to be
+        # emitted by a job that always runs, which is what #432 established.
+        self.assertIn("static-and-cpu-image", declared)
         verdict = _job(workflow, "static-and-cpu-image")
         # `if: always()` is what makes the verdict run when the build is skipped,
         # which is the case the old trigger filter hid by creating no run at all.

@@ -13,6 +13,10 @@ const state = {
   maxPageSize: 200,
   timeline: [],
   timelineRunId: null,
+  // A timeline read that failed is not the same as one that has not been asked
+  // for, and neither is an empty run. Keeping the failure here lets the panel
+  // say which of the three it is instead of showing the not-loaded copy for all.
+  timelineFailure: null,
   playing: false,
   timer: null,
   runRequest: null,
@@ -26,6 +30,8 @@ const state = {
   monitoringGeneration: 0,
   monitoringBackoff: null,
   monitoringAlertKey: null,
+  // A failed trend read, kept apart from a failed health read (issue #407).
+  monitoringHistoryFailure: null,
 };
 
 const statusLabels = {
@@ -251,6 +257,11 @@ function refreshIcons() {
   }
 }
 
+// The run, health and evidence contracts are UTC, so a displayed instant names
+// its zone. Without this the same event reads differently on two operators'
+// machines and neither screenshot says which zone it was in.
+const DISPLAY_TIME_ZONE = "UTC";
+
 function formatTime(value, withDate = false) {
   if (!value) return "--";
   const date = new Date(value);
@@ -258,7 +269,11 @@ function formatTime(value, withDate = false) {
   const options = withDate
     ? { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }
     : { hour: "2-digit", minute: "2-digit", second: "2-digit" };
-  return new Intl.DateTimeFormat("zh-CN", options).format(date);
+  const formatted = new Intl.DateTimeFormat("zh-CN", {
+    ...options,
+    timeZone: DISPLAY_TIME_ZONE,
+  }).format(date);
+  return `${formatted} ${DISPLAY_TIME_ZONE}`;
 }
 
 function describeEvent(event) {
@@ -318,7 +333,13 @@ function deriveSummary(events, cursor = events.length - 1) {
     status_label: statusLabels[status] || "未知状态",
     expression,
     current_step: current ? stepLabels[current.event_type] || current.event_type : "等待任务",
-    progress: events.length ? Math.round((visible.length / events.length) * 100) : 0,
+    // The ratio is replay position, not task progress: a run can sit at 90%
+    // here with no action having succeeded, and one with three events jumps
+    // 0 → 100. Naming it for what it counts keeps the bar from reading as a
+    // completion claim (issue #418).
+    event_replay_position: events.length ? Math.round((visible.length / events.length) * 100) : 0,
+    visible_event_count: visible.length,
+    event_count: events.length,
     updated_at: current?.occurred_at,
     evidence_refs: evidence,
     missing_evidence: verification?.payload?.missing_evidence || [],
@@ -479,10 +500,30 @@ function renderScenarioFilters() {
 
 // The evidence timeline keeps each event's committed phase. Context events are
 // shown, but under a phase that cannot be read as verification.
+// Three states that used to share one sentence: a read that failed, a read that
+// has not happened for this run, and a run that genuinely has no events. An
+// operator reading a partial evidence view has to be able to tell them apart.
+function timelineAvailability(current, snapshot) {
+  if (snapshot.timelineFailure) {
+    return { kind: "failed", detail: String(snapshot.timelineFailure) };
+  }
+  if (snapshot.timelineRunId !== current?.run_id) {
+    return { kind: "not_loaded", detail: "" };
+  }
+  return { kind: "loaded", detail: "" };
+}
+
 function renderEvidenceTimeline() {
   const target = get("evidence-timeline");
   if (!target) return;
-  if (state.timelineRunId !== state.currentRun?.run_id) {
+  const availability = timelineAvailability(state.currentRun, state);
+  if (availability.kind === "failed") {
+    target.innerHTML = `<div class="timeline-empty timeline-failure" role="status">时间线不可用：${escapeHtml(
+      availability.detail,
+    )}</div>`;
+    return;
+  }
+  if (availability.kind === "not_loaded") {
     target.innerHTML = '<div class="timeline-empty">尚未载入该运行的时间线</div>';
     return;
   }
@@ -1006,8 +1047,9 @@ function renderCurrent() {
   get("task-goal").textContent = summary.goal;
   get("current-step").textContent = summary.current_step;
   get("updated-at").textContent = formatTime(summary.updated_at, true);
-  get("progress-value").textContent = `${summary.progress}%`;
-  get("progress-bar").style.width = `${summary.progress}%`;
+  get("progress-value").textContent = `${summary.event_replay_position}%`;
+  get("progress-bar").style.width = `${summary.event_replay_position}%`;
+  get("progress-count").textContent = `${summary.visible_event_count} / ${summary.event_count}`;
   get("event-count").textContent = `${state.events.length} 个事件`;
   renderAttention(summary);
   renderExpression(summary);
@@ -1020,6 +1062,25 @@ function renderCurrent() {
   refreshIcons();
 }
 
+// What the selected run can actually say about one evidence reference. Both
+// answers are read from the record; neither is a fixed string.
+function evidenceProvenance(run, sourceEvent, reference) {
+  const mode = typeof run?.mode === "string" && run.mode.trim() ? run.mode.trim() : null;
+  const resolved = Boolean(sourceEvent);
+  const source = mode ? `${mode} run` : "unknown";
+  let integrity;
+  if (!resolved) {
+    // A reference no event carries is a string, not a resolved artifact.
+    integrity = "unresolved reference";
+  } else if (typeof reference === "string" && reference.startsWith("frame://")) {
+    // The frame view is a local reconstruction, not the stored artifact.
+    integrity = "local reconstruction from the event stream";
+  } else {
+    integrity = "event stream reference";
+  }
+  return { source, integrity };
+}
+
 function openEvidence(reference) {
   const kind = evidenceKind(reference);
   get("evidence-title").textContent = kind.label;
@@ -1029,9 +1090,12 @@ function openEvidence(reference) {
   if (reference.startsWith("frame://")) {
     const snapshot = buildWorkbenchState(state.events, sourceIndex);
     visual.className = "evidence-visual camera-frame";
+    // The label names the reconstruction, not a fixture: this view is built from
+    // the event stream and says nothing about where the original frame lives
+    // (issue #469).
     visual.innerHTML = `${snapshot.entities
       .map((entity, index) => entityVisual(entity, index, "evidence-frame-entity"))
-      .join("")}<span class="evidence-frame-label">${escapeHtml(reference)} · SCRIPTED FIXTURE</span>`;
+      .join("")}<span class="evidence-frame-label">${escapeHtml(reference)} · 本地重建</span>`;
     applyEntityPositions(visual);
   } else {
     visual.className = "evidence-visual motion-log";
@@ -1040,14 +1104,43 @@ function openEvidence(reference) {
       .join("\n");
     visual.textContent = `${sourceEvent?.occurred_at || "--"}  ${sourceEvent?.event_type || "evidence"}\n${payloadLines || reference}`;
   }
+  // Derived, not asserted. The dialog used to claim "scripted fixture" and
+  // "event stream reference" for every item regardless of the run, so a reviewer
+  // read a fixture claim out of a Gazebo or external run that never made one
+  // (issue #469). What the run does not say is reported as unknown.
+  const provenance = evidenceProvenance(state.currentRun || summary, sourceEvent, reference);
   get("evidence-meta").innerHTML = `
     <dt>Reference</dt><dd>${escapeHtml(reference)}</dd>
     <dt>Run ID</dt><dd>${escapeHtml(state.currentRun?.run_id)}</dd>
-    <dt>Source</dt><dd>scripted fixture</dd>
-    <dt>Integrity</dt><dd>event stream reference</dd>`;
+    <dt>Source</dt><dd>${escapeHtml(provenance.source)}</dd>
+    <dt>Integrity</dt><dd>${escapeHtml(provenance.integrity)}</dd>`;
   const dialog = get("evidence-dialog");
-  if (typeof dialog.showModal === "function") dialog.showModal();
-  else dialog.setAttribute("open", "");
+  // Where focus came from, so closing returns it there instead of to the top of
+  // the document (issue #470).
+  state.evidenceReturnFocus = document.activeElement;
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    // The fallback is not modal, so focus is moved explicitly and trapped by the
+    // dialog's own keydown handler rather than by the platform.
+    dialog.setAttribute("open", "");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+  }
+  const close = get("evidence-close");
+  if (close) close.focus();
+}
+
+// Closing is one path, whether it came from the button, Escape or the platform's
+// cancel event, so focus return and the open attribute cannot disagree.
+function closeEvidence() {
+  const dialog = get("evidence-dialog");
+  if (!dialog) return;
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+  else dialog.removeAttribute("open");
+  const back = state.evidenceReturnFocus;
+  state.evidenceReturnFocus = null;
+  if (back && typeof back.focus === "function") back.focus();
 }
 
 const monitoringCards = [
@@ -1351,7 +1444,7 @@ function monitoringTrendRows(history) {
 
 // The view state is derived from the last payload *or* the last failure. A
 // failure clears availability, so a stale green card can never remain on screen.
-function monitoringViewState(payload, failure) {
+function monitoringViewState(payload, failure, historyFailure = null) {
   if (failure) {
     return { available: false, status: "unavailable", source: null, reason: failure, alerts: [], cards: [] };
   }
@@ -1367,6 +1460,11 @@ function monitoringViewState(payload, failure) {
     reason: typeof payload.reason === "string" ? payload.reason : null,
     cards: monitoringCardsFor(payload),
     alerts: monitoringAlertsFor(payload),
+    // Current health and the trend are two reads. A trend that failed is a
+    // partial failure: the cards are still true, the trend is not merely empty
+    // (issue #407).
+    historyFailure: historyFailure ? String(historyFailure) : null,
+    trendAvailable: !historyFailure,
   };
 }
 
@@ -1467,6 +1565,15 @@ function renderMonitoringAlerts(view) {
 function renderMonitoringTrend(view) {
   const panel = get("monitoring-trend");
   const rows = view.trend || [];
+  if (view.available && view.historyFailure) {
+    // Visible, and distinct from an empty trend: the cards above are current,
+    // the trend could not be read (issue #407).
+    panel.hidden = false;
+    panel.innerHTML = `<p class="monitoring-empty monitoring-failure" role="status">趋势不可用：${escapeHtml(
+      view.historyFailure,
+    )}</p>`;
+    return;
+  }
   if (!view.available || !rows.length) {
     panel.innerHTML = "";
     panel.hidden = true;
@@ -1502,7 +1609,7 @@ function renderMonitoringTrend(view) {
 function renderMonitoring() {
   // `view` is the derived projection; `state.monitoring*` keeps the raw payload
   // so a later render can reuse it without re-fetching.
-  const view = monitoringViewState(state.monitoring, state.monitoringFailure);
+  const view = monitoringViewState(state.monitoring, state.monitoringFailure, state.monitoringHistoryFailure);
   view.trend = state.monitoring?.trend || [];
   const overall = get("monitoring-overall");
   overall.className = `monitoring-overall monitoring-${view.status}`;
@@ -1535,6 +1642,13 @@ async function refreshMonitoring() {
     if (history.ok) {
       const historyPayload = await history.json();
       payload.trend = monitoringTrendRows(historyPayload);
+      state.monitoringHistoryFailure = null;
+    } else {
+      // Not "no history": the request failed. Keeping the two apart is the point
+      // of the issue — an empty trend and an unreadable one look the same
+      // otherwise (issue #407).
+      payload.trend = [];
+      state.monitoringHistoryFailure = `HTTP ${history.status}`;
     }
     state.monitoring = payload;
     state.monitoringFailure = null;
@@ -1567,7 +1681,7 @@ function monitoringRetryDelay(view, monitoring, backoff) {
 }
 
 function startMonitoring() {
-  const view = monitoringViewState(state.monitoring, state.monitoringFailure);
+  const view = monitoringViewState(state.monitoring, state.monitoringFailure, state.monitoringHistoryFailure);
   if (state.monitoring || state.monitoringFailure) {
     renderMonitoring();
     const delay = monitoringRetryDelay(view, state.monitoring, state.monitoringBackoff);
@@ -1663,18 +1777,25 @@ async function selectRun(runId) {
     // if it had been phase-checked.
     state.timeline = [];
     state.timelineRunId = null;
+    state.timelineFailure = null;
     try {
       const timelineResponse = await fetch(`/api/runs/${encodeURIComponent(runId)}/timeline`, {
         signal: controller.signal,
       });
+      if (generation !== state.requestGeneration) return;
       if (timelineResponse.ok) {
         const timelinePayload = await timelineResponse.json();
         if (generation !== state.requestGeneration) return;
         state.timeline = timelinePayload.timeline || [];
         state.timelineRunId = timelinePayload.run_id ?? runId;
+      } else {
+        // A partial failure: the events are readable and the phase-checked
+        // projection is not, so the run must not look fully evidenced.
+        state.timelineFailure = `HTTP ${timelineResponse.status}`;
       }
     } catch (error) {
       if (error.name === "AbortError") throw error;
+      state.timelineFailure = error.message || "时间线请求失败";
     }
     renderRunList();
     renderCurrent();
@@ -1750,7 +1871,20 @@ function bindControls() {
     state.cursor = Number(event.target.value);
     renderCurrent();
   });
-  get("evidence-close").addEventListener("click", () => get("evidence-dialog").close());
+  get("evidence-close").addEventListener("click", closeEvidence);
+  // Escape reaches a native <dialog> as `cancel`; the fallback path has no such
+  // event, so the key is handled here as well. One handler for both keeps the
+  // focus return and the open attribute in step (issue #470).
+  get("evidence-dialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeEvidence();
+  });
+  get("evidence-dialog").addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeEvidence();
+    }
+  });
   document.addEventListener("visibilitychange", () => {
     const monitoringVisible = !get("monitoring-view").hidden;
     if (document.hidden) stopMonitoring();

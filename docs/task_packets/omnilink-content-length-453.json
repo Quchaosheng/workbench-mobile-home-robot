@@ -1,0 +1,28 @@
+{
+  "issue": 453,
+  "human_owner": "Quchaosheng",
+  "objective": "Validate OmniLink Content-Length before use so a malformed or over-limit header becomes a typed integration failure instead of an escaping ValueError or OverflowError.",
+  "decision_supported": "May a header from an untrusted server raise a standard-library exception through this client? No: the caller is promised OmniLinkError.",
+  "allowed_paths": [
+    "integrations/omnilink/client.py",
+    "tests/integration/test_omnilink_client.py",
+    "docs/task_packets/omnilink-content-length-453.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["integrations/omnilink/client.py"],
+  "outputs": ["integrations/omnilink/client.py"],
+  "acceptance": [
+    "A non-numeric Content-Length raises OmniLinkError.",
+    "A negative Content-Length raises OmniLinkError.",
+    "An over-limit Content-Length still raises OmniLinkResponseTooLarge."
+  ],
+  "commands": ["python3 -m pytest tests/integration/test_omnilink_client.py -q"],
+  "evidence": ["pytest output for tests/integration/test_omnilink_client.py"],
+  "stop_conditions": ["The change would need an OmniLink API change."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Refusing a missing Content-Length would break chunked responses; absence is still allowed and the body is bounded on read.",
+    "Fallback: revert the single commit."
+  ]
+}

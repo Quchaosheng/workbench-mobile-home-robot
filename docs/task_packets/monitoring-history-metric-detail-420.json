@@ -1,0 +1,28 @@
+{
+  "issue": 420,
+  "human_owner": "Quchaosheng",
+  "objective": "Retain a bounded, scalar-only metric projection per history entry so an alert can be explained from the history endpoint rather than only counted.",
+  "decision_supported": "Is an alert count enough to review an alert? No: the reviewer needs the values that produced the verdict, and the bounded history could not reconstruct them.",
+  "allowed_paths": [
+    "services/backend/workbench_backend/health.py",
+    "tests/unit/test_backend_health.py",
+    "docs/task_packets/monitoring-history-metric-detail-420.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "docs/api.md", "docs/user-guide/monitoring.md"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": ["services/backend/workbench_backend/health.py"],
+  "outputs": ["services/backend/workbench_backend/health.py"],
+  "acceptance": [
+    "Each history entry carries the metric name, value, unit, state and source.",
+    "Retained detail is bounded per domain.",
+    "Only scalars are retained, so the record cannot grow without bound."
+  ],
+  "commands": ["python3 -m pytest tests/unit/test_backend_health.py -q"],
+  "evidence": ["pytest output for tests/unit/test_backend_health.py"],
+  "stop_conditions": ["The change would need a control or alert-clear path."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Retaining values enlarges each history entry; the per-domain ceiling keeps it bounded and the snapshot count is unchanged.",
+    "Fallback: revert the single commit."
+  ]
+}

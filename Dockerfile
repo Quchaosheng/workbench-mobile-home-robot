@@ -103,6 +103,7 @@ COPY libs/task_utils ./libs/task_utils
 COPY services/agent_runtime ./services/agent_runtime
 COPY services/backend ./services/backend
 COPY services/world_model ./services/world_model
+COPY services/perception ./services/perception
 COPY firmware/virtual_mcu ./firmware/virtual_mcu
 RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/workbench-venv/bin/python -m pip install --no-compile \

@@ -1,0 +1,52 @@
+{
+  "issue": 413,
+  "human_owner": "Quchaosheng",
+  "objective": "Produce a read-only per-step divergence report between two traces of the same scenario, keeping each environment class separate and distinguishing divergence from non-execution.",
+  "decision_supported": "Can a reviewer see where two environment traces disagree? Not without reading both logs by hand, and no artifact separated a disagreement from a run that never executed.",
+  "allowed_paths": [
+    "tools/scripts/semantic_divergence.py",
+    "tests/unit/test_semantic_divergence.py",
+    "docs/task_packets/evaluation-semantic-divergence-413.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "libs/kernel/workbench/kernel/run_provenance.py"
+  ],
+  "forbidden": [
+    "sim/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**",
+    "interfaces/**"
+  ],
+  "input_refs": [
+    "libs/kernel/workbench/kernel/run_provenance.py",
+    "tools/scripts/compare_evaluations.py"
+  ],
+  "outputs": [
+    "tools/scripts/semantic_divergence.py"
+  ],
+  "acceptance": [
+    "Each trace keeps its own environment class in the report.",
+    "A divergent step names the fields that differ and both values.",
+    "Identity fields are not reported as divergence.",
+    "A trace with no events is reported as never executed, not as agreement.",
+    "The report is bounded and states when it truncated."
+  ],
+  "commands": [
+    "python3 -m pytest tests/unit/test_semantic_divergence.py -q"
+  ],
+  "evidence": [
+    "pytest output for tests/unit/test_semantic_divergence.py"
+  ],
+  "stop_conditions": [
+    "The change would certify sim-to-real equivalence."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "The report is a pointer, not a proof: it names where to look and does not certify equivalence.",
+    "Fallback: revert the single commit."
+  ]
+}

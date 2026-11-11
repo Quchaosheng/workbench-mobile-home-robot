@@ -1,0 +1,28 @@
+{
+  "issue": 400,
+  "human_owner": "Quchaosheng",
+  "objective": "Bring the live main branch protection in line with the nine-check safety matrix the repository declares, so the declaration is enforced rather than documented.",
+  "decision_supported": "May the declaration and the live configuration disagree? No: a matrix that is declared but not enforced reports a pass it never observed.",
+  "allowed_paths": [
+    ".github/rulesets/main-protection.json",
+    "docs/task_packets/ci-main-protection-400.json"
+  ],
+  "read_only_paths": ["AGENTS.md", "CONTRIBUTING.md", "tools/scripts/check_branch_protection.py"],
+  "forbidden": ["interfaces/**", "libs/contracts/**", "services/**", "robot/control/workbench_motion/**", "firmware/**", "kernel/wbcan/**", "hardware/**"],
+  "input_refs": [".github/rulesets/main-protection.json", "tools/scripts/check_branch_protection.py"],
+  "outputs": [".github/rulesets/main-protection.json"],
+  "acceptance": [
+    "The live configuration requires all nine declared checks.",
+    "Strict up-to-date branches is enabled.",
+    "Stale reviews are dismissed on push.",
+    "Administrator bypass is disabled."
+  ],
+  "commands": ["python3 tools/scripts/check_branch_protection.py"],
+  "evidence": ["GET /repos/.../branches/main/protection showing the nine contexts"],
+  "stop_conditions": ["The change would need the declaration relaxed instead."],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Enforcing admin bypass means an emergency fix needs the documented audit path; that is what the declaration asks for.",
+    "Fallback: restore the previous protection from the issue's record."
+  ]
+}

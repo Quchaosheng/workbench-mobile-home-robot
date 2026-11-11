@@ -323,9 +323,15 @@ def verify_manifest(manifest: Mapping[str, Any]) -> tuple[str, ...]:
                     break
                 hashes = package.get("hashes")
                 if hashes is None:
-                    continue
+                    # A lock that pins versions without artifact hashes is not a
+                    # lock: nothing ties the version to bytes. Accepting it let a
+                    # manifest report hashed_package_count 0 and still verify, so
+                    # the provenance looked complete while carrying no evidence
+                    # (issue #402).
+                    reasons.append("lock.packages must carry artifact hashes for every package")
+                    break
                 if not isinstance(hashes, list) or not hashes:
-                    reasons.append("lock.packages hashes must be a non-empty list when present")
+                    reasons.append("lock.packages hashes must be a non-empty list")
                     break
                 if any(not isinstance(item, str) or re.fullmatch(r"[0-9a-f]{64}", item) is None for item in hashes):
                     reasons.append("lock.packages hashes must be sha256 hex digests")

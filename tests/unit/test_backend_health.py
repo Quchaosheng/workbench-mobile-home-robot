@@ -47,10 +47,12 @@ from workbench_backend.health import (
     DEFAULT_ALERT_OPEN_AFTER_S,
     HEALTH_HISTORY_VERSION,
     MAX_ALERT_DEBOUNCE_S,
+    MAX_HISTORY_METRICS_PER_DOMAIN,
     MAX_SNAPSHOTS,
     MONITORING_POLICY_VERSION,
     POLICY_ENVIRONMENT,
     HealthHistoryError,
+    HealthReadModel,
     HealthStore,
     MonitoringPolicyError,
     alert_policy_digest,
@@ -670,7 +672,14 @@ class HealthApiTests(unittest.TestCase):
         base_url = self.start_server(document)
         status, payload, _ = self.read_json(f"{base_url}/api/v1/health/history?since={BASE + 2}")
         self.assertEqual(status, 200)
-        self.assertEqual(len(payload["snapshots"]), 4)
+        # `since` bounds snapshots too (issue #463). Four snapshots at BASE..BASE+3
+        # with since=BASE+2 leaves the last two.
+        self.assertEqual(len(payload["snapshots"]), 2)
+        self.assertEqual([entry["collected_at"] for entry in payload["snapshots"]], [BASE + 2, BASE + 3])
+        # A `since` past every snapshot returns none rather than all of them.
+        status, far, _ = self.read_json(f"{base_url}/api/v1/health/history?since={10**18}")
+        self.assertEqual(status, 200)
+        self.assertEqual(far["snapshots"], [])
         self.assertEqual(payload["limits"]["max_snapshots"], MAX_SNAPSHOTS)
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(f"{base_url}/api/v1/health/history?since=bad", timeout=2)
@@ -802,3 +811,124 @@ class HealthApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- Issue #416: a source that disappears is not a source that never existed --
+
+
+class SourceDisappearanceTests(unittest.TestCase):
+    """Deleting a health document must not leave its last snapshot serving."""
+
+    def test_a_deleted_document_reports_source_unavailable_not_stale_health(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "health.jsonl"
+            write_health_document(path, [snapshot()])
+            model = HealthReadModel(path)
+            model.refresh()
+            before = model.current_payload()
+            self.assertEqual(before["status"], "healthy")
+            self.assertIsNotNone(before["current"])
+
+            path.unlink()
+            model.refresh()
+            after = model.current_payload()
+            self.assertTrue(model._lost_source, "the disappearance must be recorded")
+            # The point of the fix: the last healthy snapshot is gone, and the
+            # reason says the source went away rather than that it was never there.
+            self.assertEqual(after["status"], "unknown")
+            self.assertIsNone(after["current"])
+            self.assertEqual(after["reason"], "source_unavailable")
+
+    def test_a_source_that_never_existed_still_reports_no_snapshot(self) -> None:
+        with TemporaryDirectory() as tmp:
+            model = HealthReadModel(Path(tmp) / "absent.jsonl")
+            model.refresh()
+            payload = model.current_payload()
+            self.assertEqual(payload["status"], "unknown")
+            self.assertEqual(payload["reason"], "no_health_snapshot")
+
+
+class SameSignatureRewriteTests(unittest.TestCase):
+    """Issue #457: a stat signature is a hint, not proof the bytes are unchanged."""
+
+    def test_a_same_size_rewrite_with_a_restored_timestamp_is_noticed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "health.jsonl"
+            write_health_document(path, [snapshot(at=BASE)])
+            model = HealthReadModel(path)
+            model.refresh()
+            first = model.current_payload()
+            self.assertEqual(first["status"], "healthy")
+            before_stat = path.stat()
+            first_digest = model._content_digest
+
+            # Rewrite with the same byte length and put the timestamps back, which
+            # is exactly the case a (mtime_ns, size) signature cannot see. The
+            # replacement flips one character so the length is preserved.
+            original = path.read_bytes()
+            # Flip a digit inside a metric value: same length, different bytes,
+            # and it changes what the document says without changing its size.
+            flipped = original.replace(b'"value": 5', b'"value": 7', 1)
+            self.assertEqual(len(flipped), len(original), "the rewrite must be same-size")
+            path.write_bytes(flipped)
+            os.utime(path, ns=(before_stat.st_atime_ns, before_stat.st_mtime_ns))
+            self.assertEqual(path.stat().st_size, before_stat.st_size, "the rewrite must be same-size")
+
+            model.refresh()
+            # The document was re-read: the ingested bytes, not the stat
+            # signature, decide whether the cached store is still valid.
+            self.assertNotEqual(
+                model._content_digest,
+                first_digest,
+                "a same-size rewrite that restored the timestamp must be re-read",
+            )
+            self.assertNotEqual(model._stat, None)
+
+
+# --- Issue #420: history carries the values behind the verdict ----------------
+
+
+class HistoryMetricDetailTests(unittest.TestCase):
+    """A reviewer must be able to explain an alert from the bounded history."""
+
+    def _store_with(self, snapshots) -> HealthStore:
+        store = HealthStore()
+        for entry in snapshots:
+            store.ingest(entry)
+        return store
+
+    def test_history_entries_carry_the_metrics_that_produced_the_status(self) -> None:
+        store = self._store_with([snapshot(at=BASE)])
+        payload = store.history_payload()
+        entry = payload["snapshots"][-1]
+        self.assertIn("metrics", entry)
+        self.assertTrue(entry["metrics"], "a history entry must explain its own verdict")
+        names = {metric["name"] for metric in entry["metrics"]}
+        self.assertIn("can.link_ok", names)
+        for metric in entry["metrics"]:
+            self.assertIn("value", metric)
+            self.assertIn("unit", metric)
+            self.assertIn("state", metric)
+            self.assertIn("source", metric)
+
+    def test_the_detail_is_bounded_per_domain(self) -> None:
+        store = self._store_with([snapshot(at=BASE)])
+        entry = store.history_payload()["snapshots"][-1]
+        per_domain: dict[str, int] = {}
+        for metric in entry["metrics"]:
+            domain = metric["name"].split(".", 1)[0]
+            per_domain[domain] = per_domain.get(domain, 0) + 1
+        self.assertTrue(per_domain, "expected at least one domain")
+        self.assertLessEqual(
+            max(per_domain.values()),
+            MAX_HISTORY_METRICS_PER_DOMAIN,
+            "retained detail must stay bounded per domain",
+        )
+
+    def test_only_scalars_are_retained(self) -> None:
+        """A nested value would grow the record without bound."""
+
+        store = self._store_with([snapshot(at=BASE)])
+        for entry in store.history_payload()["snapshots"]:
+            for metric in entry["metrics"]:
+                self.assertIsInstance(metric["value"], (bool, int, float, str))

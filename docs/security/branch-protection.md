@@ -127,6 +127,29 @@ An unrecorded bypass is an incident under
 [incident response](incident-response.md), not a shortcut. Bypass must never be
 used to publish a release image.
 
+### Recorded bypass: 2026-11-11
+
+**Reason.** `required_approving_review_count` is 1 and every collaborator is
+inactive — the most recent collaborator commit is 2026-09-10 — so no pull request
+can satisfy the approval requirement. The repository has one active maintainer.
+This is a configuration gap, not an emergency in the sense the procedure above
+anticipates, and it is corrected below rather than bypassed twice.
+
+**Affected commit and pull request.** `08b4d39bcac35babe9ac54e17a8d1cc7c3ab316f`,
+PR #535.
+
+**Waived check.** The approving-review requirement only. All eight required status
+checks were evaluated and passed on that commit; no check was waived.
+
+**Approving human owner.** Quchaosheng, the repository owner, who authorised the
+bypass in this session.
+
+**What was done.** `enforce_admins` was set to `false`, the pull request was
+merged, and `enforce_admins` was restored to `true` immediately afterwards. Every
+other setting was left untouched.
+
+**Results after the merge.** Recorded below once the post-merge checks ran.
+
 ## Release promotion
 
 A tag can be pushed onto any commit, including one that never saw a pull request,

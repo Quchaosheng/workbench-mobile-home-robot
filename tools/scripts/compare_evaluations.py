@@ -83,7 +83,18 @@ def compare(metrics: list[dict[str, Any]], labels: list[str]) -> dict[str, Any]:
     counts = {}
     for label, item in zip(labels, metrics, strict=True):
         total = int(item["run_count"])
-        successes = round(float(item["vtcr"]) * total)
+        if total < 1:
+            raise ValueError(f"{label}: run_count must be at least 1")
+        rate = float(item["vtcr"])
+        if not 0.0 <= rate <= 1.0:
+            raise ValueError(f"{label}: vtcr must be between 0 and 1, got {rate!r}")
+        # `vtcr * run_count` has to be a whole count. Rounding it fabricated a
+        # numerator that never existed and then reported an interval from it
+        # (issue #415), so an inconsistent metrics file is refused instead.
+        implied = rate * total
+        successes = round(implied)
+        if abs(implied - successes) > 1e-9:
+            raise ValueError(f"{label}: vtcr {rate!r} of {total} runs is not a whole success count")
         lower, upper = wilson_interval(successes, total)
         counts[label] = (successes, total)
         versions.append(
@@ -97,20 +108,42 @@ def compare(metrics: list[dict[str, Any]], labels: list[str]) -> dict[str, Any]:
             }
         )
 
+    # Every pairwise comparison is one hypothesis in one family. Three versions
+    # make three comparisons, so a 95% interval per comparison leaves the chance
+    # of at least one false "significant" well above 5%. Bonferroni is the
+    # conservative choice and, more importantly, the one whose adjustment a
+    # reader can check from the numbers in the report (issue #415).
+    pairs = list(combinations(labels, 2))
+    family_size = len(pairs)
+    alpha = 0.05
+    adjusted_alpha = alpha / family_size if family_size else alpha
     pairwise = []
-    for label_a, label_b in combinations(labels, 2):
-        difference, lower, upper = difference_interval(*counts[label_a], *counts[label_b])
+    for label_a, label_b in pairs:
+        difference, lower, upper = difference_interval(
+            *counts[label_a], *counts[label_b], confidence=1.0 - adjusted_alpha
+        )
         pairwise.append(
             {
                 "from": label_a,
                 "to": label_b,
                 "vtcr_difference": difference,
-                "confidence_interval_95": [lower, upper],
+                "confidence_interval": [lower, upper],
+                "confidence_level": 1.0 - adjusted_alpha,
                 "statistically_significant": lower > 0 or upper < 0,
             }
         )
     return {
-        "method": "Wilson score and unpooled normal difference, 95% confidence",
+        "method": (
+            "Wilson score for per-version rates; unpooled normal difference for pairwise "
+            "comparisons with a Bonferroni correction across the family"
+        ),
+        "multiplicity": {
+            "family": "all pairwise version comparisons in this report",
+            "family_size": family_size,
+            "alpha": alpha,
+            "adjusted_alpha": adjusted_alpha,
+            "correction": "bonferroni",
+        },
         "versions": versions,
         "pairwise": pairwise,
         "evidence_indexes_match": all(item["evidence_index"] is not None for item in versions)
