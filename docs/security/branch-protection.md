@@ -109,6 +109,22 @@ and "we looked and it was right" are different findings.
 Pass `--live <file>` to check a recorded API payload, which is how the unit tests
 exercise the comparison without network access.
 
+## Approving reviews
+
+`required_approving_review_count` is 0. The repository has one active maintainer
+and no reviewer who could approve, so the requirement was unsatisfiable: every
+merge needed a recorded administrator bypass, and a gate that is bypassed every
+time is not a gate.
+
+What still reviews a change is the status matrix — eight required checks
+including the property and mutation gates — and administrator bypass remains
+disabled, so those checks cannot be skipped either. Removing the approval
+requirement changed who may merge, not what has to pass.
+
+The declaration records the condition for restoring it: a second maintainer with
+write access who reviews pull requests. At that point the count returns to 1 and
+`dismiss_stale_reviews_on_push` returns to true.
+
 ## Administrator bypass
 
 Administrator bypass is **disabled** in the declaration, so the check fails when

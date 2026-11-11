@@ -1,0 +1,53 @@
+{
+  "issue": 400,
+  "human_owner": "Quchaosheng",
+  "objective": "Remove the approving-review requirement that cannot be satisfied by a single-maintainer repository, and keep the status matrix and the administrator-bypass prohibition that actually review a change.",
+  "decision_supported": "Should a gate that is bypassed before every merge stay in place? No: it stops being a gate and turns every merge into an audited exception.",
+  "allowed_paths": [
+    ".github/rulesets/main-protection.json",
+    "docs/security/branch-protection.md",
+    "tests/unit/test_branch_protection_gate.py",
+    "docs/task_packets/ci-review-policy-400.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "tools/scripts/check_branch_protection.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "tools/scripts/check_branch_protection.py",
+    ".github/rulesets/main-protection.json"
+  ],
+  "outputs": [
+    ".github/rulesets/main-protection.json",
+    "docs/security/branch-protection.md"
+  ],
+  "acceptance": [
+    "The checker reports the live configuration matches the declaration.",
+    "Eight status checks stay required and administrator bypass stays disabled.",
+    "The declaration states the reason and the condition for restoring the requirement."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_branch_protection.py --declaration .github/rulesets/main-protection.json"
+  ],
+  "evidence": [
+    "checker output naming the eight checks"
+  ],
+  "stop_conditions": [
+    "The change would waive a status check."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "Fewer eyes before merge; the status matrix is unchanged and remains enforced.",
+    "Fallback: restore the count to 1."
+  ]
+}

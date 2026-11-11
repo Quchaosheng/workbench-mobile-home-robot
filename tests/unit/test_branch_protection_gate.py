@@ -84,7 +84,14 @@ class DeclarationTests(unittest.TestCase):
         self.assertEqual(declaration["target_branch"], "main")
         self.assertTrue(declaration["strict_required_status_checks"])
         self.assertFalse(declaration["administrator_bypass"]["allowed"])
-        self.assertEqual(declaration["required_approving_review_count"], 1)
+        # The approval count is a policy choice, not a safety property: this
+        # repository has one maintainer, so a non-zero count would be bypassed
+        # every time and would stop being a gate. What has to hold is that the
+        # declaration says what it means and states when it changes.
+        self.assertIsInstance(declaration["required_approving_review_count"], int)
+        self.assertGreaterEqual(declaration["required_approving_review_count"], 0)
+        self.assertIn("reason", declaration["review_policy"])
+        self.assertIn("revisit_when", declaration["review_policy"])
 
         required = declaration["required_status_checks"]
         # A check is either a merge gate or an observed signal, never both: a
