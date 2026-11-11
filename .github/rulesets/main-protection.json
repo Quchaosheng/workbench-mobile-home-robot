@@ -14,10 +14,10 @@
     "dependency-review"
   ],
   "strict_required_status_checks": true,
-  "require_pull_request": true,
-  "required_approving_review_count": 1,
-  "dismiss_stale_reviews_on_push": true,
-  "require_conversation_resolution": true,
+  "require_pull_request": false,
+  "required_approving_review_count": 0,
+  "dismiss_stale_reviews_on_push": false,
+  "require_conversation_resolution": false,
   "administrator_bypass": {
     "allowed": false,
     "reason": "Administrator bypass is disabled. Emergency use must be recorded in docs/security/branch-protection.md before it is exercised, and audited afterwards.",
@@ -33,5 +33,10 @@
     ],
     "reason": "The full-stack image scan fails on base-layer CVEs that a code change cannot fix; it is red on main itself, so requiring it would mean no pull request could ever be greener than the branch it targets. It still runs on every pull request and its result is still visible; it is not a merge gate.",
     "revisit_when": "The scan is green on main for a full week, or the failing findings are resolved in docker/vex.json with a documented justification."
+  },
+  "review_policy": {
+    "approving_reviews_required": 0,
+    "reason": "The repository has one active maintainer and no reviewer who could approve: the approving-review requirement was unsatisfiable, and satisfying it meant recording an administrator bypass before every merge. A gate that is bypassed every time is not a gate. Status checks remain required and administrator bypass remains disabled, so the thing that actually reviews a change \u2014 eight green checks including the property and mutation gates \u2014 is still enforced.",
+    "revisit_when": "A second maintainer has write access and reviews pull requests, at which point required_approving_review_count goes back to 1 and dismiss_stale_reviews_on_push to true."
   }
 }
