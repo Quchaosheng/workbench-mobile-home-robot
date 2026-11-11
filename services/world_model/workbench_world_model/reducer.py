@@ -54,6 +54,9 @@ class WorldState(BaseModel):
     # (issue #409). The newest value also stays in `entity_locations`, so a
     # reader that does not know about hypotheses sees exactly what it saw before.
     entity_location_hypotheses: dict[str, list[str]] = Field(default_factory=dict)
+    # The instant the current hypothesis set belongs to. A new instant supersedes
+    # the set rather than joining it (issue #409 review).
+    entity_location_observed_at: dict[str, str] = Field(default_factory=dict)
     entity_location_evidence_refs: dict[str, list[str]] = Field(default_factory=dict)
     entity_location_last_observed_at: dict[str, str] = Field(default_factory=dict)
     entity_location_clock_ids: dict[str, str] = Field(default_factory=dict)
@@ -75,7 +78,13 @@ def _append_entity_evidence(state: WorldState, entity_id: str, evidence_refs: li
     entity_evidence.extend(reference for reference in evidence_refs if reference not in entity_evidence)
 
 
-def _update_location(state: WorldState, entity_id: str, location: str, evidence_refs: list[str]) -> None:
+def _update_location(
+    state: WorldState,
+    entity_id: str,
+    location: str,
+    evidence_refs: list[str],
+    observed_at: object = None,
+) -> None:
     if state.entity_locations.get(entity_id) != location:
         state.entity_evidence_refs[entity_id] = list(dict.fromkeys(evidence_refs))
         state.entity_location_evidence_refs[entity_id] = list(dict.fromkeys(evidence_refs))
@@ -84,14 +93,29 @@ def _update_location(state: WorldState, entity_id: str, location: str, evidence_
         location_evidence = state.entity_location_evidence_refs.setdefault(entity_id, [])
         location_evidence.extend(reference for reference in evidence_refs if reference not in location_evidence)
     state.entity_locations[entity_id] = location
-    hypotheses = state.entity_location_hypotheses.setdefault(entity_id, [])
-    if location in hypotheses:
-        hypotheses.remove(location)
-    hypotheses.insert(0, location)
-    # Bounded: the two most recent incompatible readings are enough to know the
-    # belief is unresolved. Keeping more would grow the state without telling a
-    # reader anything extra.
-    del hypotheses[MAX_LOCATION_HYPOTHESES:]
+    # A hypothesis is a *concurrent* claim, not a past one. An entity that was on
+    # the table and is now in the tray has moved: the earlier reading is history,
+    # not a competing belief, and treating it as one made every successful
+    # placement look unresolved (issue #409 review).
+    #
+    # So a new reading only competes with one taken at the same instant.
+    # `observed_at` is what separates "two cameras disagree now" from "this was
+    # there and then moved". No timestamp at all means the two cannot be ordered,
+    # so they are treated as concurrent: absent ordering, neither can be preferred.
+    moment = None if observed_at is None else str(observed_at)
+    same_moment = state.entity_location_observed_at.get(entity_id)
+    concurrent = (same_moment is None and moment is None) or (
+        same_moment is not None and moment is not None and same_moment == moment
+    )
+    if concurrent:
+        hypotheses = state.entity_location_hypotheses.setdefault(entity_id, [])
+        if location not in hypotheses:
+            hypotheses.insert(0, location)
+        del hypotheses[MAX_LOCATION_HYPOTHESES:]
+    else:
+        # The previous instant is superseded, not disputed.
+        state.entity_location_hypotheses[entity_id] = [location]
+        state.entity_location_observed_at[entity_id] = moment or ""
 
 
 def _replace_observation_metadata(
@@ -317,7 +341,7 @@ def apply_event(state: WorldState, event: WorldEvent) -> WorldState:
             next_state.entity_beliefs[entity_id] = WorldBelief.OBSERVED
             location = event.payload.get("location")
             if location is not None:
-                _update_location(next_state, entity_id, location, event.evidence_refs)
+                _update_location(next_state, entity_id, location, event.evidence_refs, event.payload.get("observed_at"))
                 for values, field_name in (
                     (next_state.entity_location_last_observed_at, "observed_at"),
                     (next_state.entity_location_clock_ids, "clock_id"),

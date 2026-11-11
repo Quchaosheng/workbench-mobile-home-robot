@@ -97,8 +97,11 @@ def apply_transform(
                 if not isinstance(target, dict) or part not in target:
                     raise CounterfactualError(f"the event has no field {field!r}")
                 target = target[part]
-            if not isinstance(target, dict):
-                raise CounterfactualError(f"{field!r} does not name a field on the event")
+            if not isinstance(target, dict) or parts[-1] not in target:
+                # Replacing a field the event does not have would invent one, and
+                # the report would describe a change to a document that never
+                # carried it. The counterfactual edits; it does not extend.
+                raise CounterfactualError(f"the event has no field {field!r}")
             target[parts[-1]] = value
             break
     return result

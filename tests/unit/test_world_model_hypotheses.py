@@ -39,10 +39,12 @@ def context():
     )
 
 
-def state_with(*locations: tuple[str, list[str]]) -> WorldState:
+def state_with(*locations: tuple) -> WorldState:
     state = WorldState(run_id="run-1")
-    for location, refs in locations:
-        _update_location(state, "red_block", location, refs)
+    for entry in locations:
+        location, refs = entry[0], entry[1]
+        observed_at = entry[2] if len(entry) > 2 else None
+        _update_location(state, "red_block", location, refs, observed_at)
     return state
 
 
@@ -102,3 +104,38 @@ def test_conflicting_and_missing_are_distinct_reasons() -> None:
     assert missing.status is VerificationStatus.INSUFFICIENT_EVIDENCE
     assert missing.reason_code is ReasonCode.TARGET_NOT_OBSERVED
     assert missing.reason_code is not ReasonCode.EVIDENCE_CONFLICTING
+
+
+def test_moving_an_entity_is_not_a_conflict() -> None:
+    """A successful placement is a state change, not two beliefs at once.
+
+    The first version treated every previous location as a competing claim, so a
+    block that was on the table and is now in the tray came back unresolved.
+    """
+
+    state = state_with(
+        ("on:table", ["frame-0"], "2026-08-31T11:00:01Z"),
+        ("in:tray", ["frame-1"], "2026-08-31T11:00:04Z"),
+    )
+    assert state.entity_locations["red_block"] == "in:tray"
+    assert state.entity_location_hypotheses["red_block"] == ["in:tray"]
+    result = verify_object_in_tray(state, "task-1", "red_block", "tray", context=context())
+    assert result.status is VerificationStatus.CONFIRMED
+
+
+def test_two_readings_at_the_same_instant_do_conflict() -> None:
+    state = state_with(
+        ("in:tray", ["cam-a"], "2026-08-31T11:00:04Z"),
+        ("on:table", ["cam-b"], "2026-08-31T11:00:04Z"),
+    )
+    assert state.entity_location_hypotheses["red_block"] == ["on:table", "in:tray"]
+    result = verify_object_in_tray(state, "task-1", "red_block", "tray", context=context())
+    assert result.status is VerificationStatus.INSUFFICIENT_EVIDENCE
+    assert result.reason_code is ReasonCode.EVIDENCE_CONFLICTING
+
+
+def test_readings_without_timestamps_cannot_be_ordered_and_conflict() -> None:
+    """Absent a timestamp neither reading can be preferred, so neither is."""
+
+    state = state_with(("in:tray", ["a"]), ("on:table", ["b"]))
+    assert len(state.entity_location_hypotheses["red_block"]) == 2
