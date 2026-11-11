@@ -1,0 +1,47 @@
+{
+  "issue": 537,
+  "human_owner": "Quchaosheng",
+  "objective": "Take the dependabot bump of docker/login-action in the release workflow.",
+  "decision_supported": "Is a one-line action digest bump in scope? Yes: the action is pinned by digest, and the bump is the digest.",
+  "allowed_paths": [
+    ".github/workflows/release-image.yml",
+    "docs/task_packets/dependabot-actions-15b6d45bfc.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    ".github/workflows/release-image.yml"
+  ],
+  "outputs": [
+    ".github/workflows/release-image.yml"
+  ],
+  "acceptance": [
+    "The action reference is a commit digest, not a floating tag.",
+    "The release workflow still parses."
+  ],
+  "commands": [
+    "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/release-image.yml'))\""
+  ],
+  "evidence": [
+    "yaml.safe_load succeeds on the modified workflow"
+  ],
+  "stop_conditions": [
+    "The bump would change the action's inputs."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A digest bump is unverifiable without running the release; the workflow still parses and the input names are unchanged.",
+    "Fallback: revert the single line."
+  ]
+}
