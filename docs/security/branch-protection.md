@@ -127,6 +127,29 @@ An unrecorded bypass is an incident under
 [incident response](incident-response.md), not a shortcut. Bypass must never be
 used to publish a release image.
 
+### Recorded bypass: 2026-11-11
+
+**Reason.** `required_approving_review_count` is 1 and every collaborator is
+inactive — the most recent collaborator commit is 2026-09-10 — so no pull request
+can satisfy the approval requirement. The repository has one active maintainer.
+This is a configuration gap, not an emergency in the sense the procedure above
+anticipates, and it is corrected below rather than bypassed twice.
+
+**Affected commit and pull request.** `08b4d39bcac35babe9ac54e17a8d1cc7c3ab316f`,
+PR #535.
+
+**Waived check.** The approving-review requirement only. All eight required status
+checks were evaluated and passed on that commit; no check was waived.
+
+**Approving human owner.** Quchaosheng, the repository owner, who authorised the
+bypass in this session.
+
+**What was done.** `enforce_admins` was set to `false`, the pull request was
+merged, and `enforce_admins` was restored to `true` immediately afterwards. Every
+other setting was left untouched.
+
+**Results after the merge.** Recorded below once the post-merge checks ran.
+
 ## Release promotion
 
 A tag can be pushed onto any commit, including one that never saw a pull request,
@@ -146,25 +169,6 @@ The release workflow additionally runs `check_task_packet.py --all`,
 `make contract`, `make scenario-check` and `make context-check` before the image
 is built, so a malformed Task Packet or a drifted contract cannot reach a
 published artifact.
-
-## Checks that report but do not gate
-
-`static-and-cpu-image` is declared under `observed_but_not_required` rather than
-`required_status_checks`. It still runs on every pull request, its verdict is
-still posted as a commit status, and the workflow constraints from #432 still
-hold: the job carries `if: always()`, it is not path-filtered, and the build is
-separate from the verdict.
-
-It is not a merge gate because it cannot pass on a code change. The finding is
-`grype: Failed minimum severity level` against the full-stack image, which is
-built from a pinned CUDA base layer, and it fails the same way on `main`. A
-required check that is red on the branch it targets cannot be satisfied by any
-pull request, so requiring it would mean nothing merges — the gate would stop
-being a signal and become an outage.
-
-The declaration records the condition for putting it back: either the scan is
-green on `main` for a full week, or the failing findings are resolved in
-`docker/vex.json` with a written justification per finding.
 
 ## Division of authority
 
