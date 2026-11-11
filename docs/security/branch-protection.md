@@ -148,7 +148,26 @@ bypass in this session.
 merged, and `enforce_admins` was restored to `true` immediately afterwards. Every
 other setting was left untouched.
 
-**Results after the merge.** Recorded below once the post-merge checks ran.
+**Results after the merge.** PR #535 merged as `3a138f8e0`; every required check
+on the merged commit was green before the merge, and nothing was re-run.
+
+### Recorded bypass: 2026-11-11 (dependency bumps)
+
+**Reason.** The same approval gap. Two dependabot pull requests carried no
+approving review for the same structural reason: one active maintainer.
+
+**Affected commits and pull requests.** `dcf4d0e85eee97d0a127bdd1f80cb357439408c8`
+(PR #536, python dependencies, plus the regenerated lock) and
+`f5cc1f3ff275e8f117888ebe156faf824e17a1e7` (PR #537, `docker/login-action`, plus
+its task packet).
+
+**Waived check.** The approving-review requirement only. All eight required
+status checks were evaluated and passed on both commits.
+
+**Approving human owner.** Quchaosheng, repository owner.
+
+**What was done.** `enforce_admins` was set to `false` for the two merges and
+restored to `true` immediately afterwards.
 
 ## Release promotion
 
