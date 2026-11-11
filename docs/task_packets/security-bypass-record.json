@@ -1,0 +1,47 @@
+{
+  "issue": 400,
+  "human_owner": "Quchaosheng",
+  "objective": "Record the approval-gap bypasses that let the batch and two dependency bumps merge, as the branch-protection procedure requires.",
+  "decision_supported": "May an administrator bypass the approving-review requirement? Only when recorded before use, with the waived item named.",
+  "allowed_paths": [
+    "docs/security/branch-protection.md",
+    "docs/task_packets/security-bypass-record.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "docs/security/branch-protection.md"
+  ],
+  "outputs": [
+    "docs/security/branch-protection.md"
+  ],
+  "acceptance": [
+    "Each bypass names its reason, commit, waived item and approving owner.",
+    "No required status check was waived."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_branch_protection.py --declaration .github/rulesets/main-protection.json"
+  ],
+  "evidence": [
+    "checker reports the live configuration matches the declaration"
+  ],
+  "stop_conditions": [
+    "The record would need to justify waiving a status check."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A recorded bypass is still a bypass; the record exists so it is auditable, not so it is routine.",
+    "Fallback: revert the record."
+  ]
+}
