@@ -24,8 +24,8 @@
     "hardware/**"
   ],
   "input_refs": [
-    "apps/operator_console/README.md",
-    "docs/architecture/"
+    "docs/architecture/operator-console-scope.md",
+    "apps/dashboard/README.md"
   ],
   "outputs": [
     "docs/architecture/operator-console-scope.md"
