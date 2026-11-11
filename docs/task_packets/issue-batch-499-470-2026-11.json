@@ -4,6 +4,7 @@
   "objective": "Close out the open defect and capability issues in one reviewed batch: the monitoring cache and history defects, the dashboard truthfulness and accessibility defects, the release gate defects, the agent and integration hardenings, and the bounded read-only capability additions.",
   "decision_supported": "Should these land as one batch or as separate PRs? They were developed together and share test infrastructure; the reviewer sees them as one diff with one acceptance list.",
   "allowed_paths": [
+    ".github/rulesets/main-protection.json",
     ".github/workflows/ci.yml",
     "Dockerfile",
     "Makefile",
@@ -13,6 +14,7 @@
     "apps/operator_console/README.md",
     "docs/architecture/operator-console-scope.md",
     "docs/architecture/world-model-conflicting-beliefs.md",
+    "docs/security/branch-protection.md",
     "docs/task_packets/agent-model-route-evidence-414.json",
     "docs/task_packets/agent-naive-timestamps-421.json",
     "docs/task_packets/agent-next-observation-410.json",

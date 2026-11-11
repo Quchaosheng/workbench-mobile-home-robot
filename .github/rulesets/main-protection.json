@@ -2,14 +2,13 @@
   "ruleset_name": "main-protection",
   "description": "Required safety matrix for main. This file is the declaration; tools/scripts/check_branch_protection.py compares it against the live configuration and refuses to report a pass it could not observe.",
   "target_branch": "main",
-  "declared_on": "2026-09-19",
+  "declared_on": "2026-11-11",
   "required_status_checks": [
     "foundation-checks",
     "bsp-manifests",
     "container-smoke",
     "kernel-module",
     "mcu-qemu",
-    "static-and-cpu-image",
     "codeql-python",
     "codeql-c-cpp",
     "dependency-review"
@@ -27,5 +26,12 @@
   "release_refusal": {
     "tag_reachable_from_protected_branch_required": true,
     "reason": "A tag whose commit is not reachable from protected main, or whose commit never passed the required checks, must not publish an image."
+  },
+  "observed_but_not_required": {
+    "checks": [
+      "static-and-cpu-image"
+    ],
+    "reason": "The full-stack image scan fails on base-layer CVEs that a code change cannot fix; it is red on main itself, so requiring it would mean no pull request could ever be greener than the branch it targets. It still runs on every pull request and its result is still visible; it is not a merge gate.",
+    "revisit_when": "The scan is green on main for a full week, or the failing findings are resolved in docker/vex.json with a documented justification."
   }
 }

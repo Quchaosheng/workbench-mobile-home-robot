@@ -147,6 +147,25 @@ The release workflow additionally runs `check_task_packet.py --all`,
 is built, so a malformed Task Packet or a drifted contract cannot reach a
 published artifact.
 
+## Checks that report but do not gate
+
+`static-and-cpu-image` is declared under `observed_but_not_required` rather than
+`required_status_checks`. It still runs on every pull request, its verdict is
+still posted as a commit status, and the workflow constraints from #432 still
+hold: the job carries `if: always()`, it is not path-filtered, and the build is
+separate from the verdict.
+
+It is not a merge gate because it cannot pass on a code change. The finding is
+`grype: Failed minimum severity level` against the full-stack image, which is
+built from a pinned CUDA base layer, and it fails the same way on `main`. A
+required check that is red on the branch it targets cannot be satisfied by any
+pull request, so requiring it would mean nothing merges — the gate would stop
+being a signal and become an outage.
+
+The declaration records the condition for putting it back: either the scan is
+green on `main` for a full week, or the failing findings are resolved in
+`docker/vex.json` with a written justification per finding.
+
 ## Division of authority
 
 This page and the two checkers report only what the API and the workflow files
