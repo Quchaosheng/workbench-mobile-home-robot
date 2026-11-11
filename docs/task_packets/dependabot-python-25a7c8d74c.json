@@ -1,0 +1,53 @@
+{
+  "issue": 536,
+  "human_owner": "Quchaosheng",
+  "objective": "Take the dependabot python dependency bump and regenerate the development lock so the pinned distributions agree with the bumped ranges again.",
+  "decision_supported": "Do the bumped ranges need a new lock? Yes: the lock is a hash-pinned record, and a range that the lock does not satisfy is refused by lock-python-verify.",
+  "allowed_paths": [
+    "pyproject.toml",
+    "requirements-mujoco.txt",
+    "docker/python-constraints.txt",
+    "docker/requirements-dev.lock",
+    "docs/task_packets/dependabot-python-25a7c8d74c.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "Makefile"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/contracts/**",
+    "services/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "kernel/wbcan/**",
+    "hardware/**"
+  ],
+  "input_refs": [
+    "docker/python-constraints.txt",
+    "pyproject.toml",
+    "tools/scripts/lock_python_dependencies.py"
+  ],
+  "outputs": [
+    "docker/requirements-dev.lock"
+  ],
+  "acceptance": [
+    "lock-python-verify reports that the lock matches the declared requirements.",
+    "The pinned ruff satisfies the declared ruff range."
+  ],
+  "commands": [
+    "python3 tools/scripts/lock_python_dependencies.py verify"
+  ],
+  "evidence": [
+    "lock-python-verify output"
+  ],
+  "stop_conditions": [
+    "Regenerating the lock would drop a distribution the constraints require."
+  ],
+  "max_iterations": 2,
+  "risks_and_fallbacks": [
+    "A regenerated lock could pull a version outside the declared range; verify catches that.",
+    "Fallback: revert the lock commit and keep the previous pin."
+  ]
+}
