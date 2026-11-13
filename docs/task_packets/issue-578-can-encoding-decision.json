@@ -1,0 +1,91 @@
+{
+  "issue": 578,
+  "human_owner": "Quchaosheng",
+  "objective": "Record which of the two Classic CAN encodings is normative, state which side has the stronger evidence, name the migration order and the behaviour of a bus with one side updated, and point mcu-wire-v1.md at the record. No codec changes.",
+  "decision_supported": "Can the firmware and the runtime talk to each other, and which side changes to make that true?",
+  "allowed_paths": [
+    "docs/decisions/**",
+    "docs/architecture/mcu-wire-v1.md",
+    "mkdocs.yml",
+    "tests/unit/test_can_encoding_record.py",
+    "docs/task_packets/issue-578-can-encoding-decision.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "firmware/mcu/core/frame_codec.h",
+    "firmware/mcu/core/frame_codec.c",
+    "firmware/mcu/tests/frame_codec_tests.c",
+    "integrations/embodied_agent_runtime/ros2_ws/src/runtime_can/include/runtime_can/protocol.hpp",
+    "tests/unit/test_can_transport.py",
+    "interfaces/json_schema/mcu_protocol.schema.json"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**",
+    "firmware/mcu/core/**",
+    "integrations/embodied_agent_runtime/ros2_ws/src/runtime_can/**"
+  ],
+  "input_refs": [
+    "docs/architecture/mcu-wire-v1.md",
+    "firmware/mcu/core/frame_codec.h",
+    "firmware/mcu/tests/frame_codec_tests.c",
+    "integrations/embodied_agent_runtime/ros2_ws/src/runtime_can/include/runtime_can/protocol.hpp",
+    "tests/unit/test_can_transport.py"
+  ],
+  "outputs": [
+    "docs/decisions/ADR-0012-wire-v1-normative.md",
+    "docs/architecture/mcu-wire-v1.md",
+    "mkdocs.yml",
+    "tests/unit/test_can_encoding_record.py",
+    "docs/task_packets/issue-578-can-encoding-decision.json"
+  ],
+  "acceptance": [
+    "ADR-0012 records one of the three options with its consequences: Wire V1 is normative and runtime_can changes.",
+    "The record names the cost of the alternative, including which existing tests and golden vectors would be invalidated by choosing the other side.",
+    "The record states which side currently has the stronger evidence: Wire V1 has eight golden vectors and 33 checks plus a reviewed binary contract, while runtime_can has one test file.",
+    "The record states the migration order and what happens to a bus where one side has not been updated: the existing fail-closed rejection, not undefined behaviour.",
+    "docs/architecture/mcu-wire-v1.md gains a paragraph pointing at the ADR and stops leaving the question open.",
+    "No codec changes in this issue; the follow-up implementation issue is named.",
+    "The existing cross-codec rejection test is unchanged."
+  ],
+  "commands": [
+    "make docs",
+    "python3 tools/scripts/check_doc_references.py",
+    "python3 -m pytest -q tests/unit/test_can_encoding_record.py",
+    "python3 -m pytest -q tests/unit/test_can_transport.py",
+    "python3 -m ruff check tests/unit/test_can_encoding_record.py",
+    "python3 -m ruff format --check tests/unit/test_can_encoding_record.py"
+  ],
+  "evidence": [
+    "make docs with mkdocs --strict: PASS, with ADR-0012 in the navigation.",
+    "check_doc_references.py: PASS, 180 pages.",
+    "pytest tests/unit/test_can_encoding_record.py: 17 passed, including the count assertions that verify the ADR cites eight golden vectors and 33 checks rather than a rounded number.",
+    "pytest tests/unit/test_can_transport.py: unchanged and passing, which is the evidence that this issue did not quietly pick a side by editing code.",
+    "ruff check and ruff format --check clean.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "The change would require editing a codec; this record changes none, and the follow-up issue owns that change.",
+    "The change would require editing the logical protocol schema; this is a transport layout question and mcu_protocol.schema.json is untouched.",
+    "A write outside allowed_paths is required, especially to firmware/mcu/core/** or the vendored runtime_can package."
+  ],
+  "data_classification": "Repository-local Markdown, YAML and Python. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic Python and pytest; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "Choosing Wire V1 invalidates runtime_can byte-level expectations. The record names that cost explicitly rather than asserting that no test is affected, and the migration is staged so the old codec stays compiled for one release.",
+    "The decision is recorded at the owner direction rather than from bench evidence. The record states which side has the stronger committed evidence, which is what the choice rests on, and claims no bench result.",
+    "The ADR cites counts that could drift from the source. The tests recompute them from frame_codec_tests.c, so a changed golden vector fails the record rather than leaving a stale number in a decision document.",
+    "Rollback is a revert of this commit: mcu-wire-v1.md returns to leaving the question open. No code depends on either."
+  ]
+}

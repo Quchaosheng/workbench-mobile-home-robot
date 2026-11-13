@@ -48,6 +48,7 @@ nav:
       - Run resources and lifecycle: decisions/ADR-0009-run-resource-lifecycle-boundaries.md
       - Runtime assurance track: decisions/ADR-0010-runtime-assurance-track.md
       - MCU selection (STM32): decisions/ADR-0011-stm32-mcu-selection.md
+      - Normative CAN encoding: decisions/ADR-0012-wire-v1-normative.md
   - Revision D robot description: architecture/revision-d-robot-description.md
   - Observability contract: architecture/observability-contract-v1.md
   - Linux driver architecture: architecture/linux-drivers.md
