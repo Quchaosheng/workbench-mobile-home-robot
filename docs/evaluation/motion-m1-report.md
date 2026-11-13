@@ -32,7 +32,7 @@ flowchart LR
 - 晚到的 goal 接受会触发取消；关闭适配器时继续处理接受/结果，最多等待 5 s。完全通信丢失仍不能证明已停，清理失败必须记录 FAIL/unconfirmed。
 - 运动日志与指标是研究证据；合法 `action_result` 通过已有 `MotionEvidenceAdapter`、`SQLiteEventStore` 持久化并重新打开验证。运动完成不增加 WorldState 实体事实，也不等于 verified success。
 
-公开 JSON Schema/Pydantic、WorldState、VerificationResult、TaskGraph、事件存储、语义动作和已有 deterministic scenario 未修改。GazeboAdapter 是本阶段执行传输，不是完整的统一 SimulatorBackend；MuJoCo 机器人、RL、遥操作、导纳、动力学辨识和阻抗仍属后续阶段。原未跟踪的 `docs/DEVELOPMENT_ROADMAP.md` 未改动，其中超前描述不能作为已实现证据。
+公开 JSON Schema/Pydantic、WorldState、VerificationResult、TaskGraph、事件存储、语义动作和已有 deterministic scenario 未修改。GazeboAdapter 是本阶段执行传输，不是完整的统一 SimulatorBackend；MuJoCo 机器人、RL、遥操作、导纳、动力学辨识和阻抗仍属后续阶段。仓库中未跟踪、也未提交的开发路线图文档未改动，其中超前描述不能作为已实现证据。
 
 ## 2. 修改文件及原因
 

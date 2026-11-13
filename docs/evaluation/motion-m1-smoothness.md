@@ -54,7 +54,7 @@
 
 正常轨迹先有 250 ms 的验证过的静止前缀，允许在正的绝对 epoch 下投递；stop/hold 继续跟踪原前缀约 250 ms 后进入制动。接受必须早于变更点至少 20 ms。耗时 preflight 或日志 fsync 耗尽期限时零下发；接受过晚则取消并锁定 faulted/unconfirmed，不能报告安全停止。这些是监督层保护，不是安全认证的通信或实时延迟上界。
 
-内部传输调用者必须提供 epoch；现有公开 RobotState、RobotCommand、Controller、WorldState、TaskGraph、VerificationResult、JSON Schema/Pydantic 和事件语义不变。ROS/Gazebo 依赖仍只在适配层。未更改 Compose、Dockerfile、硬件模式、厂家限值、firmware、RL 或 MuJoCo；原 `docs/DEVELOPMENT_ROADMAP.md` 未改动。
+内部传输调用者必须提供 epoch；现有公开 RobotState、RobotCommand、Controller、WorldState、TaskGraph、VerificationResult、JSON Schema/Pydantic 和事件语义不变。ROS/Gazebo 依赖仍只在适配层。未更改 Compose、Dockerfile、硬件模式、厂家限值、firmware、RL 或 MuJoCo；仓库中未跟踪、也未提交的开发路线图文档未改动。
 
 ## 最终真实运行结果
 

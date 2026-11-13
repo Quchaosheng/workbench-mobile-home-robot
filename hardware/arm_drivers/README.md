@@ -8,4 +8,8 @@ One subdirectory per arm model, e.g. `franka/`, `ur/`, `custom/`.
 talks to the real arm SDK and emits the same `action_result` as the Gazebo
 simulation. joint limits, safety limits and bring-up sequence go here too.
 
-Cross-compilation notes (for ARM boards): `docs/hardware/cross_compile.md`
+Cross-compilation notes for ARM boards are not written yet. The BSP page
+`docs/architecture/robot-bsp-v0.1.md` lists reproducible cross-compile as an open
+deliverable and does not yet carry the instructions, so there is nothing to link
+to. Until it does, this directory makes no cross-compilation claim: the vendor SDK
+wrapper above is built on the target, not cross-built from a workstation.

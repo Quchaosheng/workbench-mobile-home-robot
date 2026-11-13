@@ -3,8 +3,10 @@
 Implement semantic action adapters and ActionResult production here. This module
 receives validated actions; it must reject raw joint commands from Agent Runtime.
 
-Detailed construction plan and acceptance gates: `PLAN.md` (kept local, not in
-the public repo).
+The detailed construction plan is kept local and is not published. The acceptance
+gates it defines are quoted where a decision depends on them: the arm choice and
+its two Phase 1 gates are in `docs/decisions/ADR-0004-arm-selection.md`, and the
+reachability gate is described below.
 
 ## Package: `workbench_motion`
 
@@ -37,8 +39,8 @@ workbench_motion/
 
 - **Pure-Python layer** (evidence, logging, contracts, tests, tooling) is managed
   by **uv**, scoped to this module (`robot/control/pyproject.toml` + `uv.lock`).
-  Per `PLAN.md`, a root-level `uv.lock` needs Linux/Integration sign-off; until
-  then uv stays package-local, which is what this env is.
+  Per the construction plan, a root-level `uv.lock` needs Linux/Integration
+  sign-off; until then uv stays package-local, which is what this env is.
 - **ROS 2 runtime** (rclpy, launch, launch_ros, and later moveit2 / ros2_control)
   is apt/rosdep-managed and declared in `workbench_motion/package.xml`. uv does
   not manage these.

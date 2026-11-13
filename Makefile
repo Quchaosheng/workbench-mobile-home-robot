@@ -184,6 +184,7 @@ dashboard:
 	$(PYTHON) -m workbench_backend.server --host 127.0.0.1 --port 8080
 
 docs:
+	$(PYTHON) tools/scripts/check_doc_references.py
 	$(PYTHON) -m mkdocs build --strict
 
 # Seeded, dependency-free property suites over the fail-closed boundaries, plus
