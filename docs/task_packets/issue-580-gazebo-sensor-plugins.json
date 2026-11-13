@@ -1,0 +1,88 @@
+{
+  "issue": 580,
+  "human_owner": "Quchaosheng",
+  "objective": "Add the Gazebo sensor plugins the Revision D model lacks: an IMU and bumper contact sensor unconditionally, and the camera and depth streams behind an opt-in sensors argument, so a Gazebo run can produce the streams the perception path consumes.",
+  "decision_supported": "Can the Revision D model produce sensor data at all, and does every plugin reference name a link that exists?",
+  "allowed_paths": [
+    "robot/description/revision_d/**",
+    "tests/unit/test_revision_d_gazebo.py",
+    "docs/task_packets/issue-580-gazebo-sensor-plugins.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "hardware/mechanical/design-spec.json",
+    "robot/description/workbench.urdf.xacro"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**"
+  ],
+  "input_refs": [
+    "robot/description/revision_d/revision_d.urdf.xacro",
+    "robot/description/revision_d/launch/revision_d.launch.py",
+    "robot/description/revision_d/tools/validate_description.py",
+    "tests/unit/test_revision_d_gazebo.py",
+    "hardware/mechanical/design-spec.json"
+  ],
+  "outputs": [
+    "robot/description/revision_d/revision_d.urdf.xacro",
+    "robot/description/revision_d/launch/revision_d.launch.py",
+    "robot/description/revision_d/tools/validate_description.py",
+    "robot/description/revision_d/README.md",
+    "tests/unit/test_revision_d_gazebo.py",
+    "docs/task_packets/issue-580-gazebo-sensor-plugins.json"
+  ],
+  "acceptance": [
+    "The model declares an IMU and a bumper contact sensor in every expansion, because design-spec.json#/chassis/drive_sensors names both.",
+    "The three camera streams and the depth stream are declared only when the expansion is asked for them via sensors:=true, so a bare xacro expansion does not gain topics by existing.",
+    "launch/revision_d.launch.py passes sensors:=true, so a Gazebo spawn has the streams a consumer subscribes to.",
+    "Every <gazebo reference> names a link that exists; a reference to a missing link fails validate_description.py and a unit test, because Gazebo silently ignores such a reference.",
+    "Every sensor carries a system plugin; a sensor without one is refused, since it is a declaration that publishes nothing.",
+    "Sensor names are unique and every type is one of camera, depth_camera, imu, contact.",
+    "The camera field of view and the IMU covariances are marked as fixture choices rather than specification values, and a test asserts that wording stays.",
+    "The README states that a <sensor> element proves the model is able to produce data, not that a frame was published, inspected or calibrated.",
+    "README.md documents the two expansion forms and the opt-in rationale.",
+    "The existing 320 description assertions and the generated frames artifact are unchanged."
+  ],
+  "commands": [
+    "python3 robot/description/revision_d/tools/validate_description.py",
+    "python3 -m pytest -q tests/unit/test_revision_d_gazebo.py",
+    "make description-check",
+    "python3 -m ruff check robot/description/revision_d/ tests/unit/test_revision_d_gazebo.py",
+    "python3 -m ruff format --check robot/description/revision_d/ tests/unit/test_revision_d_gazebo.py",
+    "make docs"
+  ],
+  "evidence": [
+    "validate_description.py on a bare expansion: 338 assertions, PASS, zero sensors besides the IMU and bumper.",
+    "validate_description.py on an expansion with sensors:=true: 354 assertions, PASS, six sensors.",
+    "pytest tests/unit/test_revision_d_gazebo.py: 18 passed, 1 skipped (the pre-existing simulator skip).",
+    "The failure path: pointing a camera plugin at a link that does not exist makes validate_description.py exit 1 naming the reference, and fails test_every_gazebo_reference_names_a_real_link.",
+    "make description-check PASS with the committed frames artifact unchanged.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "The change would need a sensor the design spec does not claim, such as a LiDAR the chassis does not carry.",
+    "The change would require regenerating revision-d-frames.json or moving a documented dimension; this issue changes no frame.",
+    "A write outside allowed_paths is required, especially to the frozen tabletop fixture or to the generated artifact.",
+    "Running a Gazebo acceptance case would need a simulator; the new assertions read the expanded model instead and claim no run."
+  ],
+  "data_classification": "Repository-local xacro, Python and Markdown. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic xacro expansion and pytest; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "Adding sensors unconditionally would change what a plain xacro expansion declares, so a CI check would start depending on a rendering backend. The camera streams are therefore opt-in, and only the IMU and bumper, which the spec claims as hardware, are always present.",
+    "A wrong gazebo reference is silently ignored by Gazebo, which is how the model had camera frames and no camera sensors. Two checks now refuse it: validate_description.py and a unit test.",
+    "The plugin file names are Gazebo Harmonic names. A different simulator version would not find them, which surfaces as a missing stream rather than a wrong claim, and the sensors are off by default outside a Gazebo launch.",
+    "Rollback is a revert of this commit: the model returns to zero sensors. Nothing reads these sensors yet, so no consumer breaks."
+  ]
+}

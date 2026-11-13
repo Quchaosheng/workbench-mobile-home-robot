@@ -42,10 +42,16 @@
   <xacro:arg name="stabilizers_deployed" default="false"/>
   <xacro:arg name="lift_extension" default="0.0"/>
   <xacro:arg name="ros2_control_xacro" default="revision_d_ros2_control.xacro"/>
+  <!-- Sensor plugins are opt-in and default off, for the same reason ros2_control
+       is: a model that publishes images and IMU by default changes what a CI
+       `xacro` expansion produces and what a plain RViz session starts. Issue
+       #580. `launch/revision_d.launch.py` turns them on for a Gazebo run. -->
+  <xacro:arg name="sensors" default="false"/>
 
   <!-- Args are referenced as $(arg ...) and are not in scope as bare names, so
        the boolean the conditional needs is bound once here. -->
   <xacro:property name="sim_gz" value="$(arg sim_gz)"/>
+  <xacro:property name="sensors" value="$(arg sensors)"/>
 
   <!-- ============================================== design-spec.json anchors -->
   <!-- hardware/mechanical/design-spec.json, converted mm -> m. The comment on
@@ -658,6 +664,140 @@
   <gazebo reference="stabilizer_front_right_pad"><mu1>0.9</mu1><mu2>0.9</mu2></gazebo>
   <gazebo reference="stabilizer_rear_left_pad"><mu1>0.9</mu1><mu2>0.9</mu2></gazebo>
   <gazebo reference="stabilizer_rear_right_pad"><mu1>0.9</mu1><mu2>0.9</mu2></gazebo>
+
+  <!-- ==================================================== sensor plugins (#580)
+       The model above has three cameras, an IMU in the chassis sensor list and a
+       bumper ring, but until this block it contained ZERO <sensor> elements: a
+       Gazebo run produced no image, no depth and no IMU, so the perception path
+       had nothing to consume and no scenario could leave SCRIPTED_FIXTURE.
+
+       These are Gazebo Harmonic plugins. They are opt-in (`sensors:=true`)
+       because a model that always emits sensor topics changes what a plain
+       expansion of this file declares, and a default that differs between CI and
+       the launch file is how a "works locally" claim starts.
+
+       What this block does NOT claim: that a sensor published a frame in a run,
+       that any image was inspected, or that a camera is calibrated. Camera
+       calibration is its own issue (#554). A `<sensor>` element proves the model
+       is ABLE to produce data, which is exactly the gap this issue names. -->
+
+  <!-- One RGB camera. 640x480 at 15 Hz is a fixture-sized stream, not a
+       perception-performance claim. `always_on` is false so a subscriber decides
+       whether frames are produced at all. -->
+  <xacro:macro name="rd_gazebo_camera" params="reference name">
+    <gazebo reference="${reference}">
+      <sensor name="${name}" type="camera">
+        <always_on>false</always_on>
+        <update_rate>15</update_rate>
+        <visualize>false</visualize>
+        <camera name="${name}_sensor">
+          <!-- A narrow FOV suits the workbench; design-spec.json does not pin a
+               lens angle, so this value is a fixture choice and is recorded as
+               such rather than presented as a specification. -->
+          <horizontal_fov>1.047</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>10.0</far>
+          </clip>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.007</stddev>
+          </noise>
+        </camera>
+        <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+          <!-- No <render_engine> here: the repository runs without a GPU, and
+               ogre2 would make the plugin fail on a CPU-only host. -->
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+
+  <!-- One depth camera, for the eye-in-hand and floor-facing streams where depth
+       is what the consumer actually needs. -->
+  <xacro:macro name="rd_gazebo_depth_camera" params="reference name">
+    <gazebo reference="${reference}">
+      <sensor name="${name}" type="depth_camera">
+        <always_on>false</always_on>
+        <update_rate>10</update_rate>
+        <visualize>false</visualize>
+        <camera name="${name}_sensor">
+          <horizontal_fov>1.047</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>10.0</far>
+          </clip>
+        </camera>
+        <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors"/>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+
+  <!-- The IMU `chassis.drive_sensors` names. It is attached to the base link
+       because design-spec.json places it there, and it reports in the base
+       frame, which is the frame a velocity estimate needs. -->
+  <gazebo reference="base_link">
+    <sensor name="base_imu" type="imu">
+      <always_on>false</always_on>
+      <update_rate>100</update_rate>
+      <visualize>false</visualize>
+      <imu>
+        <!-- Covariances are fixture values, not a datasheet. A consumer that
+             treats them as characterised noise is making a claim this file does
+             not support. -->
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.0002</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.0002</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.0002</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.0017</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.0017</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.0017</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+      <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    </sensor>
+  </gazebo>
+
+  <!-- The bumper `chassis.drive_sensors` names. A contact sensor, because a bumper
+       reports contact rather than range: modelling it as a LiDAR or an ultrasonic
+       ring would be a capability the hardware does not have.
+
+       `drive_sensors` says `bumper_ring`; this model has one `bumper_front` link,
+       so that is what the sensor attaches to. A ring is not modelled, and this
+       comment records the difference rather than letting the word "ring" imply
+       coverage the geometry does not have. -->
+  <gazebo reference="bumper_front">
+    <sensor name="bumper_front_contact" type="contact">
+      <always_on>true</always_on>
+      <update_rate>50</update_rate>
+      <contact>
+        <collision>bumper_front</collision>
+      </contact>
+      <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    </sensor>
+  </gazebo>
+
+  <xacro:if value="${sensors}">
+    <xacro:rd_gazebo_camera reference="base_camera_body" name="base_camera_image"/>
+    <xacro:rd_gazebo_depth_camera reference="head_camera_body" name="head_camera_depth"/>
+    <!-- The arm macro names its cameras `arm_${arm}_wrist_camera`; the link is
+         that name plus `_body`. Spelling the prefix by hand here is how a
+         reference silently points at nothing, so validate_description.py asserts
+         every plugin reference names a real link. -->
+    <xacro:rd_gazebo_camera reference="arm_left_wrist_camera_body" name="arm_left_wrist_camera_image"/>
+    <xacro:rd_gazebo_camera reference="arm_right_wrist_camera_body" name="arm_right_wrist_camera_image"/>
+  </xacro:if>
 
   <!-- Simulation-only body. The hardware and HIL columns of any evidence table
        stay NOT_EXECUTED until real bench evidence exists.

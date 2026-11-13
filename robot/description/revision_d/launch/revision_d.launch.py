@@ -40,14 +40,21 @@ def _require(path: Path, what: str) -> Path:
     return path
 
 
-def _expand(description: Path, sim_gz: bool, controllers: Path) -> str:
-    """Expand the xacro ourselves so a failure is a message, not a spawn error."""
+def _expand(description: Path, sim_gz: bool, controllers: Path, sensors: bool = True) -> str:
+    """Expand the xacro ourselves so a failure is a message, not a spawn error.
+
+    ``sensors`` defaults to true here, and false in the xacro itself: a launch
+    file that spawns into Gazebo wants the streams a consumer subscribes to, while
+    a bare `xacro` expansion in CI should not gain topics just by existing
+    (issue #580).
+    """
     import xacro
 
     document = xacro.process_file(
         str(description),
         mappings={
             "sim_gz": "true" if sim_gz else "false",
+            "sensors": "true" if sensors else "false",
             "controllers_yaml": str(controllers),
             "ros2_control_xacro": str(description.parent / "revision_d_ros2_control.xacro"),
         },
