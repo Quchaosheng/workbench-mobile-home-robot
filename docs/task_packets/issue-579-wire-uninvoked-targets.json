@@ -5,9 +5,12 @@
   "decision_supported": "Does every gate this repository declares actually run in CI, and can each one report a failure that names it?",
   "allowed_paths": [
     ".github/workflows/ci.yml",
+    ".github/workflows/container-full-stack.yml",
     "docs/security/branch-protection.md",
     ".github/rulesets/main-protection.json",
     "Makefile",
+    "robot/description/revision_d/tools/validate_description.py",
+    "robot/description/revision_d/tools/generate_frames.py",
     "tests/unit/test_branch_protection_gate.py",
     "docs/task_packets/issue-579-wire-uninvoked-targets.json"
   ],
@@ -16,8 +19,7 @@
     "tools/scripts/check_branch_protection.py",
     "tools/scripts/check_ready_gate.py",
     "tools/scripts/check_release_commit.py",
-    "robot/description/revision_d/tools/generate_frames.py",
-    "robot/description/revision_d/tools/validate_description.py",
+    "robot/description/revision_d/tools/description_model.py",
     ".github/workflows/release-image.yml",
     "tests/fixtures/issue-224-legacy-protection.json"
   ],
@@ -35,8 +37,8 @@
     "Dockerfile",
     "compose.yaml",
     "robot/description/revision_d/generated/**",
+    "robot/description/revision_d/revision_d.urdf.xacro",
     ".github/workflows/security.yml",
-    ".github/workflows/container-full-stack.yml",
     ".github/workflows/release-image.yml",
     "tools/scripts/check_branch_protection.py",
     "tools/scripts/check_release_commit.py"
@@ -59,13 +61,16 @@
     "docs/task_packets/issue-579-wire-uninvoked-targets.json"
   ],
   "acceptance": [
-    "foundation-checks runs make description-check and make ready-gate as separate named steps, so a failure names the check rather than the aggregate make check.",
+    "foundation-checks runs make ready-gate as a separate named step, so a failure names the check rather than the aggregate make check.",
     "make description-check can fail: it no longer runs generate_frames.py without --check, which rewrote a hand-edited artifact before --check compared it, so the target could not detect the condition it exists for.",
-    "make branch-protection-check runs in a job of its own, and the documented behaviour is explicit: exit 2 is reported as a named INCOMPLETE notice with the reason and the token to set, never as a silent pass, while a readable contradiction still fails the job.",
+    "make description-check is not run in foundation-checks, because expanding the model needs xacro (ros-jazzy-xacro), which that Python-only job does not have; the first CI run of this change failed there on ModuleNotFoundError: No module named 'xacro'.",
+    "make description-check is instead a hard check in the container job, whose image carries ros-jazzy-xacro, via make container-description-check.",
+    "Both description tools exit 2 (INCOMPLETE) when xacro is unavailable, and make description-check reports that as a named SKIP with the reason rather than a pass, so 'could not run it' is never printed as green.",
+    "make branch-protection-check runs in a job of its own, and exit 2 is reported as a named INCOMPLETE notice with the reason and the token to set, never as a silent pass, while a readable contradiction still fails the job.",
     "make release-commit-check is not added to every pull request, because it reads the release commit; the release workflow already runs check_release_commit.py directly before building, which is the same gate.",
     "The branch-protection job is added to .github/rulesets/main-protection.json and to the table in docs/security/branch-protection.md in the same change, so the declaration and the enforcement cannot disagree.",
-    "Tests fail on the previous state: removing the description-check wiring or restoring the generator-without-check line fails the suite.",
-    "The workflow YAML parses and every action reference stays pinned to a 40-character commit SHA."
+    "Tests fail on the previous state: removing the ready-gate wiring, restoring the generator-without-check line, or moving description-check back into foundation-checks fails the suite.",
+    "Both workflow YAML files parse and every action reference stays pinned to a 40-character commit SHA."
   ],
   "commands": [
     "make description-check",
@@ -78,12 +83,13 @@
     "python3 tools/scripts/check_task_packet.py --all"
   ],
   "evidence": [
-    "make description-check on a clean tree: PASS; on a tree with one hand-edited value in revision-d-frames.json: exit 1 naming the file as stale or hand-edited, and the file is not rewritten.",
+    "The first CI run of this change: foundation-checks failed at 'Run make description-check' with ModuleNotFoundError: No module named 'xacro', which is why the step moved to the container job.",
+    "make description-check on a clean tree with xacro: PASS. On a tree with one hand-edited value in revision-d-frames.json: exit 1 naming the file as stale or hand-edited, and the file is not rewritten.",
+    "make description-check with xacro blocked: 'INCOMPLETE: cannot expand the model: No module named xacro', then 'SKIP description-check: xacro is unavailable here (INCOMPLETE, not a pass)', exit 0 with the skip recorded.",
     "make ready-gate: PASS.",
-    "Parsed YAML showing the branch-protection job exists with its steps, and that foundation-checks carries the two named steps.",
-    "pytest output for tests/unit/test_branch_protection_gate.py: 43 passed, and the same suite run against the previous state failing the two wiring tests.",
-    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones.",
-    "make docs, ruff check and ruff format --check output."
+    "Parsed YAML showing the branch-protection job, the container-description-check step in container-full-stack, and that foundation-checks carries the ready-gate step but not description-check.",
+    "pytest output for tests/unit/test_branch_protection_gate.py: 44 passed.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
   ],
   "stop_conditions": [
     "Wiring branch-protection-check as a hard required check would make every pull request red on a permission no contributor can grant; the issue asks for a named skip with a recorded reason, and a silent pass is equally forbidden.",
@@ -94,9 +100,9 @@
   "data_classification": "Repository-local workflow configuration, Makefile targets and public check names. No credentials are read, written or logged; the new job reads an optional secret and never prints it.",
   "model_policy": "Deterministic Python, make and YAML only; no model inference and no external service calls added by this change.",
   "risks_and_fallbacks": [
-    "A new required check named branch-protection that reports INCOMPLETE as a notice could be read as a pass. The job prints the reason and the token to set, the documentation states the outcome, and the committed declaration and page are still checked by the unit tests, so the gap is visible rather than silent.",
-    "Adding a ninth required check makes every pull request depend on a job that cannot fully observe without an admin token. That is why it reports INCOMPLETE rather than failing, and why the declaration records it as required only once the token exists.",
-    "description-check no longer regenerates the artifact, so a contributor who changes the description must run generate_frames.py by hand. The failure message names that command, so the fix is one line away.",
-    "Rollback is a revert of this commit: remove the three workflow steps and the job, restore the Makefile line and drop the declaration entry. Nothing reads these documents or targets at runtime, so nothing else changes."
+    "A required check that reports INCOMPLETE as a notice could be read as a pass. The job prints the reason and the token to set, the documentation states the outcome, and the committed declaration and page are still checked by the unit tests, so the gap is visible rather than silent.",
+    "description-check now skips in a Python-only job instead of failing, which means a hand-edited frames artifact is caught only in the container job. That is the honest split: the check cannot run without xacro, and printing a pass it did not earn would be worse than naming the skip.",
+    "description-check no longer regenerates the artifact, so a contributor who changes the description must run generate_frames.py by hand. The failure message names that command.",
+    "Rollback is a revert of this commit: remove the workflow steps and the job, restore the Makefile targets and the two tools' main functions, and drop the declaration entry."
   ]
 }
