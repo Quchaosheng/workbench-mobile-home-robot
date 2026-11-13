@@ -18,6 +18,12 @@ guard detectable (the mutated machine accepts a move the table forbids).
 from __future__ import annotations
 
 from workbench.kernel.lifecycle import LifecycleManager, LifecycleState
+
+# `workbench_virtual_mcu` is a LEGACY stub, not safety evidence: see the
+# "Authority boundary" paragraph in firmware/mcu/README.md. A green run here is
+# software evidence about a test double, not firmware evidence. The canonical
+# implementation is firmware/mcu/core/state_machine.c, and the two are not in
+# parity (tests/property/test_virtual_mcu_parity.py records the difference).
 from workbench_virtual_mcu.state_machine import McuCommandRejection, McuState, VirtualMcu
 
 from ._generator import SEEDS, Rng, assert_corpus_clean, report_for, run_corpus, write_archive_if_requested

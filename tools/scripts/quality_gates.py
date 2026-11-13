@@ -101,6 +101,25 @@ SANDBOX_PATH_ENTRIES = (
     "firmware/virtual_mcu",
 )
 
+# What a green result actually says about a module (issue #587).
+#
+# `workbench_virtual_mcu` is retired as a safety reference and parity oracle; see
+# `firmware/mcu/README.md`. It remains a useful deterministic double, so the
+# property and mutation gates keep exercising it -- but a passing mutation probe
+# against a stub is software evidence about a test double, not firmware evidence.
+# The archives carry this label so a green run cannot be quoted as if the C
+# firmware had been tested.
+MODULE_LABELS: dict[str, str] = {
+    "workbench_virtual_mcu.state_machine": "legacy",
+    "firmware/virtual_mcu": "legacy",
+}
+
+
+def module_label(name: str) -> str:
+    """The evidence class of a module named in a gate archive."""
+    return MODULE_LABELS.get(name, "authoritative")
+
+
 # The sandbox must resolve every gate-relevant package inside the copy.  If a
 # package escapes to the real checkout, a probe would test unmutated code and
 # report a false pass, so the gate refuses to run in that case.
