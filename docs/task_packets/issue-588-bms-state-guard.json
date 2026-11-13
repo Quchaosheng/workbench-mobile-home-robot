@@ -1,0 +1,84 @@
+{
+  "issue": 588,
+  "human_owner": "Quchaosheng",
+  "objective": "Add a power-state guard that reads the BMS state from the committed CSV and refuses or derates a motion request before dispatch, honouring the reset authority the table declares.",
+  "decision_supported": "Can a motion request reach the base while the battery pack is in a state that forbids it, and does an unrecognised pack state get refused rather than mapped to a default?",
+  "allowed_paths": [
+    "services/agent_runtime/workbench_agent_runtime/power_guard.py",
+    "tests/integration/test_bms_power_state_guard.py",
+    "docs/task_packets/issue-588-bms-state-guard.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "hardware/power/bms-state-machine.csv",
+    "hardware/power/bms-transitions.csv",
+    "hardware/power/tools/validate_bms_state_machine.py",
+    "libs/contracts/workbench_contracts/models.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/world_model/**",
+    "services/backend/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**"
+  ],
+  "input_refs": [
+    "hardware/power/bms-state-machine.csv",
+    "hardware/power/bms-transitions.csv",
+    "hardware/power/tools/validate_bms_state_machine.py",
+    "libs/contracts/workbench_contracts/models.py"
+  ],
+  "outputs": [
+    "services/agent_runtime/workbench_agent_runtime/power_guard.py",
+    "tests/integration/test_bms_power_state_guard.py",
+    "docs/task_packets/issue-588-bms-state-guard.json"
+  ],
+  "acceptance": [
+    "The pack-state reader consumes the states the CSV declares, and an unknown state string is refused as a fault rather than mapped to a default.",
+    "A motion request while the state is FAULT_LATCHED, SERVICE, OFF, SELF_TEST or STANDBY is refused with the state named in the reason, before dispatch.",
+    "A motion request in DERATE is admitted with the configured reduced limit, and the limit is visible in the returned metadata rather than applied silently.",
+    "A transition into FAULT_LATCHED mid-motion stops the base and the reason records the BMS transition and its fault action.",
+    "reset_authority from the CSV is honoured: a transition that requires operator_plus_service cannot be cleared by the runtime, and a test attempts it and is refused.",
+    "The validator and the guard read the same CSV; a state added to the table without a guard fails a test, so the two cannot drift.",
+    "The guard adds no SemanticAction and writes no WorldState: its outcome is a refusal with a named reason or an admission carrying a limit."
+  ],
+  "commands": [
+    "python3 hardware/power/tools/validate_bms_state_machine.py",
+    "python3 -m pytest -q tests/integration/test_bms_power_state_guard.py",
+    "python3 -m ruff check services/agent_runtime/workbench_agent_runtime/power_guard.py tests/integration/test_bms_power_state_guard.py",
+    "python3 -m ruff format --check services/agent_runtime/workbench_agent_runtime/power_guard.py tests/integration/test_bms_power_state_guard.py",
+    "make docs"
+  ],
+  "evidence": [
+    "The committed validator: PASS, unchanged.",
+    "pytest tests/integration/test_bms_power_state_guard.py: 46 passed.",
+    "The failure path: removing FAULT_LATCHED from the forbidden set fails test_every_declared_state_has_a_guard, and making an unknown state fall back to RUN fails the two unknown-state tests.",
+    "The coverage report showing every declared state classified and no state ungarded.",
+    "ruff check and ruff format --check clean; make docs PASS.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "The change would require editing the BMS CSV or the existing validator; the table is the authority and this change reads it.",
+    "The change would add a SemanticAction or write WorldState; the guard is a pre-dispatch decision only.",
+    "A motion request would have to be refused for a state the table permits motion from, which would be the guard disagreeing with the authority.",
+    "A write outside allowed_paths is required, especially to libs/contracts or to the power hardware tree."
+  ],
+  "data_classification": "Repository-local Python and CSV. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic Python and pytest; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "A guard that reads a stale state would admit motion the pack forbids. The state is passed in by the caller rather than cached here, so the freshness is the caller responsibility and this module never invents a value.",
+    "Refusing PRECHARGE and CHARGE goes beyond the five states the issue names. Both are declared forbidden by the CSV contactor column, so refusing them is the guard agreeing with the authority rather than extending it, and the coverage report makes the decision visible.",
+    "The derate limit is a parameter with a default, so a caller could pass a limit that defeats the derate. The limit is clamped to the configured limit, and a nonsensical value raises rather than being coerced.",
+    "Rollback is a revert of this commit: the guard disappears and the runtime returns to not reading the pack state. Nothing else imports it, so no consumer breaks."
+  ]
+}
