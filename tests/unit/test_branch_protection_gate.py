@@ -38,6 +38,7 @@ from check_branch_protection import (
     DeclarationError,
     compare,
     load_declaration,
+    prose_reasons,
 )
 from check_branch_protection import (
     main as protection_main,
@@ -60,6 +61,7 @@ from check_release_commit import (
 )
 
 DECLARATION = ROOT / ".github" / "rulesets" / "main-protection.json"
+PROSE = ROOT / "docs" / "security" / "branch-protection.md"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release-image.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 SECURITY_WORKFLOW = ROOT / ".github" / "workflows" / "security.yml"
@@ -635,6 +637,111 @@ class WorkflowPinTests(unittest.TestCase):
         action_lines = [line.strip() for line in workflow.splitlines() if "uses:" in line]
         self.assertTrue(action_lines)
         self.assertTrue(all(re.search(r"@[0-9a-f]{40}\s+# v[0-9]", line) for line in action_lines), action_lines)
+
+
+class DocumentedGuaranteeTests(unittest.TestCase):
+    """Issue #593: the page and the declaration must not contradict each other.
+
+    `docs/security/branch-protection.md` promised that a stale approval is
+    dismissed on push and that unresolved conversations block the merge, while
+    the committed declaration set both flags false. `compare` only read those
+    flags when `require_pull_request` was true, so with the current declaration
+    none of the three claims was ever checked: the document asserted a guarantee
+    that no artifact tested. That is this repository's own failure mode applied
+    to itself.
+
+    The direction chosen here is the one the two most recent commits already
+    took: the document says what the declaration requires, and says why. The
+    checker now refuses the other direction, so a future edit cannot silently
+    restore the overclaim.
+    """
+
+    def test_the_committed_page_and_declaration_agree(self) -> None:
+        declaration = load_declaration(DECLARATION)
+        prose = PROSE.read_text(encoding="utf-8")
+        self.assertEqual(prose_reasons(declaration, prose), ())
+
+    def test_a_documented_stale_review_guarantee_without_the_flag_is_blocked(self) -> None:
+        """The contradiction case: prose promises what the declaration disables."""
+        declaration = load_declaration(DECLARATION)
+        declaration["dismiss_stale_reviews_on_push"] = False
+        reasons = prose_reasons(declaration, "A stale approval is dismissed when new commits arrive.")
+        self.assertTrue(reasons)
+        self.assertIn("dismiss_stale_reviews_on_push", " ".join(reasons))
+
+    def test_a_documented_conversation_guarantee_without_the_flag_is_blocked(self) -> None:
+        declaration = load_declaration(DECLARATION)
+        declaration["require_conversation_resolution"] = False
+        reasons = prose_reasons(declaration, "Unresolved review conversations block the merge.")
+        self.assertTrue(reasons)
+        self.assertIn("require_conversation_resolution", " ".join(reasons))
+
+    def test_a_documented_approval_requirement_with_a_zero_count_is_blocked(self) -> None:
+        declaration = load_declaration(DECLARATION)
+        declaration["required_approving_review_count"] = 0
+        reasons = prose_reasons(declaration, "The repository requires an approving review before merge.")
+        self.assertTrue(reasons)
+        self.assertIn("required_approving_review_count", " ".join(reasons))
+
+    def test_a_matching_guarantee_is_accepted(self) -> None:
+        """The happy path: the same sentence passes when the declaration supports it."""
+        declaration = load_declaration(DECLARATION)
+        declaration["dismiss_stale_reviews_on_push"] = True
+        self.assertEqual(
+            prose_reasons(declaration, "A stale approval is dismissed when new commits arrive."),
+            (),
+        )
+
+    def test_a_page_that_makes_no_guarantee_is_not_second_guessed(self) -> None:
+        """Only an explicit claim is checked; silence is not a contradiction."""
+        declaration = load_declaration(DECLARATION)
+        self.assertEqual(prose_reasons(declaration, "This page describes the matrix."), ())
+
+    def test_the_cli_refuses_a_contradiction_without_reaching_the_api(self) -> None:
+        """The refusal runs before the live comparison, so it needs no token."""
+        with tempfile.TemporaryDirectory() as directory:
+            declaration = json.loads(DECLARATION.read_text(encoding="utf-8"))
+            declaration["require_conversation_resolution"] = False
+            declaration_path = Path(directory) / "declaration.json"
+            declaration_path.write_text(json.dumps(declaration), encoding="utf-8")
+            prose_path = Path(directory) / "page.md"
+            prose_path.write_text("Unresolved review conversations block the merge.", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools" / "scripts" / "check_branch_protection.py"),
+                    "--declaration",
+                    str(declaration_path),
+                    "--prose",
+                    str(prose_path),
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, FAIL, result.stdout + result.stderr)
+        self.assertIn("contradict the declaration", result.stderr)
+
+    def test_the_page_table_matches_the_declaration(self) -> None:
+        """The table is the reader-facing copy of `required_status_checks`.
+
+        It listed `static-and-cpu-image` as a required job while the declaration
+        put that name in `observed_but_not_required`, so a reader was told a red
+        check blocks a merge when it does not.
+        """
+        declaration = load_declaration(DECLARATION)
+        prose = PROSE.read_text(encoding="utf-8")
+        required_section, _, rest = prose.partition("observed_but_not_required")
+        observed_section = rest.partition("## ")[0]
+
+        for name in declaration["required_status_checks"]:
+            with self.subTest(required=name):
+                self.assertIn(f"`{name}`", required_section, f"{name} is required but not in the table")
+
+        for name in declaration.get("observed_but_not_required", {}).get("checks", []):
+            with self.subTest(observed=name):
+                self.assertIn(f"`{name}`", observed_section, f"{name} is observed-only but not listed as such")
 
 
 if __name__ == "__main__":

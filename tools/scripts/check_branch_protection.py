@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -39,6 +40,7 @@ FAIL = 1
 INCOMPLETE = 2
 
 DEFAULT_DECLARATION = ROOT / ".github" / "rulesets" / "main-protection.json"
+DEFAULT_PROSE = ROOT / "docs" / "security" / "branch-protection.md"
 API_ROOT = "https://api.github.com"
 _API_VERSION = "2022-11-28"
 
@@ -152,6 +154,52 @@ def compare(declaration: dict[str, Any], live: dict[str, Any]) -> tuple[str, ...
     return tuple(reasons)
 
 
+# A documented review guarantee, and the declaration field that would make it true.
+# Issue #593: `docs/security/branch-protection.md` claimed that a stale approval is
+# dismissed on push and that unresolved conversations block the merge, while the
+# declaration set both flags false. `compare` only read those flags when
+# `require_pull_request` was true, so the prose was unenforceable by construction.
+REVIEW_GUARANTEES = (
+    (
+        "a stale approval is dismissed",
+        re.compile(r"stale approval is dismissed|dismiss(?:es|ed)? stale review", re.IGNORECASE),
+        "dismiss_stale_reviews_on_push",
+    ),
+    (
+        "unresolved conversations block the merge",
+        re.compile(r"conversations? (?:blocks?|must be resolved)|require_conversation_resolution", re.IGNORECASE),
+        "require_conversation_resolution",
+    ),
+    (
+        "an approving review is required",
+        re.compile(r"requires? an approving review|approving review is required", re.IGNORECASE),
+        "required_approving_review_count",
+    ),
+)
+
+
+def prose_reasons(declaration: dict[str, Any], prose: str) -> tuple[str, ...]:
+    """Return the documented review guarantees the declaration does not make.
+
+    This is the half of the check that never needed the API: it compares the
+    document a reader trusts with the declaration that is supposed to enforce it.
+    A sentence promising a guarantee the declaration disables is a claim no
+    artifact tests, which is the failure this repository exists to catch.
+    """
+    reasons: list[str] = []
+    for phrase, pattern, field in REVIEW_GUARANTEES:
+        if not pattern.search(prose):
+            continue
+        if field == "required_approving_review_count":
+            value = declaration.get(field)
+            if not isinstance(value, int) or value < 1:
+                reasons.append(f"the page says {phrase}, but the declaration sets {field} to {value!r}")
+            continue
+        if declaration.get(field) is not True:
+            reasons.append(f"the page says {phrase}, but the declaration sets {field} to {declaration.get(field)!r}")
+    return tuple(reasons)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check the main-branch protection against the declaration")
     parser.add_argument("--declaration", type=Path, default=DEFAULT_DECLARATION)
@@ -159,6 +207,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--branch", default=None, help="defaults to the declaration's target_branch")
     parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN"))
     parser.add_argument("--live", type=Path, help="read a recorded protection payload instead of calling the API")
+    parser.add_argument(
+        "--prose",
+        type=Path,
+        default=DEFAULT_PROSE,
+        help="the page whose documented guarantees must match the declaration",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -168,6 +222,22 @@ def main(argv: list[str] | None = None) -> int:
         return FAIL
 
     branch = args.branch or declaration.get("target_branch") or "main"
+
+    # The prose check needs no network: it compares the page a reader trusts with
+    # the declaration, and runs before the live comparison so a document that
+    # overclaims is caught even when the API cannot be observed.
+    prose_path = Path(args.prose)
+    try:
+        prose = prose_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        print(f"cannot read the documented guarantees: {exc}", file=sys.stderr)
+        return INCOMPLETE
+    claimed = prose_reasons(declaration, prose)
+    if claimed:
+        print("the documented review guarantees contradict the declaration:", file=sys.stderr)
+        for reason in claimed:
+            print(f"  - {reason}", file=sys.stderr)
+        return FAIL
 
     if args.live is not None:
         try:
