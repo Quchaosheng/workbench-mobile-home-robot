@@ -1,0 +1,111 @@
+{
+  "issue": 585,
+  "human_owner": "Quchaosheng",
+  "objective": "Make every documented repository path honest: resolve or remove the references that name files which are not committed, and add a committed check that fails a build when a backticked repository path in docs/** or a module README does not exist, wired into make docs so foundation-checks catches a new dangling reference without a new workflow.",
+  "decision_supported": "Does a reference in committed documentation name a path a reader who clones the repository can actually open, and does a build fail when one does not?",
+  "allowed_paths": [
+    "docs/**",
+    "robot/control/README.md",
+    "hardware/arm_drivers/README.md",
+    "tasks/pick_place/README.md",
+    "Makefile",
+    "mkdocs.yml",
+    "tools/scripts/check_doc_references.py",
+    "tests/unit/test_doc_references.py",
+    "docs/task_packets/issue-585-doc-reference-integrity.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "tools/scripts/_paths.py",
+    "tools/scripts/check_context.py",
+    "tools/qa/governance/ready-gate-v1.json"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/control/workbench_motion/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/mechanical/**",
+    "hardware/pcb/**",
+    "hardware/power/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/workflows/**",
+    ".github/rulesets/**"
+  ],
+  "input_refs": [
+    "docs/decisions/ADR-0004-arm-selection.md",
+    "robot/control/README.md",
+    "hardware/arm_drivers/README.md",
+    "tasks/pick_place/README.md",
+    "docs/evaluation/motion-m1-report.md",
+    "docs/evaluation/motion-m1-smoothness.md",
+    "Makefile",
+    "tools/scripts/_paths.py"
+  ],
+  "outputs": [
+    "tools/scripts/check_doc_references.py",
+    "tests/unit/test_doc_references.py",
+    "Makefile",
+    "docs/decisions/ADR-0004-arm-selection.md",
+    "robot/control/README.md",
+    "hardware/arm_drivers/README.md",
+    "tasks/pick_place/README.md",
+    "docs/evaluation/motion-m1-report.md",
+    "docs/evaluation/motion-m1-smoothness.md"
+  ],
+  "acceptance": [
+    "Every reference the issue lists either resolves to a committed file, is replaced by the content it pointed at, or is removed with a sentence explaining what a reader loses.",
+    "ADR-0004 no longer cites robot/control/PLAN.md; it quotes the two Phase 1 gates it is measured against (verify the vendor package first, and reach 95% reachability) so the decision stands on committed text, and its decision text is otherwise unchanged.",
+    "robot/control/README.md states that the construction plan is kept local instead of presenting PLAN.md as a path a reader can open.",
+    "hardware/arm_drivers/README.md no longer points at a cross-compilation note that was never written, and makes no cross-compilation claim.",
+    "tasks/pick_place/README.md names services/world_model/workbench_world_model/verifier.py::verify_object_in_tray and says why verification lives in the world model.",
+    "A committed check, tools/scripts/check_doc_references.py, fails a build when a backticked repository path in a Markdown file under docs/** or in a module README does not exist, with an allowlist for the deliberately-local robot/control/PLAN.md named explicitly.",
+    "The check is wired into make docs, so foundation-checks catches a new dangling reference without a new workflow.",
+    "The check resolves a reference from the repository root, the page's directory, docs/, or as the tail of a real path; bare filenames and runs/ artifacts are out of scope, which is stated in the module.",
+    "Exit codes are 0 PASS, 1 FAIL and 2 INCOMPLETE, and an unreadable root is INCOMPLETE rather than PASS.",
+    "A deliberately broken reference fails the check with exit code 1 and fails make docs before mkdocs runs.",
+    "No ADR is rewritten beyond the citation and no schema, contract model, workflow or ruleset changes."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_doc_references.py",
+    "make docs",
+    "python3 -m pytest -q tests/unit/test_doc_references.py",
+    "make contract",
+    "make scenario-check",
+    "make context-check",
+    "python3 -m ruff check tools/scripts/check_doc_references.py tests/unit/test_doc_references.py",
+    "python3 -m ruff format --check tools/scripts/check_doc_references.py tests/unit/test_doc_references.py",
+    "python3 tools/scripts/check_task_packet.py --all"
+  ],
+  "evidence": [
+    "check_doc_references.py output on the cleaned tree: documentation references resolve (179 pages), exit code 0.",
+    "The same check on a tree with one deliberately broken reference: 1 documented path(s) do not exist, exit code 1, and make docs exit code 2 with the check failing before mkdocs.",
+    "pytest output for tests/unit/test_doc_references.py: 11 passed, including the failure-path case and the allowlist case.",
+    "make contract, make scenario-check and make context-check output, each PASS.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones.",
+    "ruff check and ruff format --check output for the two new files.",
+    "The diff, 9 files, 416 insertions and 16 deletions."
+  ],
+  "stop_conditions": [
+    "Resolving a reference would require publishing a document that contains private design content; the correct outcome there is to delete the reference and say so, not to publish the document.",
+    "The check would have to be weakened to a bare-filename scan that fails pages documenting generated reports; that is the wrong fix and the boundary stays at path-bearing references.",
+    "A write outside allowed_paths is required, especially to robot/control/** outside its README or to any firmware path.",
+    "Resolving a reference would require changing an ADR's decision text rather than its citation.",
+    "The change would need a new workflow to run the check; it must ride make docs instead."
+  ],
+  "data_classification": "Repository-local Markdown and Python. No credentials, private data or unreviewed assets are read, written or logged.",
+  "model_policy": "Deterministic Python and a local pytest run; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "The check could reject a legitimate page that cites a path in a form it does not resolve. The risk is bounded because it reads only code spans carrying a path separator and a known extension, and resolves four ways including a path-tail match; a page that trips it is either wrong or one allowlist entry away from being right, and the entry has to be justified in the module.",
+    "The allowlist for robot/control/PLAN.md is a permanent exclusion that could hide a future dangling reference. It is a named constant with its reason recorded rather than a silent skip, so publishing the plan is what makes the citation start being checked.",
+    "Rollback is a revert of this commit: delete the check, restore the six pages and drop the Makefile line. No code path reads these documents, so nothing depends on the change; the only loss is the failure detection."
+  ]
+}
