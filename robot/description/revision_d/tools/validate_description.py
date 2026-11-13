@@ -352,6 +352,43 @@ def validate(root: ET.Element) -> Report:
             f"missing tool dock slot {index} (design-spec.json#/torso/tool_dock_slots)",
         )
 
+    # ------------------------------------------------------- gazebo sensors (#580)
+    # Every `<gazebo reference="...">` must name a link that exists. A reference
+    # that points at nothing is silently ignored by Gazebo, so the sensor simply
+    # never produces data and no error is printed -- which is exactly how the
+    # model came to have zero sensors while its camera frames looked complete.
+    for block in root.iter("gazebo"):
+        reference = block.get("reference")
+        if reference is not None:
+            report.check(
+                reference in names,
+                f"<gazebo reference={reference!r}> does not name a link",
+            )
+
+    # The sensor plugins are opt-in, so an expansion without `sensors:=true` may
+    # legitimately have none. What must hold in every expansion is that a sensor
+    # that IS present has a unique name and a plugin, because a sensor without a
+    # system plugin is a declaration that publishes nothing.
+    sensor_names: list[str] = []
+    for block in root.iter("gazebo"):
+        for sensor in block.findall("sensor"):
+            name = sensor.get("name")
+            report.check(bool(name), "a <sensor> without a name cannot be addressed")
+            if name:
+                sensor_names.append(name)
+            report.check(
+                sensor.find("plugin") is not None,
+                f"sensor {name!r} has no plugin, so it would publish nothing",
+            )
+            report.check(
+                sensor.get("type") in {"camera", "depth_camera", "imu", "contact"},
+                f"sensor {name!r} has an unexpected type {sensor.get('type')!r}",
+            )
+    report.check(
+        len(sensor_names) == len(set(sensor_names)),
+        f"sensor names must be unique, got {sensor_names}",
+    )
+
     return report
 
 

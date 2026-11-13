@@ -35,6 +35,37 @@ make description-check
 xacro robot/description/revision_d/revision_d.urdf.xacro > /tmp/revision_d.urdf
 ```
 
+## Gazebo sensors
+
+The model declares an IMU and a bumper contact sensor unconditionally, and the
+three camera streams only when the expansion is asked for them:
+
+```bash
+# no camera sensors; the IMU and bumper are still declared
+xacro revision_d.urdf.xacro > /tmp/rd.urdf
+
+# camera, depth camera and the two wrist streams included
+xacro revision_d.urdf.xacro sensors:=true > /tmp/rd-sensors.urdf
+```
+
+`launch/revision_d.launch.py` passes `sensors:=true`, so a Gazebo spawn has the
+streams a consumer subscribes to, while a bare `xacro` expansion in CI does not
+gain topics just by existing.
+
+The plugins are opt-in because the opposite default changes what an expansion
+declares: a check that runs `xacro` on this file should test the model, not a
+rendering backend.
+
+**What a `<sensor>` element proves:** that the model is *able* to produce data.
+It does not prove a frame was published in a run, that an image was inspected, or
+that a camera is calibrated. Calibration is a separate path (`#554`), and every
+evidence table keeps the Gazebo and physical columns `NOT_EXECUTED` until a real
+run and real bench evidence exist.
+
+The sensor values are fixture choices, not datasheet numbers: the horizontal field
+of view is not pinned by `design-spec.json`, and the IMU covariances are nominal.
+The file says so at each value, and a test asserts the wording stays.
+
 ## What this model does not claim
 
 - **No physical evidence.** Hardware and HIL status are `NOT_EXECUTED`.
