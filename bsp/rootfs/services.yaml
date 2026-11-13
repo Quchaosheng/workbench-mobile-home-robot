@@ -37,7 +37,7 @@ services:
   robot-update-agent:
     after: [network-online.target]
     requires: [signed_update_bundle, rollback_slot]
-    restart: no
+    restart: "no"
     safety_authority: false
 gates:
   incompatible_firmware_inhibits_motion: true

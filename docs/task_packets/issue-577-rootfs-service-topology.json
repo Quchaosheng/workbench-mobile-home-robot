@@ -1,0 +1,87 @@
+{
+  "issue": 577,
+  "human_owner": "Quchaosheng",
+  "objective": "Give every service in the rootfs topology a systemd unit that matches its declared ordering and restart policy, and make the BSP validator fail when a declared service has no unit or a unit contradicts the YAML.",
+  "decision_supported": "Does the rootfs topology describe services that exist, and can a service be added without its unit going unnoticed?",
+  "allowed_paths": [
+    "bsp/rootfs/**",
+    "bsp/validation/**",
+    "tests/hardware/**",
+    "docs/task_packets/issue-577-rootfs-service-topology.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "bsp/board-manifest.yaml",
+    "bsp/sensors/camera-head.yaml"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**"
+  ],
+  "input_refs": [
+    "bsp/rootfs/services.yaml",
+    "bsp/rootfs/systemd/robot-camera-head.service.in",
+    "bsp/validation/validate_manifests.py",
+    "bsp/rootfs/README.md"
+  ],
+  "outputs": [
+    "bsp/rootfs/services.yaml",
+    "bsp/rootfs/systemd/robot-can-gateway.service.in",
+    "bsp/rootfs/systemd/robot-safety-monitor.service.in",
+    "bsp/rootfs/systemd/robot-device-manager.service.in",
+    "bsp/rootfs/systemd/robot-evidence-logger.service.in",
+    "bsp/rootfs/systemd/robot-update-agent.service.in",
+    "bsp/validation/validate_manifests.py",
+    "tests/hardware/test_service_topology.py",
+    "docs/task_packets/issue-577-rootfs-service-topology.json"
+  ],
+  "acceptance": [
+    "Each of the five services that had no unit now has a unit template with the After, Requires, Restart and StartLimitBurst values its YAML row states.",
+    "bsp/validation/validate_manifests.py fails when a YAML service has no unit, when a unit has no YAML row, when the restart policy disagrees, or when the unit orders after something the YAML does not declare.",
+    "Every unit keeps NoNewPrivileges=true, ProtectSystem=strict and ProtectHome=true, matching the camera unit that already had them.",
+    "No unit in the topology is ordered before robot-safety-monitor except the three that cannot enable an actuator, and each exemption is asserted rather than assumed.",
+    "actuator_enable_during_boot stays false by construction: the ordering test is transitive, so a new unit cannot be inserted ahead of the monitor by accident.",
+    "All units pass systemd-analyze verify where the tool is available, and the test skips with a reason where it is not.",
+    "The restart: no value in the YAML is quoted, because YAML 1.1 reads a bare no as False and the validator was silently comparing a boolean to a string."
+  ],
+  "commands": [
+    "python3 bsp/validation/validate_manifests.py",
+    "python3 -m pytest -q tests/hardware/test_service_topology.py",
+    "python3 -m ruff check bsp/validation/validate_manifests.py tests/hardware/test_service_topology.py",
+    "python3 -m ruff format --check bsp/validation/validate_manifests.py tests/hardware/test_service_topology.py",
+    "make docs"
+  ],
+  "evidence": [
+    "validate_manifests.py: PASS, with the new topology check running.",
+    "systemd-analyze verify runs inside tests/hardware/test_service_topology.py for every unit, and the test skips with a reason where the tool is absent.",
+    "pytest tests/hardware/test_service_topology.py: 38 passed, including a real systemd-analyze verify run for every unit.",
+    "The failure paths: changing a unit Restart to always fails the validator with the service named; deleting a unit fails it with the service named.",
+    "The YAML boolean trap: before quoting, robot-update-agent restart parsed as False and the validator reported it, which is how the defect was found.",
+    "ruff check and ruff format --check clean; make docs PASS.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "A boot would have to be performed to claim the ordering works on a device; no device is available and the evidence is container and static.",
+    "A systemd-analyze result would have to be quoted as a boot result; it is a parse check, not a start check, and the pull request labels it that way.",
+    "A write outside allowed_paths is required, especially to bsp/rootfs/libexec/** or to the board manifest."
+  ],
+  "data_classification": "Repository-local YAML, systemd unit templates and Python. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic Python, pytest and systemd-analyze; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "The units name /usr/libexec/workbench/* binaries that this repository does not ship, so systemd-analyze reports them missing. That is expected for a template and is filtered by name rather than by ignoring the whole output.",
+    "Three units are exempt from ordering after the safety monitor. The exemption is a named set with an asserted reason, so a fourth cannot be added quietly, and each exempt unit is asserted to be safety_authority: false.",
+    "The ExecStart binaries do not exist, so nothing here proves a service starts. It proves the unit parses and the topology is internally consistent, which is what the issue asks for and no more.",
+    "Rollback is a revert of this commit: the five units disappear and the validator stops checking them. Nothing runs these units yet."
+  ]
+}
