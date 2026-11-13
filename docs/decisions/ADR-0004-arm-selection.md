@@ -2,20 +2,28 @@
 
 ## Status
 
-Accepted for v0.1 phase 1 (Motion). Supersedes the PLAN.md leaning toward Panda;
-see "Decision" for why.
+Accepted for v0.1 phase 1 (Motion). Supersedes the Motion plan's leaning toward
+Panda; see "Decision" for why.
 
 ## Context
 
-Phase 1 of the Motion plan (`robot/control/PLAN.md` §阶段 1) requires selecting an
+The Motion plan is not published in this repository; its Phase 1 gates are quoted
+here so the decision stands on committed text. Phase 1 requires selecting an
 **official vendor** arm asset — explicitly *not* a self-assembled URDF — and
 composing it into the workbench world at `robot/description/workbench.urdf.xacro`.
 The task must run under Ubuntu 24.04 + ROS 2 Jazzy + Gazebo Harmonic, no GPU.
 
-PLAN.md leaned toward Franka Panda (7 DoF, richest assets) with UR5e (6 DoF) as a
-backup, but left the model choice to us pending vendor-package verification
-(`THIRD_PARTY_REVIEW.md` line). We verified availability and licensing before
-deciding, per the plan's instruction ("先验证 vendor 包再定型").
+The two Phase 1 gates this decision is measured against:
+
+1. **Vendor package first.** Verify the vendor description package exists, is
+   licensed for distribution, and loads, before fixing the model
+   ("先验证 vendor 包再定型").
+2. **≥95% reachability.** At least 95% of the sampled grasp poses must be
+   kinematically reachable from the fixed base, measured position-level.
+
+The plan leaned toward Franka Panda (7 DoF, richest assets) with UR5e (6 DoF) as a
+backup, but left the model choice open pending gate 1. We verified availability and
+licensing before deciding.
 
 ## Verified facts (checked 2026-08-08, ROS 2 Jazzy)
 
@@ -79,7 +87,7 @@ an exit path (primitive collision geometry / model swap), not treated as clean.
   cannot be cleared, the exit is either primitive-only collision geometry (visual
   meshes dropped) or the documented Panda swap.
 - Reachability is validated against UR5e's 0.85 m reach envelope. The base was
-  tuned against the ≥95% IK gate (PLAN.md §阶段1): an initial back-corner placement
+  tuned against gate 2 (≥95% reachability): an initial back-corner placement
   `(-0.42, -0.28)` kinematically reached 100% of poses but left the tray at the
   reach extreme, where every wrist yaw collided at 3/20 tray positions (85%, fail).
   Moving the base to `(-0.30, -0.15, 0.75)`, yaw `0.36`, facing the block+tray
