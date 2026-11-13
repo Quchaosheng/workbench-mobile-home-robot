@@ -54,8 +54,17 @@ feeding a `runtime_can` command frame (`01 00 01 01 ...` on `0x100`) to
 The two encodings are therefore **not** interoperable, and nothing in this repository may
 claim they are. `integrations/ros2_runtime/` consumes the runtime's `TaskEvent` over a
 captured JSONL file; it is a software-evidence boundary and does not imply bus
-compatibility. Making them interoperable — adopting one layout, or adding a bridge —
-requires an owner decision recorded under `docs/decisions/` before any codec changes.
+compatibility. Making them interoperable — adopting one layout, or adding a bridge — required an
+owner decision recorded under `docs/decisions/` before any codec change. That
+decision has been made: **[ADR-0012](../decisions/ADR-0012-wire-v1-normative.md)
+makes Wire V1 normative**, so `runtime_can` changes to match this document and the
+firmware codec does not. The migration is staged so a bus with one side not yet
+updated keeps the fail-closed rejection described above rather than entering
+undefined behaviour.
+
+This document is therefore the normative layout for both sides once the
+`runtime_can` change lands. Until it does, the two remain incompatible, and
+nothing here may be read as claiming otherwise.
 
 ## Arbitration identifiers
 
