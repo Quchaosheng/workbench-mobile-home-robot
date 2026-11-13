@@ -24,6 +24,7 @@ while one is red or missing.
 | `mcu-qemu` | ci | the freestanding MCU target builds and runs under QEMU |
 | `codeql-python` | security | static analysis for Python |
 | `codeql-c-cpp` | security | static analysis for the kernel and MCU C code |
+| `colcon-motion` | colcon-motion | `workbench_motion` builds and `colcon test` passes, or records an explicit not-applicable |
 | `dependency-review` | security | newly introduced high/critical advisories |
 
 One further check runs on every pull request and is declared

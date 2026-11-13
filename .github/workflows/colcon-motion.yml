@@ -1,0 +1,230 @@
+name: colcon-motion
+
+# Issue #586: `make container-colcon-build` and `make container-colcon-test` build
+# and test the ROS 2 package that drives the arm
+# (`robot/control/workbench_motion`), and no workflow invoked either of them. The
+# 30,000-line vendored runtime was built and tested in CI; the package that
+# actually moves the arm was not. `robot/control/` is the path `AGENTS.md`
+# protects most carefully, and the one check that would catch a broken ROS 2
+# package there never ran.
+#
+# Trigger policy (docs/security/branch-protection.md): no `paths:` filter here,
+# because this workflow produces a required check. A path filter makes GitHub
+# create no run at all for an unmatched change, so the required context never
+# reports and there is nothing to gate on. The path decision lives inside the
+# always-running `colcon-applicability` job instead, and `colcon-motion` always
+# runs and always reports a conclusion.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Always runs. Answers "does this change touch anything the ROS 2 package is
+  # built from?" and records the answer, so the verdict job below can report a
+  # truthful `not-applicable` rather than a silent skip.
+  colcon-applicability:
+    runs-on: ubuntu-24.04
+    outputs:
+      applicable: ${{ steps.decide.outputs.applicable }}
+      reason: ${{ steps.decide.outputs.reason }}
+    env:
+      COLCON_PATH_PATTERNS: |
+        robot/control/**
+        docker/**
+        compose.yaml
+        Dockerfile
+        .dockerignore
+        pyproject.toml
+        Makefile
+        .github/workflows/colcon-motion.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: decide
+        name: Decide whether the colcon build applies to this change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+
+          ZERO = "0" * 40
+
+
+          def revisions():
+              """Return (base, head) for this run, or None when there is no comparison."""
+              event = os.environ.get("EVENT_NAME", "")
+              if event == "pull_request":
+                  base = os.environ.get("PULL_REQUEST_BASE", "")
+                  head = os.environ.get("PULL_REQUEST_HEAD", "")
+              elif event == "push":
+                  base = os.environ.get("PUSH_BEFORE", "")
+                  head = os.environ.get("PUSH_AFTER", "")
+              else:
+                  return None
+              if not re.fullmatch(r"[0-9a-f]{40}", base or "") or not re.fullmatch(r"[0-9a-f]{40}", head or ""):
+                  return None
+              if base == ZERO:
+                  return None
+              return base, head
+
+
+          def changed_paths(base, head):
+              diff = subprocess.run(
+                  ["git", "diff", "--name-only", f"{base}...{head}"],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              if diff.returncode != 0:
+                  raise SystemExit("cannot list the changed paths: " + diff.stderr.strip())
+              return [line for line in diff.stdout.splitlines() if line]
+
+
+          def pattern_regex(pattern):
+              out = []
+              index = 0
+              while index < len(pattern):
+                  if pattern.startswith("**", index):
+                      out.append(".*")
+                      index += 2
+                  elif pattern[index] == "*":
+                      out.append("[^/]*")
+                      index += 1
+                  elif pattern[index] == "?":
+                      out.append("[^/]")
+                      index += 1
+                  else:
+                      out.append(re.escape(pattern[index]))
+                      index += 1
+              return "^" + "".join(out) + "$"
+
+
+          def emit(applicable, reason):
+              output = os.environ.get("GITHUB_OUTPUT")
+              if not output:
+                  raise SystemExit("GITHUB_OUTPUT is not set; the decision cannot be recorded, so it is not a pass")
+              with open(output, "a", encoding="utf-8") as handle:
+                  handle.write("applicable=" + ("true" if applicable else "false") + "\n")
+                  handle.write("reason=" + " ".join(reason.split())[:900] + "\n")
+              print("applicable=" + ("true" if applicable else "false") + " reason=" + reason)
+              sys.exit(0)
+
+
+          patterns = [line.strip() for line in os.environ.get("COLCON_PATH_PATTERNS", "").splitlines() if line.strip()]
+          if not patterns:
+              raise SystemExit("COLCON_PATH_PATTERNS is empty; a missing policy is a failure, not a not-applicable")
+
+          comparison = revisions()
+          if comparison is None:
+              emit(True, "no comparable base revision (manual run or new branch), so the package is built")
+          base, head = comparison
+          paths = changed_paths(base, head)
+          matched = sorted({path for path in paths for pattern in patterns if re.match(pattern_regex(pattern), path)})
+          if matched:
+              emit(True, str(len(matched)) + " changed path(s) selected: " + ", ".join(matched[:10]))
+          emit(False, "none of the " + str(len(patterns)) + " patterns match the " + str(len(paths)) + " changed path(s)")
+          PY
+
+  # The expensive job. It reuses the two make targets that already define the
+  # build, so there is no second build recipe: `container-colcon-build` and
+  # `container-colcon-test` are the only definitions.
+  colcon-build:
+    needs: colcon-applicability
+    if: needs.colcon-applicability.outputs.applicable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      # The image the make targets run inside. It is the same one the full-stack
+      # workflow builds, so a ROS 2 environment is not defined twice.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: workbench-1:local
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          cache-from: type=gha,scope=container-full-stack
+          cache-to: type=gha,mode=max,scope=container-full-stack
+      - name: Build workbench_motion with colcon
+        run: make container-colcon-build
+      - name: Run colcon test and its results
+        run: make container-colcon-test
+      - name: Upload colcon logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: colcon-motion-logs
+          path: log/
+          if-no-files-found: warn
+
+  # The required check name. Always runs and always reports one of three
+  # documented conclusions, so an absent run can never read as a pass.
+  colcon-motion:
+    needs:
+      - colcon-applicability
+      - colcon-build
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report the required check conclusion
+        env:
+          BUILD_RESULT: ${{ needs.colcon-build.result }}
+          APPLY_RESULT: ${{ needs.colcon-applicability.result }}
+          APPLY_REASON: ${{ needs.colcon-applicability.outputs.reason }}
+        run: |
+          case "$BUILD_RESULT" in
+            success)
+              conclusion="success"
+              detail="workbench_motion built and colcon test reported no failing package"
+              ;;
+            failure)
+              conclusion="failure"
+              detail="the colcon build or test reported a failing step"
+              ;;
+            skipped)
+              if [ "$APPLY_RESULT" = "success" ]; then
+                conclusion="not-applicable"
+                detail="${APPLY_REASON:-no changed path is selected by the colcon path policy}"
+              else
+                conclusion="failure"
+                detail="the applicability decision did not run ($APPLY_RESULT), so the package cannot be shown to be unaffected"
+              fi
+              ;;
+            cancelled)
+              conclusion="cancelled"
+              detail="the colcon job was cancelled, which proves nothing"
+              ;;
+            *)
+              conclusion="failure"
+              detail="the colcon job reported no usable result ($BUILD_RESULT)"
+              ;;
+          esac
+          {
+            echo "### colcon-motion"
+            echo ""
+            echo "- conclusion: \`$conclusion\`"
+            echo "- build job result: \`$BUILD_RESULT\`"
+            echo "- $detail"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "colcon-motion: $conclusion ($detail)"
+          if [ "$conclusion" != "success" ] && [ "$conclusion" != "not-applicable" ]; then
+            exit 1
+          fi
