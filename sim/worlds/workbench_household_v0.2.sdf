@@ -1,0 +1,258 @@
+<?xml version="1.0" ?>
+<!--
+  Workbench household world, version WorkbenchSim-v0.2 (issue #542).
+
+  This file is the world every scenario manifest names through its
+  `world_version` field. Until it existed, `world_version` was a string nothing
+  resolved: `sim/worlds/` held only this README, so a manifest could name a world
+  that was never committed and the failure surfaced at run time as a missing
+  model URI rather than at load.
+
+  Sizing. The Revision D chassis is 540 x 520 mm
+  (hardware/mechanical/design-spec.json#/chassis). The room is 6 x 5 m, which
+  leaves roughly 2 m of clearance on every side of a robot centred at the
+  origin: enough for the four steer-drive modules to rotate in place and for the
+  arms to reach the shelf without the swept volume leaving the room.
+
+  What this world does NOT claim. It is geometry, not evidence. A run in this
+  world is `gazebo` evidence at best and this file alone promotes nothing; the
+  readiness report decides eligibility and every evidence table keeps the
+  physical column `NOT_EXECUTED`. Nothing here asserts the physical robot was
+  built, that a controller is tuned, or that any motion is safe.
+
+  The world is versioned. Changing any geometry below requires a new
+  `world_version` in the manifests that use it, because a committed map and a
+  scene hash are derived from these poses (see sim/registry/README.md and
+  tools/scripts/validate_scenarios.py).
+-->
+<sdf version="1.9">
+  <world name="workbench_household">
+
+    <!-- A deterministic physics step keeps two runs of one seed comparable. The
+         physics event ORDER may still differ; sim_cli records that as controlled
+         nondeterminism rather than asserting identical traces. -->
+    <physics name="workbench_physics" type="dart">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gravity>0 0 -9.80665</gravity>
+    <magnetic_field>6.0e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+
+    <!-- ============================================================ lighting
+         `scene.ambient` and the sun intensity are what the `low-light-*`
+         variants turn down. They are separate named entities so a scenario can
+         address them rather than editing this file. -->
+    <scene>
+      <ambient>0.55 0.55 0.55 1</ambient>
+      <background>0.75 0.78 0.80 1</background>
+      <shadows>true</shadows>
+      <grid>false</grid>
+    </scene>
+
+    <light type="directional" name="room_sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 4 0 0 0</pose>
+      <diffuse>0.9 0.9 0.85 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.3 0.2 -1</direction>
+    </light>
+
+    <!-- The overhead lamp the inspection scenarios read against. A point light
+         rather than a second sun so a low-light variant can dim one and leave
+         the other alone. -->
+    <light type="point" name="overhead_lamp">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 2.4 0 0 0</pose>
+      <diffuse>0.8 0.8 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>8</range>
+        <constant>0.9</constant>
+        <linear>0.05</linear>
+        <quadratic>0.01</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- ================================================================ room
+         One static box per wall rather than a mesh: analytic collision, and no
+         external asset a licence review would have to clear. -->
+    <model name="floor">
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+      <link name="floor_link">
+        <collision name="floor_collision">
+          <geometry><plane><normal>0 0 1</normal><size>6 5</size></plane></geometry>
+          <surface>
+            <friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction>
+          </surface>
+        </collision>
+        <visual name="floor_visual">
+          <geometry><plane><normal>0 0 1</normal><size>6 5</size></plane></geometry>
+          <material><ambient>0.35 0.36 0.38 1</ambient><diffuse>0.42 0.43 0.45 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0 2.5 1.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>6 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>6 0.1 2.4</size></box></geometry>
+          <material><ambient>0.72 0.70 0.66 1</ambient><diffuse>0.78 0.76 0.72 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0 -2.5 1.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>6 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>6 0.1 2.4</size></box></geometry>
+          <material><ambient>0.72 0.70 0.66 1</ambient><diffuse>0.78 0.76 0.72 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_east">
+      <static>true</static>
+      <pose>3 0 1.2 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>5 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>5 0.1 2.4</size></box></geometry>
+          <material><ambient>0.72 0.70 0.66 1</ambient><diffuse>0.78 0.76 0.72 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-3 0 1.2 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>5 0.1 2.4</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>5 0.1 2.4</size></box></geometry>
+          <material><ambient>0.72 0.70 0.66 1</ambient><diffuse>0.78 0.76 0.72 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- =============================================================== shelf
+         The shelf a scenario addresses by name. Three bays, each its own named
+         model so `shelf_bay_low`, `shelf_bay_mid` and `shelf_bay_high` are
+         separately addressable rather than one box a scenario cannot index.
+         Heights are reachable from a robot standing at y = -0.9 facing +y. -->
+    <model name="shelf_frame">
+      <static>true</static>
+      <pose>1.6 1.9 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.2 0.45 1.8</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.2 0.45 1.8</size></box></geometry>
+          <material><ambient>0.55 0.52 0.48 1</ambient><diffuse>0.62 0.59 0.55 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="shelf_bay_low">
+      <static>true</static>
+      <pose>1.6 1.9 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.1 0.40 0.03</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.1 0.40 0.03</size></box></geometry>
+          <material><ambient>0.85 0.83 0.78 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="shelf_bay_mid">
+      <static>true</static>
+      <pose>1.6 1.9 0.85 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.1 0.40 0.03</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.1 0.40 0.03</size></box></geometry>
+          <material><ambient>0.85 0.83 0.78 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="shelf_bay_high">
+      <static>true</static>
+      <pose>1.6 1.9 1.45 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.1 0.40 0.03</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.1 0.40 0.03</size></box></geometry>
+          <material><ambient>0.85 0.83 0.78 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ========================================================== parcel bay
+         The tray and bay the parcel-retrieval task names. `parcel_bay` is the
+         container; `tray` is the target the pick-place verifier reads. -->
+    <model name="parcel_bay">
+      <static>true</static>
+      <pose>-1.4 -1.6 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.8 0.6 0.35</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.8 0.6 0.35</size></box></geometry>
+          <material><ambient>0.40 0.45 0.52 1</ambient><diffuse>0.46 0.52 0.60 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="tray">
+      <static>true</static>
+      <pose>-0.35 -0.15 0.045 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.42 0.32 0.05</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.42 0.32 0.05</size></box></geometry>
+          <material><ambient>0.30 0.32 0.34 1</ambient><diffuse>0.36 0.38 0.40 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- =================================================== inspection table
+         A flat table with an overhead camera position, for the inspection task
+         family. Separate from the shelf so a scenario can address either. -->
+    <model name="inspection_table">
+      <static>true</static>
+      <pose>0 0.35 0.38 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.4 0.9 0.06</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.4 0.9 0.06</size></box></geometry>
+          <material><ambient>0.80 0.79 0.75 1</ambient><diffuse>0.84 0.83 0.79 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- The removable obstacle the `path-blocked-*` variants use. Named, static
+         and separately addressable, so a scenario removes or keeps it by name
+         instead of editing the world. -->
+    <model name="removable_obstacle">
+      <static>true</static>
+      <pose>0.9 -0.6 0.2 0 0 0.4</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.30 0.30 0.40</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.30 0.30 0.40</size></box></geometry>
+          <material><ambient>0.70 0.42 0.20 1</ambient><diffuse>0.78 0.48 0.24 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

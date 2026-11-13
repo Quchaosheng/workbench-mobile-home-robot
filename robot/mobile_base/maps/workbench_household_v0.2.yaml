@@ -1,0 +1,18 @@
+# Occupancy map for the Workbench household world, version WorkbenchSim-v0.2
+# (issue #542). Committed, not generated at run time, so a run can name the map
+# revision it used and a mismatch is detectable rather than silent.
+#
+# The map is a static obstacle picture: it says nothing about dynamic obstacles,
+# about where a person is, or about whether a path is safe. A planner that
+# treats a free cell as a promise is misreading it.
+image: workbench_household_v0.2.pgm
+resolution: 0.05
+origin: [-3.0, -2.5, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
+
+# The revision a manifest or a run artifact cites. Bumping it means the PGM
+# changed, and the digest below has to move with it.
+revision: workbench-household-v0.2-map-1
+sha256: a10e6e2675887bab5b307b753260df29b8c5d157f7021c8aae3cffb028f210dd

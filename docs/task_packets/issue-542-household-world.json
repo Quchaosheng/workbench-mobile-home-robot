@@ -1,0 +1,93 @@
+{
+  "issue": 542,
+  "human_owner": "Quchaosheng",
+  "objective": "Commit the Gazebo worlds the scenario manifests name, make world_version resolve to a committed file at load instead of failing at run time, and commit the fixed occupancy map the household world is planned against.",
+  "decision_supported": "Does every scenario manifest name a world this repository has committed, and does a manifest naming an unknown version fail at load rather than mid-run?",
+  "allowed_paths": [
+    "sim/worlds/**",
+    "robot/mobile_base/maps/**",
+    "tools/scripts/validate_scenarios.py",
+    "tests/unit/test_world_versions.py",
+    "docs/task_packets/issue-542-household-world.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "hardware/mechanical/design-spec.json",
+    "sim/scenarios/**",
+    "sim/registry/**",
+    "robot/description/revision_d/revision_d.urdf.xacro"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "firmware/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**",
+    "sim/scenarios/**",
+    "sim/registry/**"
+  ],
+  "input_refs": [
+    "sim/worlds/README.md",
+    "sim/scenarios/frozen/normal-001.json",
+    "sim/scenarios/expanded/low-light-001.json",
+    "hardware/mechanical/design-spec.json",
+    "tools/scripts/validate_scenarios.py"
+  ],
+  "outputs": [
+    "sim/worlds/workbench_tabletop_v0.sdf",
+    "sim/worlds/workbench_household_v0.2.sdf",
+    "sim/worlds/README.md",
+    "robot/mobile_base/maps/workbench_household_v0.2.pgm",
+    "robot/mobile_base/maps/workbench_household_v0.2.yaml",
+    "tools/scripts/validate_scenarios.py",
+    "tests/unit/test_world_versions.py",
+    "docs/task_packets/issue-542-household-world.json"
+  ],
+  "acceptance": [
+    "The world_version field resolves to a committed file at load: validate_scenarios.py refuses a version with no committed file, so the failure is a validation error rather than a missing model URI discovered mid-run.",
+    "Two worlds are committed, because the manifests name two versions: WorkbenchSim-v0 for the twelve frozen tabletop scenarios and WorkbenchSim-v0.2 for the household room.",
+    "The household world names the shelf, the parcel bay and the inspection table as separate addressable entities, plus the removable obstacle the path-blocked variants use.",
+    "The two lights a low-light variant dims are separate named lights, so a scenario dims one and leaves the other alone.",
+    "No model uses an external mesh URI, so no asset licence review is implied.",
+    "A fixed occupancy map is committed with a YAML sidecar carrying a revision and a sha256 of the image, and the sidecar states what the map does not claim about dynamic obstacles.",
+    "python3 tools/scripts/sim_cli.py list shows every manifest resolving to a checked-in world version, and validate_scenarios.py reports the resolved versions.",
+    "The world files are versioned: the README states that changing geometry requires a new world_version and a re-freeze."
+  ],
+  "commands": [
+    "python3 tools/scripts/validate_scenarios.py",
+    "python3 -m pytest -q tests/unit/test_world_versions.py",
+    "python3 -m ruff check tools/scripts/validate_scenarios.py tests/unit/test_world_versions.py",
+    "python3 -m ruff format --check tools/scripts/validate_scenarios.py tests/unit/test_world_versions.py",
+    "make docs",
+    "python3 tools/scripts/check_doc_references.py"
+  ],
+  "evidence": [
+    "validate_scenarios.py: PASS, reporting both world versions resolve.",
+    "The failure path: removing WorkbenchSim-v0 from the map makes validate_scenarios.py exit with a RuntimeError naming the version, which is the load-time failure this issue replaces the run-time one with.",
+    "pytest tests/unit/test_world_versions.py: 17 passed, covering both worlds, the named entities, the map digest and the unknown-version refusal.",
+    "The map sidecar digest matches the committed PGM, asserted by test.",
+    "make docs, check_doc_references.py, ruff check and ruff format --check clean.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "gz sdf -k would have to be run to claim the SDF is schema-valid; Gazebo is not installed here, so the tests parse the XML and assert structure and the pull request says a structural pass is not a physics pass.",
+    "A run would have to reach the gazebo evidence class; that needs a simulator and is not claimed.",
+    "A world would have to be regenerated from a mesh asset; no external URI is added, so no licence review is implied.",
+    "A write outside allowed_paths is required, especially to sim/scenarios/** or to the Revision D description."
+  ],
+  "data_classification": "Repository-local SDF, PGM, YAML, Python and Markdown. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic XML parsing, Python and pytest; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "The SDF is structurally valid XML but has not been checked against the simulator schema. A version-specific element could be rejected by Gazebo Harmonic. That surfaces as a load error in the container job, which is where the simulator exists, and the world file is the only file to change.",
+    "The committed map is derived from the world poses by hand rather than generated, so it can drift from the world. The sidecar digest catches a changed image, and a future generator would make the derivation reproducible; that is recorded rather than implied.",
+    "Two worlds rather than one avoids re-freezing 36 manifests, at the cost of a second file to maintain. The README states why they are separate and that changing either requires a new version.",
+    "Rollback is a revert of this commit: world_version returns to being an unresolved string. Nothing reads the worlds yet, so no consumer breaks."
+  ]
+}
