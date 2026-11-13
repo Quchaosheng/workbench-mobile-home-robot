@@ -1,7 +1,13 @@
 # ADR-0003: Safety MCU targets RISC-V, verified in QEMU
 
-Status: accepted
+Status: **superseded by [ADR-0011](ADR-0011-stm32-mcu-selection.md)**
 Date: 2026-08-05
+
+> Superseded 2026-11-13. The board carries `STM32G474RET6` and `STM32G0B1`
+> (both FDCAN), and QEMU models neither part's CAN peripheral, so the
+> verification-cost argument below no longer favours RISC-V. The two-layer
+> `core/` + `hal/` split this record established survives and is carried forward.
+> The rest of the record is left as written.
 
 ## Context
 

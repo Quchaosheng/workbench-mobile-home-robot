@@ -10,20 +10,37 @@ Decision and rationale: `docs/decisions/ADR-0003-mcu-riscv-qemu.md`.
 core/           platform-independent C. State machine, frame codec,
                 HAL/Wire bridge, watchdog timing, dedup, ring buffers.
                 No peripheral registers. No vendor headers.
-hal/qemu/       QEMU target, CTU CAN FD over PCI. Used by CI.
-hal/ch32v307/   legacy real board, CH32V307 classic CAN peripheral. P3.
+hal/qemu/       QEMU target, CTU CAN FD over PCI. Used by CI, for core/ logic only.
+hal/stm32g4/    MCU-BASE target: STM32G474RET6, FDCAN. Populated by a follow-up issue.
+hal/stm32g0/    MCU-SAFETY target: STM32G0B1, FDCAN, independent reset domain.
 hal/host/       x86_64 build, for fast logic tests.
-tests/          shared test suite, runs against all three targets.
+hal/ch32v307/   EMPTY PLACEHOLDER. NOT the board target. See ADR-0011.
+tests/          shared test suite, runs against every populated target.
 ```
 
-`core/` compiles to three targets from one source. Changing the board means
+`core/` compiles to several targets from one source. Changing the board means
 writing a new `hal/`, not touching `core/`.
+
+The board carries **STM32G474RET6** (`MCU-BASE`) and **STM32G0B1**
+(`MCU-SAFETY`), both FDCAN — see
+[ADR-0011](../docs/decisions/ADR-0011-stm32-mcu-selection.md), which supersedes
+ADR-0003's RISC-V selection. `hal/ch32v307/` is an empty placeholder from the
+legacy board and is **not** the target.
+
+**What QEMU still proves, and what it does not.** `make qemu` proves the shared
+`core/` logic — state machine, watchdog timing, dedup, frame codec, absence of
+`malloc` and floating point — on the architecture the QEMU target builds for. It
+does **not** prove anything about FDCAN: QEMU models the SJA1000 and the CTU CAN FD
+controller, and models neither the CH32V307 CAN peripheral nor the STM32 FDCAN
+peripheral. Bit timing, bus-off recovery, error frames and every electrical
+property need Renode or the bench. A green `make qemu` is not evidence about the
+selected part's CAN behaviour.
 
 ## The one rule
 
 `core/` must not include a vendor or platform header. Any register access
-belongs in `hal/`. An `#ifdef CH32V307` inside `core/` means the boundary has
-been violated.
+belongs in `hal/`. An `#ifdef CH32V307` — or `#ifdef STM32G474` — inside `core/`
+means the boundary has been violated.
 
 ## Authority boundary
 

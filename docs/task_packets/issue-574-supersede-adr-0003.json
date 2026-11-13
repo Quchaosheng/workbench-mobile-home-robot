@@ -1,0 +1,87 @@
+{
+  "issue": 574,
+  "human_owner": "Quchaosheng",
+  "objective": "Supersede ADR-0003 with a record naming STM32G474RET6 and STM32G0B1 as the MCU parts, stating what QEMU can and cannot prove for FDCAN, and naming Renode or the bench as the replacement verification path, without changing C code.",
+  "decision_supported": "Does the accepted decision record name the parts the board actually carries, and does the firmware verification story claim only what QEMU can prove?",
+  "allowed_paths": [
+    "docs/decisions/**",
+    "firmware/mcu/README.md",
+    "mkdocs.yml",
+    "tests/unit/test_mcu_selection_record.py",
+    "docs/task_packets/issue-574-supersede-adr-0003.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "bsp/board-manifest.yaml",
+    "firmware/mcu/core/**",
+    "firmware/mcu/hal/**",
+    "bsp/validation/validate_manifests.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**",
+    "bsp/board-manifest.yaml",
+    "firmware/mcu/core/**"
+  ],
+  "input_refs": [
+    "docs/decisions/ADR-0003-mcu-riscv-qemu.md",
+    "bsp/board-manifest.yaml",
+    "firmware/mcu/README.md",
+    "mkdocs.yml"
+  ],
+  "outputs": [
+    "docs/decisions/ADR-0011-stm32-mcu-selection.md",
+    "docs/decisions/ADR-0003-mcu-riscv-qemu.md",
+    "firmware/mcu/README.md",
+    "mkdocs.yml",
+    "tests/unit/test_mcu_selection_record.py",
+    "docs/task_packets/issue-574-supersede-adr-0003.json"
+  ],
+  "acceptance": [
+    "A new ADR-0011 records MCU-BASE = STM32G474RET6, MCU-SAFETY = STM32G0B1, both FDCAN, the independent reset domain of the safety part, and the reason the change happened.",
+    "ADR-0003 gains Status: superseded by ADR-0011 and its decision text is not rewritten.",
+    "The new record states which core/ properties QEMU can still prove and which need Renode or the bench.",
+    "firmware/mcu/README.md stops describing hal/ch32v307/ as the board target and names the STM32 HAL directories a follow-up issue will populate.",
+    "bsp/board-manifest.yaml keeps controller_pcb_mcu_eco_from_legacy_ch32v307 unresolved; the ADR alone does not close it.",
+    "No C code changes."
+  ],
+  "commands": [
+    "python3 bsp/validation/validate_manifests.py",
+    "make docs",
+    "python3 tools/scripts/check_doc_references.py",
+    "python3 -m pytest -q tests/unit/test_mcu_selection_record.py",
+    "python3 -m ruff check tests/unit/test_mcu_selection_record.py",
+    "python3 -m ruff format --check tests/unit/test_mcu_selection_record.py"
+  ],
+  "evidence": [
+    "validate_manifests.py: PASS, unchanged.",
+    "make docs with mkdocs --strict: PASS, with ADR-0011 added to the navigation.",
+    "check_doc_references.py: PASS, 180 pages.",
+    "pytest tests/unit/test_mcu_selection_record.py: 18 passed, keeping the ADR, the manifest and the firmware README in agreement.",
+    "ruff check and ruff format --check clean.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "Reconciling the record would require editing ADR-0003 decision text rather than adding a status.",
+    "The change would require C code, a HAL directory population, or resolving the PCB eco; all three are follow-up issues.",
+    "A write outside allowed_paths is required, especially to bsp/board-manifest.yaml or firmware/mcu/core/**."
+  ],
+  "data_classification": "Repository-local Markdown, YAML and Python. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic Python and pytest; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "The ADR is written by an AI at the owner direction, so it records a selection rather than a bench-verified one. The record says so explicitly: selecting a part is not building it, and every evidence table keeps the hardware and HIL columns NOT_EXECUTED.",
+    "Narrowing what QEMU proves could be read as weakening the gate. It is the opposite: the previous claim was broader than the tool could support, and a green make qemu is now stated to be a core/-logic check rather than FDCAN evidence.",
+    "The README names hal/stm32g4/ and hal/stm32g0/ before they are populated, so a reader could look for code that is not there. Each line says which issue populates it, and the ch32v307 placeholder is marked as not the target.",
+    "Rollback is a revert of this commit: ADR-0003 returns to accepted and the README to naming ch32v307. No code depends on either."
+  ]
+}
