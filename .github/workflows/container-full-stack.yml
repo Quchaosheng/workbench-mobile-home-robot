@@ -216,6 +216,12 @@ jobs:
           exit 1
       - name: Container contract and deterministic checks
         run: make container-project-check
+      # Issue #579: the Revision D description and its frames artifact are checked
+      # here rather than in foundation-checks, because expanding the model needs
+      # `xacro` and only this image carries ros-jazzy-xacro. In a Python-only job
+      # the same target reports INCOMPLETE and skips; here it is a hard check.
+      - name: Validate the Revision D description and its frames artifact
+        run: make container-description-check
       - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
         with:
           image: workbench-1:container-ci

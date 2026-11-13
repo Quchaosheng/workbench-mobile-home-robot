@@ -366,7 +366,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.urdf is None:
-        root = model.expand()
+        try:
+            root = model.expand()
+        except ModuleNotFoundError as exc:
+            # `xacro` is a ROS package (ros-jazzy-xacro), not a pinned Python
+            # dependency, so a Python-only job cannot import it. "Could not run"
+            # and "ran and passed" are different findings, so this exits 2
+            # (INCOMPLETE) rather than 0 or the failure count (issue #579).
+            print(
+                f"INCOMPLETE: cannot expand the model: {exc}. "
+                "Install xacro (ros-jazzy-xacro) or pass an expanded URDF.",
+                file=sys.stderr,
+            )
+            return 2
         source = str(model.DESCRIPTION)
     else:
         root = ET.fromstring(args.urdf.read_text(encoding="utf-8"))

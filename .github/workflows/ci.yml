@@ -60,6 +60,18 @@ jobs:
       - if: github.event_name == 'pull_request'
         run: python tools/scripts/check_task_packet.py --all --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}"
       - run: make docs
+      # Issue #579: these Makefile targets existed and no workflow invoked them.
+      # They run as separate named steps so a failure names the check instead of
+      # the aggregate `make check`.
+      #
+      # `make description-check` is deliberately NOT here: expanding the Revision
+      # D model needs `xacro`, which is ros-jazzy-xacro and not a pinned Python
+      # dependency, so in this Python-only job the target can only report
+      # INCOMPLETE. It runs as a hard check in `container-full-stack`, where the
+      # image carries ROS. Running it here would either fail on a missing import
+      # or, worse, print a pass it did not earn.
+      - name: Check the issue and pull-request templates against the ready gate
+        run: make ready-gate
       - run: make demo-scripted
       - run: make demo-offline
 
@@ -79,6 +91,49 @@ jobs:
           python bsp/validation/check_readiness.py
       - name: Run BSP manifest tests
         run: python -m pytest tests/unit/test_bsp_manifests.py -q
+
+  # Issue #579: `make branch-protection-check` existed and no workflow ran it, so
+  # a drift between the committed ruleset and the repository settings was found
+  # only when someone typed the command by hand.
+  #
+  # The comparison needs the admin-scoped protection API, which the default
+  # `GITHUB_TOKEN` cannot read on a pull request from a fork and which is not
+  # granted to `pull_request` runs at all. The honest outcomes are therefore a
+  # recorded pass and a recorded skip, never a silent green: the step exits 2
+  # (INCOMPLETE) when it cannot observe, and this job turns that into a named
+  # `notice` annotation instead of a failure, because a red required check that
+  # no contributor can fix is a gate that gets bypassed. The comparison still
+  # fails closed on a contradiction it *can* read.
+  branch-protection:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install --require-hashes -r docker/requirements-dev.lock
+      - run: python -m pip install --no-deps -e .
+      - name: Compare the declared matrix with the live protection
+        env:
+          GITHUB_TOKEN: ${{ secrets.BRANCH_PROTECTION_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set +e
+          make branch-protection-check > branch-protection.txt 2>&1
+          status=$?
+          set -e
+          cat branch-protection.txt
+          case "$status" in
+            0)
+              echo "branch protection matches the declared matrix" ;;
+            2)
+              echo "::notice title=branch-protection::INCOMPLETE, not a pass: the live protection could not be observed. Set BRANCH_PROTECTION_TOKEN with admin scope to make this a gate. The committed declaration and the page are still checked by tests/unit/test_branch_protection_gate.py." ;;
+            *)
+              echo "::error title=branch-protection::the live protection contradicts the declared matrix"
+              exit "$status" ;;
+          esac
 
   container-smoke:
     runs-on: ubuntu-24.04

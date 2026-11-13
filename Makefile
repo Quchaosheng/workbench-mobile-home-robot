@@ -7,7 +7,7 @@ PYTHON ?= python3
 	container-build container-check container-colcon-build container-colcon-test container-image-verify \
 	container-python-test container-sim-check container-mujoco-check container-hardware-doctor dma-test \
 	gpio-test container-gpu-matrix-check container-host-doctor container-dashboard-check \
-	container-project-check property-gate mutation-gate quality-gates ready-gate lock-python lock-python-verify \
+	container-project-check container-description-check property-gate mutation-gate quality-gates ready-gate lock-python lock-python-verify \
 	assurance-check \
 	branch-protection-check release-commit-check readiness-report-check phase-gates-check description-check
 
@@ -245,6 +245,13 @@ container-dashboard-check:
 container-project-check:
 	docker compose run --rm dashboard bash -lc 'set -euo pipefail; test_root=$$(mktemp -d /tmp/workbench-project-check.XXXXXX); cp -a /workspace/src/. "$$test_root/"; cd "$$test_root"; PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTEST_ADDOPTS="--ignore=tests/unit/test_multi_host_deployment.py" make test && make contract && make scenario-check && make context-check && make demo-scripted'
 
+# The full-stack image carries ros-jazzy-xacro, so here `description-check` can
+# actually run instead of reporting INCOMPLETE. It is the hard half of the pair:
+# a hand-edited frames artifact fails this target, and this target runs in the
+# container job (issue #579).
+container-description-check:
+	docker compose run --rm dashboard bash -lc 'set -euo pipefail; test_root=$$(mktemp -d /tmp/workbench-description-check.XXXXXX); cp -a /workspace/src/. "$$test_root/"; cd "$$test_root"; make description-check'
+
 container-colcon-build:
 	docker compose run --rm dashboard colcon --log-base /workspace/log build --base-paths /workspace/src/robot/control --build-base /workspace/build --install-base /workspace/install --merge-install --packages-select workbench_motion
 
@@ -281,9 +288,27 @@ container-host-doctor:
 # generated frame artifact is current (Issue #327). The generator both writes and
 # verifies, so a stale or hand-edited artifact fails here instead of being read
 # as authoritative.
+# Validate first, then check the committed artifact without rewriting it.
+# `generate_frames.py` on its own regenerates the file, so a hand-edited frames
+# artifact was silently corrected before `--check` ever compared it: the target
+# could not fail, which is why Issue #579 could not rely on it. `--check` alone
+# compares and refuses a stale file; run the generator by hand when it must move.
+#
+# Expanding the model needs `xacro`, which is a ROS package (ros-jazzy-xacro) and
+# not a pinned Python dependency, so a Python-only job cannot import it. Both
+# tools exit 2 (INCOMPLETE) in that case. This target reports that as a named skip
+# with the reason, the way `branch-protection-check` reports an unobservable
+# protection: "we could not run it" is never printed as a pass, and the container
+# job, which has ROS, runs the same target as a hard check.
+DESCRIPTION_INCOMPLETE = 2
 description-check:
-	$(PYTHON) robot/description/revision_d/tools/validate_description.py
-	$(PYTHON) robot/description/revision_d/tools/generate_frames.py
+	@status=0; \
+	$(PYTHON) robot/description/revision_d/tools/validate_description.py || status=$$?; \
+	if [ "$$status" -eq $(DESCRIPTION_INCOMPLETE) ]; then \
+	  echo "SKIP description-check: xacro is unavailable here (INCOMPLETE, not a pass)"; \
+	  exit 0; \
+	fi; \
+	[ "$$status" -eq 0 ] || exit "$$status"; \
 	$(PYTHON) robot/description/revision_d/tools/generate_frames.py --check
 
 task-check:

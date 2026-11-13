@@ -154,7 +154,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    payload = build()
+    try:
+        payload = build()
+    except ModuleNotFoundError as exc:
+        # `xacro` is a ROS package (ros-jazzy-xacro), not a pinned Python
+        # dependency, so a Python-only job cannot import it. "Could not run" and
+        # "ran and passed" are different findings, so this exits 2 (INCOMPLETE)
+        # rather than 0 or 1 (issue #579).
+        print(
+            f"INCOMPLETE: cannot expand the model: {exc}. Install xacro (ros-jazzy-xacro).",
+            file=sys.stderr,
+        )
+        return 2
     expected = _serialize(payload)
 
     if args.check:

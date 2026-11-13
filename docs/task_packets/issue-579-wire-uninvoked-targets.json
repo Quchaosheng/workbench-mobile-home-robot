@@ -1,0 +1,102 @@
+{
+  "issue": 579,
+  "human_owner": "Quchaosheng",
+  "objective": "Wire the Makefile targets that CI never invoked into the workflow that already owns their checks, as separately named steps, so a failure names the check rather than the aggregate make check, and make description-check able to fail at all.",
+  "decision_supported": "Does every gate this repository declares actually run in CI, and can each one report a failure that names it?",
+  "allowed_paths": [
+    ".github/workflows/ci.yml",
+    "docs/security/branch-protection.md",
+    ".github/rulesets/main-protection.json",
+    "Makefile",
+    "tests/unit/test_branch_protection_gate.py",
+    "docs/task_packets/issue-579-wire-uninvoked-targets.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "tools/scripts/check_branch_protection.py",
+    "tools/scripts/check_ready_gate.py",
+    "tools/scripts/check_release_commit.py",
+    "robot/description/revision_d/tools/generate_frames.py",
+    "robot/description/revision_d/tools/validate_description.py",
+    ".github/workflows/release-image.yml",
+    "tests/fixtures/issue-224-legacy-protection.json"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    "robot/description/revision_d/generated/**",
+    ".github/workflows/security.yml",
+    ".github/workflows/container-full-stack.yml",
+    ".github/workflows/release-image.yml",
+    "tools/scripts/check_branch_protection.py",
+    "tools/scripts/check_release_commit.py"
+  ],
+  "input_refs": [
+    "Makefile",
+    ".github/workflows/ci.yml",
+    ".github/workflows/release-image.yml",
+    ".github/rulesets/main-protection.json",
+    "docs/security/branch-protection.md",
+    "tools/scripts/check_branch_protection.py",
+    "robot/description/revision_d/tools/generate_frames.py"
+  ],
+  "outputs": [
+    ".github/workflows/ci.yml",
+    "Makefile",
+    ".github/rulesets/main-protection.json",
+    "docs/security/branch-protection.md",
+    "tests/unit/test_branch_protection_gate.py",
+    "docs/task_packets/issue-579-wire-uninvoked-targets.json"
+  ],
+  "acceptance": [
+    "foundation-checks runs make description-check and make ready-gate as separate named steps, so a failure names the check rather than the aggregate make check.",
+    "make description-check can fail: it no longer runs generate_frames.py without --check, which rewrote a hand-edited artifact before --check compared it, so the target could not detect the condition it exists for.",
+    "make branch-protection-check runs in a job of its own, and the documented behaviour is explicit: exit 2 is reported as a named INCOMPLETE notice with the reason and the token to set, never as a silent pass, while a readable contradiction still fails the job.",
+    "make release-commit-check is not added to every pull request, because it reads the release commit; the release workflow already runs check_release_commit.py directly before building, which is the same gate.",
+    "The branch-protection job is added to .github/rulesets/main-protection.json and to the table in docs/security/branch-protection.md in the same change, so the declaration and the enforcement cannot disagree.",
+    "Tests fail on the previous state: removing the description-check wiring or restoring the generator-without-check line fails the suite.",
+    "The workflow YAML parses and every action reference stays pinned to a 40-character commit SHA."
+  ],
+  "commands": [
+    "make description-check",
+    "make ready-gate",
+    "python3 -m pytest -q tests/unit/test_branch_protection_gate.py",
+    "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\"",
+    "make docs",
+    "python3 -m ruff check tests/unit/test_branch_protection_gate.py",
+    "python3 -m ruff format --check tests/unit/test_branch_protection_gate.py",
+    "python3 tools/scripts/check_task_packet.py --all"
+  ],
+  "evidence": [
+    "make description-check on a clean tree: PASS; on a tree with one hand-edited value in revision-d-frames.json: exit 1 naming the file as stale or hand-edited, and the file is not rewritten.",
+    "make ready-gate: PASS.",
+    "Parsed YAML showing the branch-protection job exists with its steps, and that foundation-checks carries the two named steps.",
+    "pytest output for tests/unit/test_branch_protection_gate.py: 43 passed, and the same suite run against the previous state failing the two wiring tests.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones.",
+    "make docs, ruff check and ruff format --check output."
+  ],
+  "stop_conditions": [
+    "Wiring branch-protection-check as a hard required check would make every pull request red on a permission no contributor can grant; the issue asks for a named skip with a recorded reason, and a silent pass is equally forbidden.",
+    "release-commit-check must not run on every pull request, because it reads the release commit and its required checks; the release workflow already owns that gate.",
+    "A write outside allowed_paths is required, especially to another workflow or to a check script's logic.",
+    "description-check would have to keep regenerating the artifact in order to pass, which defeats the check rather than wiring it."
+  ],
+  "data_classification": "Repository-local workflow configuration, Makefile targets and public check names. No credentials are read, written or logged; the new job reads an optional secret and never prints it.",
+  "model_policy": "Deterministic Python, make and YAML only; no model inference and no external service calls added by this change.",
+  "risks_and_fallbacks": [
+    "A new required check named branch-protection that reports INCOMPLETE as a notice could be read as a pass. The job prints the reason and the token to set, the documentation states the outcome, and the committed declaration and page are still checked by the unit tests, so the gap is visible rather than silent.",
+    "Adding a ninth required check makes every pull request depend on a job that cannot fully observe without an admin token. That is why it reports INCOMPLETE rather than failing, and why the declaration records it as required only once the token exists.",
+    "description-check no longer regenerates the artifact, so a contributor who changes the description must run generate_frames.py by hand. The failure message names that command, so the fix is one line away.",
+    "Rollback is a revert of this commit: remove the three workflow steps and the job, restore the Makefile line and drop the declaration entry. Nothing reads these documents or targets at runtime, so nothing else changes."
+  ]
+}
