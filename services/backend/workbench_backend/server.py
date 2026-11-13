@@ -53,6 +53,9 @@ from .read_model import (
     redact_events,
     redacted_response,
 )
+from .readiness_view import ReadinessUnavailable
+from .readiness_view import project as project_readiness
+from .readiness_view import unavailable as readiness_unavailable
 from .remote_http import RemoteHttpError
 
 SOURCE_ROOT = Path(__file__).resolve().parents[3]
@@ -213,6 +216,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # Where the assurance register is read from. Separate from ``static_dir`` so a
     # test can point at an empty directory and assert the 503 path.
     assurance_root: Path | None = None
+    # Where the generated readiness report is read from. Same reason: a test points
+    # this at an empty directory to assert the "unavailable" path rather than a
+    # blank panel (issue #581).
+    readiness_root: Path | None = None
     logger = StructuredLogger("workbench-backend")
     data_source = "dashboard-fixtures"
     inbound_policy = InboundHttpPolicy()
@@ -533,6 +540,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(payload, api_version=api_version)
             return
+        if route in {"/api/readiness", "/api/v1/readiness"}:
+            # Issue #581: the evidence class of every scenario, read from the
+            # generated report. A report that cannot be read is reported as
+            # unavailable with its reason, never as an empty list: "no scenario has
+            # a class" and "the file that says so is missing" are different facts.
+            try:
+                payload = project_readiness(self.readiness_root)
+            except ReadinessUnavailable as exc:
+                self._send_json(readiness_unavailable(str(exc)), api_version=api_version)
+                return
+            self._send_json(payload, api_version=api_version)
+            return
         if route in {"/api/assurance", "/api/v1/assurance"}:
             try:
                 payload = project_assurance(self.assurance_root)
@@ -709,6 +728,7 @@ def create_server(
     data_dir: str | Path = DEFAULT_DATA_DIR,
     static_dir: str | Path = DEFAULT_STATIC_DIR,
     assurance_root: str | Path | None = None,
+    readiness_root: str | Path | None = None,
     event_source_url: str | None = None,
     event_source_allowlist: str | None = None,
     health_path: str | Path | None = None,
@@ -749,6 +769,7 @@ def create_server(
         configured_read_model = DashboardReadModel(data_dir)
     configured_static_dir = Path(static_dir)
     configured_assurance_root = Path(assurance_root) if assurance_root is not None else None
+    configured_readiness_root = Path(readiness_root) if readiness_root is not None else None
     configured_health_model = HealthReadModel(
         health_path if health_path is not None else Path(data_dir) / "health" / "health.jsonl",
         policy=configured_alert_policy,
@@ -760,6 +781,7 @@ def create_server(
         health_model = configured_health_model
         static_dir = configured_static_dir
         assurance_root = configured_assurance_root
+        readiness_root = configured_readiness_root
         data_source = configured_read_model.data_source if event_source_url else "dashboard-fixtures"
         inbound_policy = configured_inbound_policy
 

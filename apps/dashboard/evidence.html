@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f3f6f7">
+    <title>Workbench 1 · 证据等级</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="assurance.css">
+    <script defer src="evidence.js"></script>
+  </head>
+  <body class="assurance-page">
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="Workbench 1 任务状态">
+        <span class="brand-mark" aria-hidden="true">W</span>
+        <span>
+          <strong>Workbench 1</strong>
+          <small>证据等级</small>
+        </span>
+      </a>
+      <div class="header-status" role="status" aria-label="页面状态">
+        <span class="connection-dot"></span>
+        <span>只读</span>
+        <span class="header-divider"></span>
+        <span>生成的报告</span>
+      </div>
+    </header>
+
+    <main class="assurance-shell">
+      <section class="scope-banner" aria-labelledby="scope-heading">
+        <h1 id="scope-heading">每个场景的证据等级</h1>
+        <p class="scope-line" id="report-line">正在读取就绪报告…</p>
+        <p class="scope-note">
+          证据等级不是进度条。四个轴由弱到强是<b>软件</b>、<b>脚本夹具</b>、
+          <b>Gazebo 仿真</b>、<b>物理实机</b>；一个场景达到哪一轴就只标哪一轴，
+          不从相邻轴推断。本页只读生成的
+          <code>readiness-report-v1.json</code>，不重算、不覆盖、不改写。
+        </p>
+        <a class="scope-link" href="/">返回任务状态</a>
+      </section>
+
+      <!-- The unavailable state is its own element, never an empty table: "no
+           class could be read" and "no scenario has a class" are different facts. -->
+      <section class="panel is-unavailable" id="unavailable-panel" aria-labelledby="unavailable-heading" hidden>
+        <div class="panel-head">
+          <h2 id="unavailable-heading">就绪报告不可用</h2>
+          <p class="panel-sub" id="unavailable-message"></p>
+        </div>
+        <p class="source-note" id="unavailable-reason"></p>
+      </section>
+
+      <section class="metric-row" aria-label="证据等级统计" id="metric-row">
+        <article class="metric-card">
+          <p class="metric-label">场景</p>
+          <p class="metric-value"><span id="scenario-count">–</span></p>
+          <p class="metric-foot">已登记</p>
+        </article>
+        <article class="metric-card is-gap">
+          <p class="metric-label">可发布</p>
+          <p class="metric-value"><span id="eligible-count">–</span></p>
+          <p class="metric-foot" id="eligible-foot">release_eligible 为真</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">到达 Gazebo</p>
+          <p class="metric-value"><span id="gazebo-count">–</span></p>
+          <p class="metric-foot">物理实机为 0 时不得读作已验证</p>
+        </article>
+      </section>
+
+      <section class="panel" aria-labelledby="vocab-heading">
+        <div class="panel-head">
+          <h2 id="vocab-heading">四个轴</h2>
+          <p class="panel-sub">由弱到强。等级高的轴不会自动点亮等级低的轴以外的任何一格。</p>
+        </div>
+        <ol class="vocab-list" id="vocab-list"></ol>
+      </section>
+
+      <section class="panel" aria-labelledby="scenario-heading" id="scenario-panel">
+        <div class="panel-head">
+          <h2 id="scenario-heading">场景</h2>
+          <p class="panel-sub">
+            每一行显示它的执行状态、到达的轴和 <code>release_eligible</code>。
+            一个未发布的场景不会被样式化成成功。
+          </p>
+        </div>
+        <div class="table-wrap">
+          <table class="assurance-table evidence-table">
+            <thead>
+              <tr>
+                <th scope="col">场景</th>
+                <th scope="col">执行状态</th>
+                <th scope="col">到达的轴</th>
+                <th scope="col">可发布</th>
+              </tr>
+            </thead>
+            <tbody id="scenario-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <p class="source-note" id="source-note"></p>
+    </main>
+  </body>
+</html>

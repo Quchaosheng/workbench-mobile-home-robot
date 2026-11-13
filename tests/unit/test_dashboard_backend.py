@@ -1026,3 +1026,170 @@ class AssuranceApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadinessEvidenceClassTests(unittest.TestCase):
+    """Issue #581: the dashboard must show the evidence class of every scenario.
+
+    The repository's central honesty mechanism is the evidence class: a run that is
+    a ``SCRIPTED_FIXTURE`` must not read as a released capability. Until this
+    endpoint the dashboard showed a green "confirmed" row with no way to learn the
+    class, which is the misreading the design exists to prevent.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = create_server("127.0.0.1", 0)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base_url = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+
+    def test_the_endpoint_serves_every_scenario_with_its_class(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/api/v1/readiness", timeout=2) as response:
+            self.assertEqual(response.status, 200)
+            payload = json.loads(response.read())
+
+        self.assertTrue(payload["read_only"])
+        self.assertTrue(payload["scenarios"])
+        for row in payload["scenarios"]:
+            with self.subTest(identity=row["identity"]):
+                self.assertIn(
+                    row["execution_status"], {"SCRIPTED_FIXTURE", "GAZEBO", "PHYSICAL", "NOT_EXECUTED", "BLOCKED"}
+                )
+                self.assertIsInstance(row["release_eligible"], bool)
+                self.assertEqual(set(row["evidence_classes"]), {"software", "scripted_fixture", "gazebo", "physical"})
+
+    def test_every_committed_scenario_is_a_scripted_fixture_and_not_releasable(self) -> None:
+        """The fact a reader most needs, asserted against the committed report."""
+        with urllib.request.urlopen(f"{self.base_url}/api/v1/readiness", timeout=2) as response:
+            payload = json.loads(response.read())
+
+        self.assertEqual(payload["summary"]["release_eligible"], 0)
+        self.assertTrue(payload["no_release_eligible_scenario"])
+        for row in payload["scenarios"]:
+            with self.subTest(identity=row["identity"]):
+                self.assertEqual(row["execution_status"], "SCRIPTED_FIXTURE")
+                self.assertFalse(row["release_eligible"])
+                self.assertFalse(row["renders_as_success"])
+                # The axes are reached from the report, not inferred from a neighbour.
+                self.assertTrue(row["evidence_classes"]["software"]["reached"])
+                self.assertFalse(row["evidence_classes"]["physical"]["reached"])
+
+    def test_the_versioned_path_serves_the_same_document(self) -> None:
+        with urllib.request.urlopen(f"{self.base_url}/api/v1/readiness", timeout=2) as response:
+            versioned = json.loads(response.read())
+        with urllib.request.urlopen(f"{self.base_url}/api/readiness", timeout=2) as response:
+            unversioned = json.loads(response.read())
+        self.assertEqual(versioned["summary"], unversioned["summary"])
+
+    def test_the_page_and_its_assets_are_served(self) -> None:
+        for asset in ("/evidence.html", "/evidence.js", "/assurance.css"):
+            with urllib.request.urlopen(f"{self.base_url}{asset}", timeout=2) as response:
+                self.assertEqual(response.status, 200, asset)
+
+    def test_an_unreadable_report_is_an_explicit_unavailable_state(self) -> None:
+        """A missing report must not render as "no scenario has a class"."""
+        with tempfile.TemporaryDirectory() as directory:
+            server = create_server("127.0.0.1", 0, static_dir=directory, readiness_root=directory)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            try:
+                with urllib.request.urlopen(f"{base}/api/v1/readiness", timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    payload = json.loads(response.read())
+                self.assertFalse(payload["available"])
+                self.assertEqual(payload["scenarios"], [])
+                self.assertIsNone(payload["summary"])
+                # The message says the class is unknown, not that there is none.
+                self.assertIn("无法判断", payload["message"])
+                self.assertIn("不推断", payload["message"])
+                self.assertTrue(payload["reason"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_a_report_with_a_missing_axis_is_unavailable_rather_than_false(self) -> None:
+        """A missing axis is not `false`: `false` is a claim, a gap is not readable."""
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "docs" / "evaluation" / "readiness-report-v1.json"
+            report.parent.mkdir(parents=True)
+            report.write_text(
+                json.dumps(
+                    {
+                        "report_version": "readiness-report-v1",
+                        "scenarios": [
+                            {
+                                "identity": "x@0.1",
+                                "execution_status": "SCRIPTED_FIXTURE",
+                                "evidence_classes": {"software": True, "scripted_fixture": True},
+                                "release_eligible": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            server = create_server("127.0.0.1", 0, readiness_root=directory)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            try:
+                with urllib.request.urlopen(f"{base}/api/v1/readiness", timeout=2) as response:
+                    payload = json.loads(response.read())
+                self.assertFalse(payload["available"])
+                self.assertIn("axis", payload["reason"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+
+class EvidenceClassRenderingTests(unittest.TestCase):
+    """The class-to-style mapping is tested here, not only in the browser.
+
+    A change that maps `SCRIPTED_FIXTURE` onto green styling must fail a test rather
+    than ship, which is the acceptance criterion this class exists for.
+    """
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services" / "backend"))
+        from workbench_backend import readiness_view
+
+        self.view = readiness_view
+
+    def test_a_scripted_fixture_is_never_styled_as_success(self) -> None:
+        payload = self.view.project()
+        for row in payload["scenarios"]:
+            with self.subTest(identity=row["identity"]):
+                self.assertEqual(row["execution_status"], "SCRIPTED_FIXTURE")
+                self.assertFalse(row["renders_as_success"])
+
+    def test_not_executed_is_a_non_success_status(self) -> None:
+        self.assertIn("NOT_EXECUTED", self.view.NON_SUCCESS_STATUSES)
+        self.assertIn("BLOCKED", self.view.NON_SUCCESS_STATUSES)
+        self.assertNotIn("GAZEBO", self.view.NON_SUCCESS_STATUSES)
+
+    def test_the_four_axes_are_ordered_weakest_first(self) -> None:
+        self.assertEqual(self.view.EVIDENCE_CLASSES, ("software", "scripted_fixture", "gazebo", "physical"))
+
+    def test_every_axis_has_a_label_in_the_ui_language(self) -> None:
+        for name in self.view.EVIDENCE_CLASSES:
+            with self.subTest(axis=name):
+                self.assertTrue(self.view.CLASS_LABELS[name].strip())
+
+    def test_the_javascript_reads_the_server_decision_instead_of_deciding(self) -> None:
+        """The style must come from `renders_as_success`, not from a local rule."""
+        script = (Path(__file__).resolve().parents[2] / "apps" / "dashboard" / "evidence.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("renders_as_success", script)
+        # A local `release_eligible && ...` decision would be a second rule.
+        self.assertNotIn("release_eligible &&", script)

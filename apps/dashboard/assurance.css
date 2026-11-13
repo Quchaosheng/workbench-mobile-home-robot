@@ -347,3 +347,89 @@
     max-width: 100%;
   }
 }
+
+/* Evidence-class view (issue #581).
+ *
+ * The axis chips exist so an absent axis is visible rather than omitted. A blank
+ * cell would read as "not applicable"; a dimmed chip reads as "did not reach it",
+ * which is the fact the report states.
+ */
+.vocab-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.vocab-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line, #d8e0e3);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.vocab-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--muted-bg, #eef3f5);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.vocab-name {
+  font-weight: 600;
+}
+
+.axis-chip {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+
+.axis-chip.is-reached {
+  background: #e7f4ea;
+  border-color: #b6ddc0;
+  color: #1f6b36;
+}
+
+/* Not a success colour and not the success colour dimmed: an axis that was not
+ * reached is drawn as absent. */
+.axis-chip.is-absent {
+  background: #f2f2f2;
+  border-color: #dcdcdc;
+  color: #8a8a8a;
+  text-decoration: line-through;
+}
+
+.evidence-table tr.is-not-success {
+  background: #fffdf7;
+}
+
+.cell-code-block {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted, #6b7a80);
+}
+
+.panel.is-unavailable {
+  border-color: #e2c9a0;
+  background: #fffaf1;
+}
+
+.panel.is-unavailable[hidden],
+[hidden] {
+  display: none !important;
+}
