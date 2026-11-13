@@ -744,5 +744,66 @@ class DocumentedGuaranteeTests(unittest.TestCase):
                 self.assertIn(f"`{name}`", observed_section, f"{name} is observed-only but not listed as such")
 
 
+class UninvokedTargetTests(unittest.TestCase):
+    """Issue #579: a Makefile target no workflow runs is not a gate.
+
+    `make branch-protection-check`, `make description-check` and `make
+    ready-gate` all existed and were never invoked by CI, so a drift between the
+    committed ruleset and the repository settings, a hand-edited frames artifact
+    or a template that no longer matched the gate was found only when someone
+    typed the command by hand.
+    """
+
+    def test_the_branch_protection_check_runs_in_ci(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("make branch-protection-check", workflow)
+
+    def test_an_unobservable_live_protection_is_a_named_skip_not_a_silent_pass(self) -> None:
+        """Exit 2 must be reported as INCOMPLETE with a reason, not swallowed."""
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        section = workflow.split("make branch-protection-check", 1)[1].split("container-smoke:", 1)[0]
+        # The step distinguishes a recorded pass from an unobservable run.
+        self.assertIn("INCOMPLETE", section)
+        self.assertIn("::notice", section)
+        # A readable contradiction still fails the job.
+        self.assertIn("::error", section)
+        self.assertIn("exit", section)
+
+    def test_the_ready_gate_target_runs_in_ci(self) -> None:
+        self.assertIn("make ready-gate", CI_WORKFLOW.read_text(encoding="utf-8"))
+
+    def test_the_description_check_runs_where_xacro_exists(self) -> None:
+        """`description-check` needs `xacro`, which only the image carries.
+
+        Running it in the Python-only `foundation-checks` job failed on a missing
+        import the first time CI saw this change, which is exactly the kind of
+        wiring that looks done and is not. It belongs in the container job.
+        """
+        container = CONTAINER_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("make container-description-check", container)
+
+        ci = CI_WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "run: make description-check",
+            ci,
+            "foundation-checks has no xacro, so this step can only fail or skip",
+        )
+
+    def test_the_description_check_refuses_a_hand_edited_frames_artifact(self) -> None:
+        """`generate_frames.py` rewrote the file before `--check` compared it.
+
+        The target ran the generator first, so a hand-edited frames artifact was
+        silently corrected and `--check` always passed. It now only compares.
+        """
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        target = makefile.split("\ndescription-check:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("--check", target)
+        self.assertNotIn(
+            "generate_frames.py\n",
+            target + "\n",
+            "the generator rewrites the artifact and defeats --check",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

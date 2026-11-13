@@ -18,6 +18,7 @@ while one is red or missing.
 |---|---|---|
 | `foundation-checks` | ci | lint, tests, contracts, scenarios, golden set, context, demos |
 | `bsp-manifests` | ci | BSP manifest and readiness validation |
+| `branch-protection` | ci | the committed matrix still matches the live protection, or records an explicit INCOMPLETE |
 | `container-smoke` | ci | the container image builds and runs the goal end to end |
 | `kernel-module` | ci | `wbcan.ko` builds and the fault suite reports real results |
 | `mcu-qemu` | ci | the freestanding MCU target builds and runs under QEMU |

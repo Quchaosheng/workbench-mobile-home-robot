@@ -6,6 +6,7 @@
   "required_status_checks": [
     "foundation-checks",
     "bsp-manifests",
+    "branch-protection",
     "container-smoke",
     "kernel-module",
     "mcu-qemu",
