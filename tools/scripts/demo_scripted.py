@@ -14,6 +14,11 @@ enable_local_packages()
 from workbench_agent_runtime import build_template_plan
 from workbench_backend.logging import StructuredLogger
 from workbench_contracts import ActionOutcome, ActionResult, DeviceState, DispatchState, WorldEvent, WorldEventType
+
+# `workbench_virtual_mcu` is a LEGACY stub, not safety evidence: see the
+# "Authority boundary" paragraph in firmware/mcu/README.md. The canonical
+# implementation is firmware/mcu/core/state_machine.c, and the two are not in
+# parity (tests/property/test_virtual_mcu_parity.py records the difference).
 from workbench_virtual_mcu import VirtualMcu
 from workbench_world_model import (
     SQLiteEventStore,

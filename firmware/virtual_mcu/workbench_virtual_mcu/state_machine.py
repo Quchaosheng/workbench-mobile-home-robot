@@ -1,3 +1,28 @@
+"""Legacy compatibility stub for the MCU state machine. NOT safety evidence.
+
+This module is a Python model of the P0 safety boundary that the repository once
+used as its reference. It is **retired as a safety reference and parity oracle**;
+it remains only as a legacy compatibility stub for earlier Python consumers. See
+`firmware/mcu/README.md`, "Authority boundary", for the sentence this repeats.
+
+The authoritative implementation is `firmware/mcu/core/state_machine.c`, and the
+two are **not** in parity. One difference is recorded by
+`tests/property/test_virtual_mcu_parity.py`: the C dispatch rejects `STOP` in
+`MCU_STATE_FAULT` (`MCU_FAULT_STOP_REJECTED`), while this stub accepts it from
+every state. That is a finding, not a bug to fix here -- the stub is not the
+reference, so the C behaviour wins and this file must not be quoted as evidence
+that the firmware does what it does.
+
+A green property or mutation gate that names this module is therefore **software
+evidence about a test double**, not firmware evidence. The gate archives carry the
+label `legacy` for that reason.
+
+What this module is good for: a deterministic, dependency-free double for the
+offline demo and for property tests of the surrounding plumbing. What it is not:
+proof that any MCU behaves this way, that a CAN frame is well-formed, or that a
+stop was physically achieved.
+"""
+
 from dataclasses import dataclass
 from enum import StrEnum
 

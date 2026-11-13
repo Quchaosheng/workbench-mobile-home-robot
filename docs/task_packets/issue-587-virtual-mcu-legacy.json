@@ -1,0 +1,92 @@
+{
+  "issue": 587,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the legacy boundary of workbench_virtual_mcu explicit in the artifacts rather than in one README sentence: label it legacy in the gate registries, point every consumer at the authority paragraph, and settle whether the parity claim is earned by comparing the transitions both implementations share.",
+  "decision_supported": "Is workbench_virtual_mcu a safety reference or a test double, and does a green property gate say which?",
+  "allowed_paths": [
+    "tools/scripts/quality_gates.py",
+    "tools/scripts/demo_scripted.py",
+    "tests/property/**",
+    "firmware/virtual_mcu/**",
+    "docs/task_packets/issue-587-virtual-mcu-legacy.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "firmware/mcu/README.md",
+    "firmware/mcu/core/state_machine.c",
+    "firmware/mcu/core/state_machine.h",
+    "tests/unit/test_assurance_matrix.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**",
+    "firmware/mcu/core/state_machine.c"
+  ],
+  "input_refs": [
+    "firmware/mcu/README.md",
+    "firmware/mcu/core/state_machine.c",
+    "firmware/virtual_mcu/workbench_virtual_mcu/state_machine.py",
+    "tools/scripts/quality_gates.py",
+    "tools/scripts/demo_scripted.py",
+    "tests/property/test_property_state_transitions.py"
+  ],
+  "outputs": [
+    "firmware/virtual_mcu/workbench_virtual_mcu/state_machine.py",
+    "tools/scripts/quality_gates.py",
+    "tools/scripts/demo_scripted.py",
+    "tests/property/test_property_state_transitions.py",
+    "tests/property/test_virtual_mcu_parity.py",
+    "docs/task_packets/issue-587-virtual-mcu-legacy.json"
+  ],
+  "acceptance": [
+    "The mutation and property gate registries label the module legacy through MODULE_LABELS, so a green run cannot be quoted as firmware evidence without the label.",
+    "Every consumer of VirtualMcu carries a comment pointing at the authority paragraph in firmware/mcu/README.md.",
+    "A transition both implementations share is compared against the C source, so the word parity is either earned or dropped.",
+    "The comparison finds a real disagreement and records it as a finding rather than fixing it here: the C dispatch rejects STOP in MCU_STATE_FAULT with MCU_FAULT_STOP_REJECTED, while the stub accepts STOP from every state and lands in SAFE_STOP.",
+    "The module docstring states that it is a legacy stub and not safety evidence, names the C implementation as the authority, and records the disagreement.",
+    "The demo and the property suite pass unchanged: this issue adds labels and one comparison, not a behaviour change.",
+    "The README authority paragraph is unchanged."
+  ],
+  "commands": [
+    "python3 -m pytest -q tests/property/test_virtual_mcu_parity.py",
+    "python3 -m pytest -q tests/property/test_property_state_transitions.py",
+    "make demo-scripted",
+    "python3 -m ruff check tools/scripts/quality_gates.py tools/scripts/demo_scripted.py tests/property/ firmware/virtual_mcu/",
+    "python3 -m ruff format --check tools/scripts/quality_gates.py tools/scripts/demo_scripted.py tests/property/ firmware/virtual_mcu/",
+    "make docs"
+  ],
+  "evidence": [
+    "pytest tests/property/test_virtual_mcu_parity.py: 9 passed.",
+    "pytest tests/property/test_property_state_transitions.py: 7 passed, unchanged, which is the evidence that no behaviour moved.",
+    "make demo-scripted: PASS, unchanged.",
+    "The recorded disagreement, asserted from both sides: the C STOP case contains MCU_STATE_FAULT, MCU_RESULT_REJECTED and MCU_REASON_STOP_REJECTED; the stub accepts stop from FAULT and reaches SAFE_STOP.",
+    "The transitions that do agree, asserted from both sides: BEGIN_MOVE requires IDLE and enters EXECUTING; COMPLETE requires EXECUTING and enters IDLE; BEGIN_MOVE from EXECUTING is rejected by both.",
+    "ruff check and ruff format --check clean; make docs PASS.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "The two implementations would have to be changed into parity; the issue says record the disagreement rather than fix it here, because the stub is not the reference.",
+    "The C implementation would have to be edited to match the stub; the C behaviour is the authority.",
+    "The freestanding target would have to be built and run to compare behaviour; the comparison reads the decision table from the source instead, because a Python test run has no ARM toolchain, and the test says so.",
+    "A write outside allowed_paths is required, especially to firmware/mcu/core/**."
+  ],
+  "data_classification": "Repository-local C, Python and Markdown. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic Python and source reading; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "Labelling the module legacy could be read as retiring it. The label says what the evidence is worth, not that the double is useless: the demo and property suite still run through it, and MODULE_LABELS defaults every other module to authoritative.",
+    "Reading the C source instead of executing it means a semantic change that keeps the same shape would not be caught. The tests assert the guard, the target state and the rejection reason by name, so a changed decision fails even if the function names stay.",
+    "Recording the STOP-in-FAULT disagreement without fixing it leaves two behaviours in the tree. That is deliberate and stated: the stub is not the reference, so nothing downstream should rely on its behaviour, and a consumer that needs the C behaviour must use the C implementation.",
+    "Rollback is a revert of this commit: the module loses its docstring and the gates lose their labels. No behaviour changes either way."
+  ]
+}
