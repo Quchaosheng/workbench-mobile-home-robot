@@ -9,3 +9,7 @@ diagnostic_bundle,yes,checksum and time range,redact secrets
 containment_action,yes,stop_use|rollback|RMA,never bypass guards
 root_cause,when_known,controlled defect taxonomy,distinguish symptom from cause
 evidence_refs,yes,logs photos video return record,retain chain of custody
+run_id,yes,run identifier from the runtime event log,never a copied file path
+configuration_hash,yes,release hash the run executed,never request credentials
+hold_id,when_severity_is_S0_or_S1,hold-<case_id>,opened in the same operation as the case
+hold_release,when_released,released_by plus reason plus UTC timestamp,closing a case does not release the hold

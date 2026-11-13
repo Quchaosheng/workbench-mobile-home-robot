@@ -69,3 +69,28 @@ evidence must be completed before production deployment.
 Use `case-template.csv` for the minimum evidence record and
 `escalation-matrix.csv` for response/containment ownership. The templates do not
 contain customer data or claim staffing is already in place.
+
+## Opening a case that carries its evidence
+
+`support_case.py` is the bridge from a case to the artifacts a run produces. An S0
+or S1 case opens an incident hold against its `run_id` and its `unit_serial` in the
+same operation that creates the case, so a case cannot exist unbacked. A hold that
+cannot be opened leaves no case behind either.
+
+The hold outranks retention: `deletion_decision` in
+`libs/application/workbench/application/data_governance.py` reports the hold as the
+reason the run's event log, hardware record and release evidence cannot be deleted,
+even after their retention window closes. S3 cases open no hold and say so.
+
+Closing a case does **not** release its hold. Release is a separate action with an
+author, a reason and a timestamp, because the moment an incident is over is not the
+moment its evidence may be destroyed.
+
+The case references evidence by the identifiers the runtime already uses, `run_id`
+and `configuration_hash`, not by copied file paths, so a retention expiry is
+detectable rather than silent. A case against a run identifier that does not exist
+is refused at creation instead of being discovered missing mid-investigation.
+
+This module does not change the retention table. `GOVERNANCE_RULES_VERSION` and
+every `DataPolicy` value are untouched; a change to a retention value is its own
+issue with the data owner.

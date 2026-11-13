@@ -1,0 +1,91 @@
+{
+  "issue": 590,
+  "human_owner": "Quchaosheng",
+  "objective": "Bridge a support case to the artifacts the runtime produces: creating an S0 or S1 case opens an incident hold against its run identifier and unit serial in the same operation, closing a case does not release the hold, and release is a separate recorded action.",
+  "decision_supported": "Can an incident's evidence be destroyed by ordinary retention while the case that needs it is still open, and is the answer produced by the existing governance rule rather than a second one written for support?",
+  "allowed_paths": [
+    "hardware/support/**",
+    "docs/deployment/**",
+    "tests/unit/test_support_case.py",
+    "docs/task_packets/issue-590-support-case-evidence-hold.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "libs/application/workbench/application/data_governance.py",
+    "docs/security/compliance-matrix.md",
+    "tests/unit/test_data_governance.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/mechanical/**",
+    "hardware/pcb/**",
+    "hardware/power/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**"
+  ],
+  "input_refs": [
+    "hardware/support/README.md",
+    "hardware/support/case-template.csv",
+    "hardware/support/escalation-matrix.csv",
+    "libs/application/workbench/application/data_governance.py",
+    "docs/deployment/data-governance.md",
+    "tests/unit/test_data_governance.py"
+  ],
+  "outputs": [
+    "hardware/support/support_case.py",
+    "hardware/support/case-template.csv",
+    "hardware/support/README.md",
+    "tests/unit/test_support_case.py",
+    "docs/task_packets/issue-590-support-case-evidence-hold.json"
+  ],
+  "acceptance": [
+    "A support case is created with a severity, and creating an S0 or S1 case opens a hold against the run identifier and the unit serial in the same operation, so a case cannot exist unbacked.",
+    "A hold that cannot be opened leaves no case and no partial hold behind: the rollback releases only what that call opened, not a pre-existing hold with the same identifier.",
+    "The hold blocks deletion of the case's evidence classes even after their retention expires, and deletion_decision reports the hold as the reason.",
+    "S3 cases open no hold and say so through holds_evidence being false, so a cosmetic defect cannot hold evidence forever.",
+    "Closing a case does not silently release the hold: release is a separate, recorded action with an author, a reason and a timestamp, matching HoldRegister.release semantics.",
+    "The case record references evidence by the identifiers the runtime already uses (run_id, configuration_hash), not by copied file paths.",
+    "A case whose run identifier does not exist is refused at creation rather than accepted and discovered missing during the investigation.",
+    "case-template.csv gains the columns this needs; escalation-matrix.csv is unchanged.",
+    "The retention table and GOVERNANCE_RULES_VERSION are unchanged, and test_data_governance.py passes untouched."
+  ],
+  "commands": [
+    "python3 -m pytest -q tests/unit/test_support_case.py",
+    "python3 -m pytest -q tests/unit/test_data_governance.py",
+    "python3 -m ruff check hardware/support/support_case.py tests/unit/test_support_case.py",
+    "python3 -m ruff format --check hardware/support/support_case.py tests/unit/test_support_case.py",
+    "make docs",
+    "make check"
+  ],
+  "evidence": [
+    "pytest output for tests/unit/test_support_case.py: 27 passed, covering the S0 hold, the S3 no-hold case, the separated release, the unknown-run refusal and the rollback of a partially opened hold.",
+    "pytest output for tests/unit/test_data_governance.py: 34 passed unchanged, which is the evidence that the policy table did not move.",
+    "A recorded S0 case with its two holds and the deletion_decision output showing the hold as the reason deletion is refused after 400 days.",
+    "make docs PASS, ruff check and ruff format --check clean.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "The work would require changing a retention value or GOVERNANCE_RULES_VERSION; that table is versioned and changing it is its own issue with the data owner.",
+    "The work would require a change to libs/application/workbench/application/data_governance.py behaviour rather than consuming it.",
+    "A write outside allowed_paths is required, especially to escalation-matrix.csv or to any governance module.",
+    "Answering the severity question would require a product decision about which severities hold evidence; the issue's own table and escalation matrix already answer it, so a disagreement there is a stop rather than a silent choice."
+  ],
+  "data_classification": "Repository-local Python and CSV. The module handles run and unit identifiers and a symptom narrative; it reads no credentials, writes no personal data and copies no evidence paths.",
+  "model_policy": "Deterministic Python and a local pytest run; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "Holding the wrong evidence class would either over-retain or leave an incident unprotected. The module holds run_event_log, hardware_record and release_evidence, and deliberately not camera_evidence, which is the class the 30-day retention is written for; holding every frame of every S0 case would cover more than the investigation needs.",
+    "Two holds per case could be mistaken for a wildcard. They are scoped to the run and the unit separately so a case about one unit does not protect every other run, and a test asserts that a second run is not covered.",
+    "A caller could pass no run index and skip the unknown-run check. That is recorded rather than hidden: known_runs=None means the caller has no index, and the check is the caller's to supply.",
+    "Rollback is a revert of this commit: stop opening holds at case creation. Existing holds stay visible and releasable, so nothing becomes permanently undeletable, and the governance table is untouched."
+  ]
+}
