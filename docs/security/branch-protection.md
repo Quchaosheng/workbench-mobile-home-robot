@@ -11,6 +11,9 @@ It is the declaration of intent; it is not itself the enforcement. The
 enforcement lives in the repository settings, and `tools/scripts/check_branch_protection.py`
 compares the two.
 
+The eight checks below are `required_status_checks`: a pull request cannot merge
+while one is red or missing.
+
 | Job | Workflow | What it proves |
 |---|---|---|
 | `foundation-checks` | ci | lint, tests, contracts, scenarios, golden set, context, demos |
@@ -18,14 +21,39 @@ compares the two.
 | `container-smoke` | ci | the container image builds and runs the goal end to end |
 | `kernel-module` | ci | `wbcan.ko` builds and the fault suite reports real results |
 | `mcu-qemu` | ci | the freestanding MCU target builds and runs under QEMU |
-| `static-and-cpu-image` | container-full-stack | full-stack image, CPU smoke, SBOM and vulnerability scan |
 | `codeql-python` | security | static analysis for Python |
 | `codeql-c-cpp` | security | static analysis for the kernel and MCU C code |
 | `dependency-review` | security | newly introduced high/critical advisories |
 
+One further check runs on every pull request and is declared
+`observed_but_not_required`, so it does **not** block a merge:
+
+| Job | Workflow | Why it is observed but not required |
+|---|---|---|
+| `static-and-cpu-image` | container-full-stack | full-stack image, CPU smoke, SBOM and vulnerability scan. It fails on base-layer CVEs a code change cannot fix, so requiring it would mean no pull request could ever be greener than `main`. Its result is still visible on every pull request; see `observed_but_not_required` in the declaration for the condition that revisits this. |
+
 `strict_required_status_checks` is `true`, so a pull request must be up to date
-with `main` before it merges. A stale approval is dismissed when new commits
-arrive, and unresolved review conversations block the merge.
+with `main` before it merges.
+
+The declaration sets `require_pull_request` to `false` and
+`required_approving_review_count` to `0`, so an approving review is **not**
+required, a stale approval is **not** dismissed on push, and unresolved review
+conversations do **not** block the merge. That is deliberate and it is stated
+here rather than implied, because the previous version of this paragraph claimed
+the opposite of the committed declaration (issue #593).
+
+The reason is in the declaration's `review_policy`: the repository has one active
+maintainer and no reviewer who could approve, so the requirement was
+unsatisfiable and satisfying it meant recording an administrator bypass before
+every merge. A gate that is bypassed every time is not a gate. What actually
+reviews a change is the status matrix — eight required checks including the
+property and mutation gates — with administrator bypass disabled, so those checks
+cannot be skipped either. See "Approving reviews" below for the condition that
+restores the count to 1.
+
+`tools/scripts/check_branch_protection.py` now reads this page and refuses a
+declaration that contradicts a guarantee written here, so this paragraph cannot
+drift away from `.github/rulesets/main-protection.json` again.
 
 ## Trigger policy: a required check must always report
 

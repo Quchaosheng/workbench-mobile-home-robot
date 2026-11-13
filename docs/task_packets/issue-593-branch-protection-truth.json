@@ -1,0 +1,90 @@
+{
+  "issue": 593,
+  "human_owner": "Quchaosheng",
+  "objective": "Make the branch-protection page state what the committed ruleset actually requires, and make the checker refuse a declaration whose prose contradicts it, so a documented review guarantee cannot be asserted while no artifact tests it.",
+  "decision_supported": "Does the page a reader trusts describe the same review requirements that .github/rulesets/main-protection.json declares, and does a command fail when the two disagree?",
+  "allowed_paths": [
+    "docs/security/branch-protection.md",
+    "tools/scripts/check_branch_protection.py",
+    "tests/unit/test_branch_protection_gate.py",
+    "docs/task_packets/issue-593-branch-protection-truth.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "docs/project-management/exit-gate.md",
+    "tests/fixtures/issue-224-legacy-protection.json",
+    "tests/fixtures/issue-224-check-runs.json",
+    "tools/scripts/_paths.py"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/workflows/**",
+    ".github/rulesets/main-protection.json",
+    "tools/scripts/check_release_commit.py",
+    "tools/scripts/check_task_packet.py"
+  ],
+  "input_refs": [
+    ".github/rulesets/main-protection.json",
+    "docs/security/branch-protection.md",
+    "tools/scripts/check_branch_protection.py",
+    "tests/unit/test_branch_protection_gate.py",
+    "tests/fixtures/issue-224-legacy-protection.json"
+  ],
+  "outputs": [
+    "docs/security/branch-protection.md",
+    "tools/scripts/check_branch_protection.py",
+    "tests/unit/test_branch_protection_gate.py",
+    "docs/task_packets/issue-593-branch-protection-truth.json"
+  ],
+  "acceptance": [
+    "One direction is chosen and applied: the page now says the declaration requires no approving review, does not dismiss a stale approval on push and does not block on unresolved conversations, and says why.",
+    "The reason is the one the two most recent commits already recorded: one active maintainer and no reviewer who could approve, so the requirement was unsatisfiable and every merge needed a recorded administrator bypass; what reviews a change is the status matrix with administrator bypass disabled.",
+    "The checker refuses a declaration whose prose contradicts it: prose_reasons reads the page and reports a declaration that disables a guarantee the page states, for the three review guarantees the page can make.",
+    "The prose comparison runs before the live comparison, so a contradiction is caught without a token, and --prose selects the page.",
+    "check_branch_protection.py --live still works with a recorded payload, so the comparison is exercised without an admin token.",
+    "The page's table matches required_status_checks exactly and lists static-and-cpu-image separately as observed_but_not_required with the reason it does not gate a merge.",
+    "No other security document changes and .github/rulesets/main-protection.json is unchanged: this issue corrects one page and one checker, not the declaration.",
+    "A new test feeds require_pull_request false together with a documented stale-review guarantee and expects a FAIL verdict, and the same for the conversation-resolution and approval guarantees."
+  ],
+  "commands": [
+    "python3 tools/scripts/check_branch_protection.py --live tests/fixtures/issue-224-legacy-protection.json",
+    "python3 -m pytest -q tests/unit/test_branch_protection_gate.py",
+    "make docs",
+    "python3 -m ruff check tools/scripts/check_branch_protection.py tests/unit/test_branch_protection_gate.py",
+    "python3 -m ruff format --check tools/scripts/check_branch_protection.py tests/unit/test_branch_protection_gate.py",
+    "python3 tools/scripts/check_task_packet.py --all"
+  ],
+  "evidence": [
+    "check_branch_protection.py before the page fix: the documented review guarantees contradict the declaration, naming dismiss_stale_reviews_on_push and require_conversation_resolution, exit code 1.",
+    "The same command after the fix: it proceeds to the live comparison and reports the legacy payload's real gaps, which is the behaviour that was intended.",
+    "pytest output for tests/unit/test_branch_protection_gate.py: 47 passed, including the three contradiction cases, the happy path, the silence case, the CLI refusal without a token and the table-versus-declaration case.",
+    "make docs output, PASS.",
+    "ruff check and ruff format --check output, both clean.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "Applying the other direction would require editing .github/rulesets/main-protection.json to require a pull request and one approving review; the issue allows either direction but the repository cannot satisfy a review requirement today, and the declaration is read-only in this packet.",
+    "The change would have to weaken check_branch_protection.py's existing exit-code contract or treat an unobservable live configuration as a pass.",
+    "A write outside allowed_paths is required, especially to another workflow or to the ruleset declaration.",
+    "The page would have to be corrected by deleting the whole section rather than stating what the declaration requires and why."
+  ],
+  "data_classification": "Repository-local Markdown, Python and a committed JSON declaration. No credentials, private data or unreviewed assets are read, written or logged.",
+  "model_policy": "Deterministic Python and a local pytest run; no model inference and no network access added by this change. The live comparison is exercised through a recorded payload.",
+  "risks_and_fallbacks": [
+    "The prose matcher could flag a page that quotes a guarantee in order to deny it. The patterns are written to match the asserting sentence rather than the negated form, and the page is written to state the negation plainly; a false positive is a one-line pattern change, not a gate failure that can be ignored.",
+    "The prose check could be bypassed by rewording the page so it no longer matches a pattern while still overclaiming. That is the same class of gap the issue describes, and the table-versus-declaration test covers the mechanical half; a reviewer still judges the prose.",
+    "Rollback is a revert of this commit: restore the two paragraphs and remove prose_reasons and its tests. The declaration is untouched, so nothing about enforcement changes on rollback; only the detection of the contradiction is lost."
+  ]
+}
