@@ -1,4 +1,5 @@
 from collections import Counter
+from pathlib import Path
 
 from _jsonio import load_json
 from _paths import ROOT, enable_local_packages
@@ -14,6 +15,32 @@ from scenario_tools import (
     validate_simulation_manifest,
 )
 
+#: Where a `world_version` resolves. The file name is the version string with the
+#: characters a path cannot carry replaced, so `WorkbenchSim-v0.2` becomes
+#: `workbench_household_v0.2.sdf`. Issue #542: before this map existed,
+#: `world_version` was a string nothing resolved, and a manifest could name a
+#: world that was never committed. The failure surfaced at run time as a missing
+#: model URI instead of at load.
+WORLD_ROOT = ROOT / "sim" / "worlds"
+
+#: The versions this repository has committed a world file for.
+WORLD_FILES: dict[str, str] = {
+    "WorkbenchSim-v0": "workbench_tabletop_v0.sdf",
+    "WorkbenchSim-v0.2": "workbench_household_v0.2.sdf",
+}
+
+
+def world_path(version: str) -> Path:
+    """Resolve a `world_version` to its committed file, or raise."""
+    name = WORLD_FILES.get(version)
+    if name is None:
+        known = ", ".join(sorted(WORLD_FILES)) or "(none)"
+        raise RuntimeError(f"world_version {version!r} has no committed world file (known: {known})")
+    path = WORLD_ROOT / name
+    if not path.is_file():
+        raise RuntimeError(f"world_version {version!r} names {name}, which is not committed")
+    return path
+
 
 def main() -> int:
     scenario_files = sorted((ROOT / "sim" / "scenarios").rglob("*.json"))
@@ -27,6 +54,10 @@ def main() -> int:
         second = materialize_scenario(payload)
         if first != second:
             raise RuntimeError(f"same seed produced different scene configs: {path}")
+        # A manifest must name a world this repository has committed. Checked at
+        # load, not at run, so a typo is a validation failure rather than a
+        # missing model URI discovered mid-run.
+        world_path(payload["world_version"])
         manifests.append((path, payload))
 
     scenario_ids = [manifest["scenario_id"] for _, manifest in manifests]
@@ -62,8 +93,10 @@ def main() -> int:
             if task_ids != {expected_task_id}:
                 raise RuntimeError(f"scene variant {variant} must use {expected_task_id}, got {sorted(task_ids)}")
 
+    worlds = sorted({manifest["world_version"] for _, manifest in manifests})
     print(
         f"scenario validation passed for {len(frozen)} frozen and {len(expanded)} expanded manifest(s); "
+        f"world versions resolve: {', '.join(worlds)}; "
         "same-seed materialization is deterministic"
     )
     return 0

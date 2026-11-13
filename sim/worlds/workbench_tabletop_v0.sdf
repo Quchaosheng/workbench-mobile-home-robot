@@ -1,0 +1,162 @@
+<?xml version="1.0" ?>
+<!--
+  Workbench tabletop world, version WorkbenchSim-v0 (issue #542).
+
+  This is the world the twelve frozen `task-place-red-block` manifests name. It
+  is deliberately NOT the household room: those scenarios drive the frozen
+  single-arm tabletop fixture (`robot/description/workbench.urdf.xacro`), and
+  spawning it in a 6 x 5 m room would put the tray, the block and the shelf
+  metres apart in a way no scenario was written for.
+
+  Keeping the two worlds separate is the point of the `world_version` field. A
+  scenario names the world it was frozen against, and `validate_scenarios.py`
+  now refuses a version with no committed file instead of discovering it at run
+  time as a missing model URI.
+
+  What this world does NOT claim. It is geometry, not evidence. A run here is
+  `gazebo` evidence at best; the readiness report decides eligibility and every
+  evidence table keeps the physical column `NOT_EXECUTED`.
+
+  Changing any pose below requires a new `world_version` in the manifests that
+  use it, because the scene hash and the committed map derive from them.
+-->
+<sdf version="1.9">
+  <world name="workbench_tabletop">
+
+    <physics name="workbench_physics" type="dart">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gravity>0 0 -9.80665</gravity>
+    <magnetic_field>6.0e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+
+    <scene>
+      <ambient>0.55 0.55 0.55 1</ambient>
+      <background>0.72 0.75 0.78 1</background>
+      <shadows>true</shadows>
+      <grid>false</grid>
+    </scene>
+
+    <light type="directional" name="workbench_sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 3 0 0 0</pose>
+      <diffuse>0.92 0.92 0.88 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.2 0.15 -1</direction>
+    </light>
+
+    <!-- The overhead lamp the `low-light-*` variants dim. A separate named light
+         so a scenario lowers one and leaves the sun alone. -->
+    <light type="point" name="workbench_lamp">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 1.6 0 0 0</pose>
+      <diffuse>0.75 0.75 0.70 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>5</range>
+        <constant>0.9</constant>
+        <linear>0.05</linear>
+        <quadratic>0.01</quadratic>
+      </attenuation>
+    </light>
+
+    <model name="floor">
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+      <link name="floor_link">
+        <collision name="floor_collision">
+          <geometry><plane><normal>0 0 1</normal><size>3 3</size></plane></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+        </collision>
+        <visual name="floor_visual">
+          <geometry><plane><normal>0 0 1</normal><size>3 3</size></plane></geometry>
+          <material><ambient>0.38 0.39 0.41 1</ambient><diffuse>0.44 0.45 0.47 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- The table the arm is mounted beside. Its top is at 0.75 m, which is the
+         height `hardware/mechanical/design-spec.json` gives the workbench
+         surface the tray and the block sit on. -->
+    <model name="workbench_table">
+      <static>true</static>
+      <pose>0 0.55 0.375 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.2 0.8 0.05</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.2 0.8 0.05</size></box></geometry>
+          <material><ambient>0.82 0.80 0.76 1</ambient><diffuse>0.86 0.84 0.80 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- The tray the pick-place verifier reads. Named, and at the pose the frozen
+         scenarios expect: in front of the arm on the table top. -->
+    <model name="tray">
+      <static>true</static>
+      <pose>0.35 0.70 0.80 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.30 0.22 0.04</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.30 0.22 0.04</size></box></geometry>
+          <material><ambient>0.28 0.30 0.32 1</ambient><diffuse>0.34 0.36 0.38 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- The `red_block` the frozen scenarios name. Not static: it is the object
+         a run moves, and a static block would make a grasp unobservable. -->
+    <model name="red_block">
+      <pose>-0.25 0.55 0.80 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.05</mass>
+          <inertia>
+            <ixx>1.33e-05</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>1.33e-05</iyy><iyz>0</iyz>
+            <izz>1.33e-05</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision"><geometry><box><size>0.04 0.04 0.04</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.04 0.04 0.04</size></box></geometry>
+          <material><ambient>0.70 0.10 0.10 1</ambient><diffuse>0.80 0.12 0.12 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- The blocking cylinder the `occlusion-*` and `path-blocked-*` variants
+         use. Named so a scenario removes it by name rather than editing the
+         world. -->
+    <model name="removable_obstacle">
+      <static>true</static>
+      <pose>0.10 0.40 0.85 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.05</radius><length>0.12</length></cylinder></geometry></collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.05</radius><length>0.12</length></cylinder></geometry>
+          <material><ambient>0.35 0.35 0.38 1</ambient><diffuse>0.42 0.42 0.45 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- The moving target the `moving-target-*` variants drive. Kept in the
+         world as a named entity so a scenario animates it rather than spawning
+         one. -->
+    <model name="moving_target">
+      <static>true</static>
+      <pose>0.05 0.75 0.82 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.05 0.05 0.05</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.05 0.05 0.05</size></box></geometry>
+          <material><ambient>0.15 0.35 0.70 1</ambient><diffuse>0.18 0.40 0.78 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
