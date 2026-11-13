@@ -1,0 +1,92 @@
+{
+  "issue": 586,
+  "human_owner": "Quchaosheng",
+  "objective": "Add a CI job that builds and tests robot/control/workbench_motion with colcon, reusing the existing make targets, following the trigger policy the branch-protection page states, and declare the resulting check name in the ruleset and the page in the same change.",
+  "decision_supported": "Is the ROS 2 package that drives the arm ever built or tested before a change merges?",
+  "allowed_paths": [
+    ".github/workflows/colcon-motion.yml",
+    ".github/rulesets/main-protection.json",
+    "docs/security/branch-protection.md",
+    "tests/unit/test_branch_protection_gate.py",
+    "docs/task_packets/issue-586-colcon-workbench-motion.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "Makefile",
+    ".github/workflows/ci.yml",
+    ".github/workflows/container-full-stack.yml",
+    ".github/workflows/release-image.yml",
+    "compose.yaml",
+    "Dockerfile"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/security.yml",
+    ".github/workflows/container-full-stack.yml",
+    ".github/workflows/release-image.yml"
+  ],
+  "input_refs": [
+    "Makefile",
+    ".github/workflows/container-full-stack.yml",
+    ".github/rulesets/main-protection.json",
+    "docs/security/branch-protection.md",
+    "tests/unit/test_branch_protection_gate.py"
+  ],
+  "outputs": [
+    ".github/workflows/colcon-motion.yml",
+    ".github/rulesets/main-protection.json",
+    "docs/security/branch-protection.md",
+    "tests/unit/test_branch_protection_gate.py",
+    "docs/task_packets/issue-586-colcon-workbench-motion.json"
+  ],
+  "acceptance": [
+    "A job builds workbench_motion with colcon build --packages-select workbench_motion and runs colcon test plus colcon test-result --verbose, using the same container invocation make container-colcon-build and make container-colcon-test already define, so there is no second build recipe.",
+    "The job follows the trigger policy docs/security/branch-protection.md states: no paths filter on a workflow that produces a required check, and an always-running applicability job that reports an explicit conclusion for a documentation-only pull request.",
+    "A failing colcon test fails the required check; a missing applicability decision is failure with a recorded reason, not success.",
+    "The check name is added to .github/rulesets/main-protection.json and to the table in docs/security/branch-protection.md in the same change.",
+    "The existing make test path is unchanged, so local development does not slow down.",
+    "Every action reference in the new workflow is pinned to a 40-character commit SHA with a version comment."
+  ],
+  "commands": [
+    "python3 -m pytest -q tests/unit/test_branch_protection_gate.py",
+    "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/colcon-motion.yml'))\"",
+    "python3 -m ruff check tests/unit/test_branch_protection_gate.py",
+    "python3 -m ruff format --check tests/unit/test_branch_protection_gate.py",
+    "make docs"
+  ],
+  "evidence": [
+    "pytest tests/unit/test_branch_protection_gate.py: 60 passed, of which 8 are new for this issue.",
+    "The failure path: adding a paths filter under pull_request fails test_no_paths_filter_on_the_trigger. My first version of that test checked only the top level of the trigger block and passed with the filter present; the version committed walks the whole block.",
+    "The workflow YAML parses with three jobs and no paths filter on any trigger.",
+    "The declaration now lists colcon-motion and the page table documents it.",
+    "ruff check and ruff format --check clean; make docs PASS.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "The colcon build would need a second build recipe; the make targets are the only definition.",
+    "A paths filter would have to be added to the trigger, which removes the required check from a documentation-only pull request.",
+    "The existing make test path would have to change, slowing local development.",
+    "A write outside allowed_paths is required, especially to the other workflows or to robot/control itself."
+  ],
+  "data_classification": "Repository-local workflow configuration and public check names. No credentials are read, written or logged.",
+  "model_policy": "Deterministic YAML, make and pytest; no model inference and no external service calls added by this change.",
+  "risks_and_fallbacks": [
+    "The colcon build cannot be run in this container, because Docker is not installed. The workflow structure is therefore verified statically and by tests, and the make targets it calls are the same ones a developer runs; the job itself is unexecuted here and the pull request says so.",
+    "A new required check means every pull request now waits on it. The applicability job keeps a documentation-only change to a short always-running job that reports not-applicable, so the cost is bounded and the required context always reports.",
+    "Building the full-stack image inside this workflow duplicates work the container workflow already does. The cache scope is shared, so the second build is a cache hit rather than a rebuild.",
+    "Rollback is a revert of this commit: the workflow disappears and the declaration returns to nine checks. Nothing reads the workflow at runtime."
+  ]
+}

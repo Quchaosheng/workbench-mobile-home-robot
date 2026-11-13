@@ -66,6 +66,7 @@ RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release-image.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 SECURITY_WORKFLOW = ROOT / ".github" / "workflows" / "security.yml"
 CONTAINER_WORKFLOW = ROOT / ".github" / "workflows" / "container-full-stack.yml"
+COLCON_WORKFLOW = ROOT / ".github" / "workflows" / "colcon-motion.yml"
 
 
 def live_protection(checks: list[str], *, strict: bool = True, enforce_admins: bool = True) -> dict:
@@ -117,7 +118,7 @@ class DeclarationTests(unittest.TestCase):
     def test_declared_checks_all_exist_as_real_jobs(self) -> None:
         declaration = load_declaration(DECLARATION)
         jobs: set[str] = set()
-        for path in (CI_WORKFLOW, SECURITY_WORKFLOW, CONTAINER_WORKFLOW):
+        for path in (CI_WORKFLOW, SECURITY_WORKFLOW, CONTAINER_WORKFLOW, COLCON_WORKFLOW):
             import re
 
             jobs.update(re.findall(r"^  ([a-z0-9_-]+):$", path.read_text(encoding="utf-8"), re.M))
@@ -807,3 +808,89 @@ class UninvokedTargetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ColconMotionWorkflowTests(unittest.TestCase):
+    """Issue #586: the ROS 2 package that drives the arm must be built in CI.
+
+    `make container-colcon-build` and `make container-colcon-test` existed and no
+    workflow invoked either. The 30,000-line vendored runtime was built and tested;
+    `robot/control/workbench_motion`, the package that actually moves the arm, was
+    not. `robot/control/` is the path `AGENTS.md` protects most carefully.
+    """
+
+    def setUp(self) -> None:
+        import yaml
+
+        self.workflow = yaml.safe_load(COLCON_WORKFLOW.read_text(encoding="utf-8"))
+        # YAML 1.1 reads a bare `on` as the boolean True.
+        self.triggers = self.workflow.get("on") or self.workflow.get(True)
+
+    def test_the_required_check_name_is_owned_by_a_job(self) -> None:
+        self.assertIn("colcon-motion", self.workflow["jobs"])
+
+    def test_no_paths_filter_on_the_trigger(self) -> None:
+        """A path filter makes GitHub create no run, so the required context never reports.
+
+        The filter may sit on the event (`pull_request.paths`) or, for
+        `workflow_dispatch`, at the top level, so this walks the whole trigger
+        block instead of checking only the first level. My first version checked
+        the top level only and passed while a `paths:` filter was present under
+        `pull_request`.
+        """
+
+        def walk(node: object) -> list[str]:
+            found: list[str] = []
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key in {"paths", "paths-ignore"}:
+                        found.append(key)
+                    found.extend(walk(value))
+            elif isinstance(node, list):
+                for item in node:
+                    found.extend(walk(item))
+            return found
+
+        self.assertEqual(walk(self.triggers), [], "a required check may not be path-filtered")
+
+    def test_the_build_reuses_the_existing_make_targets(self) -> None:
+        """No second build recipe: the make targets are the only definition."""
+        text = COLCON_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("make container-colcon-build", text)
+        self.assertIn("make container-colcon-test", text)
+        # A hand-written colcon invocation here would be a second recipe.
+        self.assertNotIn("colcon build --base-paths", text)
+
+    def test_the_verdict_job_always_runs_and_can_report_not_applicable(self) -> None:
+        verdict = self.workflow["jobs"]["colcon-motion"]
+        self.assertEqual(verdict["if"], "always()")
+        text = COLCON_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("not-applicable", text)
+        # A failed build must fail the check rather than being reported as a skip.
+        self.assertIn('conclusion="failure"', text)
+
+    def test_a_missing_applicability_decision_is_a_failure_not_a_skip(self) -> None:
+        """'We could not decide' must not become 'there was nothing to test'."""
+        text = COLCON_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("so the package cannot be shown to be unaffected", text)
+
+    def test_the_check_is_declared_and_documented(self) -> None:
+        declaration = load_declaration(DECLARATION)
+        self.assertIn("colcon-motion", declaration["required_status_checks"])
+        page = (ROOT / "docs" / "security" / "branch-protection.md").read_text(encoding="utf-8")
+        self.assertIn("`colcon-motion`", page)
+
+    def test_every_action_reference_stays_pinned(self) -> None:
+        import re
+
+        action_lines = [
+            line.strip() for line in COLCON_WORKFLOW.read_text(encoding="utf-8").splitlines() if "uses:" in line
+        ]
+        self.assertTrue(action_lines)
+        self.assertTrue(all(re.search(r"@[0-9a-f]{40}\s+# v[0-9]", line) for line in action_lines), action_lines)
+
+    def test_the_local_make_test_path_is_unchanged(self) -> None:
+        """A new CI job must not slow local development down."""
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        check_target = makefile.split("\ncheck:", 1)[1].split("\n\n", 1)[0]
+        self.assertNotIn("colcon", check_target)

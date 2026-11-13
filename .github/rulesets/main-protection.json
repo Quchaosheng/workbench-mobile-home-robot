@@ -12,6 +12,7 @@
     "mcu-qemu",
     "codeql-python",
     "codeql-c-cpp",
+    "colcon-motion",
     "dependency-review"
   ],
   "strict_required_status_checks": true,
