@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!--
+  The plugin description that makes the class reachable by name from a URDF
+  (issue #541). The `type` is the fully-qualified class; the `base_class_type` is
+  what `ros2_control` looks up, so a wrong value here means the plugin loads as a
+  different kind of thing and the controller manager reports no hardware.
+-->
+<library path="workbench_mobile_base_hardware">
+  <class
+    name="workbench_mobile_base_hardware/CanSystemInterface"
+    type="workbench_mobile_base_hardware::CanSystemInterface"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Revision D mobile base and arm joints over SocketCAN. Fails closed when the bus
+      is down, the arbitration id table is unset, or a state frame ages out; it never
+      repeats the last command.
+    </description>
+  </class>
+</library>

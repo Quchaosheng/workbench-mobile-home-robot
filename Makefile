@@ -252,11 +252,16 @@ container-project-check:
 container-description-check:
 	docker compose run --rm dashboard bash -lc 'set -euo pipefail; test_root=$$(mktemp -d /tmp/workbench-description-check.XXXXXX); cp -a /workspace/src/. "$$test_root/"; cd "$$test_root"; make description-check'
 
+# Issue #541: `robot/mobile_base/hardware` is the second package, and it is the one
+# that carries the SocketCAN plugin. Both are built here so one command covers the
+# ROS 2 packages this repository ships.
+COLCON_PACKAGES = workbench_motion workbench_mobile_base_hardware
+
 container-colcon-build:
-	docker compose run --rm dashboard colcon --log-base /workspace/log build --base-paths /workspace/src/robot/control --build-base /workspace/build --install-base /workspace/install --merge-install --packages-select workbench_motion
+	docker compose run --rm dashboard colcon --log-base /workspace/log build --base-paths /workspace/src/robot/control /workspace/src/robot/mobile_base/hardware --build-base /workspace/build --install-base /workspace/install --merge-install --packages-select $(COLCON_PACKAGES)
 
 container-colcon-test:
-	docker compose run --rm dashboard bash -lc 'set +u; source /opt/ros/jazzy/setup.bash; source /workspace/install/setup.bash; set -u; colcon --log-base /workspace/log test --base-paths /workspace/src/robot/control --build-base /workspace/build --install-base /workspace/install --merge-install --packages-select workbench_motion && colcon --log-base /workspace/log test-result --test-result-base /workspace/build --verbose'
+	docker compose run --rm dashboard bash -lc 'set +u; source /opt/ros/jazzy/setup.bash; source /workspace/install/setup.bash; set -u; colcon --log-base /workspace/log test --base-paths /workspace/src/robot/control /workspace/src/robot/mobile_base/hardware --build-base /workspace/build --install-base /workspace/install --merge-install --packages-select $(COLCON_PACKAGES) && colcon --log-base /workspace/log test-result --test-result-base /workspace/build --verbose'
 
 container-python-test:
 	docker compose run --rm dashboard bash -lc 'set -euo pipefail; test_root=$$(mktemp -d /tmp/workbench-python-test.XXXXXX); cp -a /workspace/src/. "$$test_root/"; cd "$$test_root"; PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -v --ignore=tests/unit/test_multi_host_deployment.py'

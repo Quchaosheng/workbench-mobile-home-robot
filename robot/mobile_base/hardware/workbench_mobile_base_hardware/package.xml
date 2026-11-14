@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<!--
+  SocketCAN ros2_control system interface for Revision D (issue #541).
+
+  The only hardware plugin in this repository was the Gazebo one, so on physical
+  hardware a trajectory command had no route to a joint. This package is that route:
+  one `hardware_interface::SystemInterface` that binds the same joint names the
+  Gazebo plugin binds.
+
+  The frame codec is ROS-free and its tests run with a C++ compiler alone; the plugin
+  needs `hardware_interface`, which the full-stack image carries.
+-->
+<package format="3">
+  <name>workbench_mobile_base_hardware</name>
+  <version>0.1.0</version>
+  <description>
+    `hardware_interface::SystemInterface` for the Revision D mobile base and arms over
+    SocketCAN. Encodes joint commands into frames the committed MCU protocol schema
+    defines and fails closed when the bus is down, the arbitration id table is unset,
+    or a state frame ages out. Real hardware stays NOT_EXECUTED until a bring-up
+    record exists.
+  </description>
+  <maintainer email="hardware-io-owner@workbench-1.invalid">Hardware I/O Owner</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Only needed for the plugin. The codec builds without these. -->
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

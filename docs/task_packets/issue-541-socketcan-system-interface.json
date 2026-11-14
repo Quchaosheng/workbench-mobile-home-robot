@@ -1,0 +1,86 @@
+{
+  "issue": 541,
+  "human_owner": "Quchaosheng",
+  "objective": "Add one hardware_interface::SystemInterface that binds the same joint names the Gazebo plugin binds, encodes commands into frames the committed MCU protocol schema defines, and fails closed when the bus is down, the arbitration table is unset, or a state frame ages out.",
+  "decision_supported": "Does a trajectory command have a route to a joint on physical hardware, and does a stale or unaddressable state refuse the command rather than repeat the last one?",
+  "allowed_paths": [
+    "robot/mobile_base/hardware/**",
+    "robot/mobile_base/README.md",
+    "Makefile",
+    "tests/unit/test_can_system_interface.py",
+    "docs/task_packets/issue-541-socketcan-system-interface.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "interfaces/json_schema/mcu_protocol.schema.json",
+    "robot/description/revision_d/revision_d_ros2_control.xacro",
+    "robot/description/revision_d/revision_d_controllers.yaml"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**",
+    "integrations/**",
+    "robot/control/**"
+  ],
+  "input_refs": [
+    "interfaces/json_schema/mcu_protocol.schema.json",
+    "robot/description/revision_d/revision_d_ros2_control.xacro",
+    "robot/description/revision_d/revision_d_controllers.yaml",
+    "robot/mobile_base/README.md"
+  ],
+  "outputs": [
+    "robot/mobile_base/hardware/workbench_mobile_base_hardware/",
+    "robot/mobile_base/README.md",
+    "Makefile",
+    "tests/unit/test_can_system_interface.py",
+    "docs/task_packets/issue-541-socketcan-system-interface.json"
+  ],
+  "acceptance": [
+    "The same controller configuration drives the Gazebo plugin and this interface without editing revision_d_controllers.yaml; a test asserts the controller file names neither plugin.",
+    "Startup order is explicit: configure fails when the interface is down, the arbitration table is missing, or can_interface does not exist.",
+    "A state frame older than state_timeout_s makes the interface refuse commands and report an error, and it never repeats the last command.",
+    "Every command is validated against the joint limits before it is written; an out-of-range command is refused, not clipped. A non-finite command is out of range for every limit.",
+    "An unknown or duplicate arbitration id is refused at configure time.",
+    "The frame codec is ROS-free, so its refusals are compiled and run by a C++ test on any host with a compiler rather than only where ROS exists.",
+    "Real hardware stays NOT_EXECUTED until a bring-up record exists."
+  ],
+  "commands": [
+    "python3 -m pytest -q tests/unit/test_can_system_interface.py",
+    "python3 -m ruff check tests/unit/test_can_system_interface.py",
+    "python3 -m ruff format --check tests/unit/test_can_system_interface.py",
+    "make docs",
+    "python3 tools/scripts/check_doc_references.py"
+  ],
+  "evidence": [
+    "pytest tests/unit/test_can_system_interface.py: 24 passed, of which one test compiles the C++ codec with g++ -Wall -Wextra -Werror and runs all 13 gtest cases, asserting the count so a silently uncollected test fails.",
+    "The failure path: making the range check unconditional fails the C++ out-of-range test, which was verified by editing the codec and rebuilding.",
+    "The plugin source is asserted for each refusal by name: the SIOCGIFINDEX failure, the half-set table, the duplicate key, the stale-state refusal, and the bounded read loop.",
+    "ruff check and ruff format --check clean; make docs and check_doc_references.py PASS.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "The plugin would have to be compiled to claim it builds; hardware_interface is not installed on this host, so the plugin is asserted statically and the pull request says so.",
+    "A vcan integration run would have to be performed to claim the round trip; that needs the container, and it is not claimed here.",
+    "A write outside allowed_paths is required, especially to interfaces/ or to the controller configuration.",
+    "The controller configuration would have to be edited to select this plugin; it must drive either plugin without an edit."
+  ],
+  "data_classification": "Repository-local C++, CMake, XML and Python. No credentials, private data or unreviewed assets. The plugin opens a CAN socket on a named interface only.",
+  "model_policy": "Deterministic C++ and Python; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "The plugin cannot be compiled on this host because hardware_interface is missing. Its refusals are therefore asserted as source text, which is weaker than a passing C++ test; the codec half is compiled and run for real, and the pull request separates the two.",
+    "The CMake guards the plugin behind ament_cmake and hardware_interface so the codec stays buildable anywhere. A consequence is that a host without ROS builds only half the package, which is deliberate and printed as a status message.",
+    "The read loop is bounded at 32 frames per cycle so a flooding bus cannot starve the controller. A dropped frame is not re-requested; the staleness check is what turns a quiet bus into a refused command.",
+    "Rollback is a revert of this commit: the package disappears and the colcon targets return to one package. Nothing else imports it."
+  ]
+}
