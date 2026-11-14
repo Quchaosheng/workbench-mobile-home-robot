@@ -1,7 +1,8 @@
 [Unit]
 Description=Workbench evidence logger (bounded, append-only)
-# services.yaml: after [local-fs.target]
-After=local-fs.target
+# services.yaml: after [local-fs.target, robot-time-sync]. A logger that starts
+# before the clock stamps a wrong wall time on every record it writes.
+After=local-fs.target robot-time-sync.service
 # services.yaml: requires [writable_bounded_log_store]
 Requires=local-fs.target
 StartLimitIntervalSec=60
