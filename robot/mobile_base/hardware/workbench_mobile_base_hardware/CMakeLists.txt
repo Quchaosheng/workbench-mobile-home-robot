@@ -66,12 +66,20 @@ if(ament_cmake_FOUND AND hardware_interface_FOUND AND pluginlib_FOUND)
     hardware_interface workbench_mobile_base_hardware.xml)
 
   install(DIRECTORY include/ DESTINATION include)
+  # The export set needs a name distinct from the target: `install(TARGETS ...
+  # EXPORT <set>)` creates <set>, and `ament_export_targets(<set>)` names it. Using
+  # the target name for both is the shape that produced
+  # "INSTALL(EXPORT) given unknown export" on the first CI build.
   install(TARGETS workbench_mobile_base_hardware
+    EXPORT workbench_mobile_base_hardware_targets
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin)
 
-  ament_export_targets(workbench_mobile_base_hardware HAS_LIBRARY_TARGET)
+  install(EXPORT workbench_mobile_base_hardware_targets
+    DESTINATION share/${PROJECT_NAME}/cmake)
+
+  ament_export_targets(workbench_mobile_base_hardware_targets HAS_LIBRARY_TARGET)
   ament_export_dependencies(hardware_interface pluginlib rclcpp_lifecycle)
   ament_package()
 else()
