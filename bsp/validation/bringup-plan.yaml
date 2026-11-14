@@ -25,6 +25,12 @@ tests:
   - id: BSP-PERF-001
     name: cpu_gpu_thermal_power_and_can_load
     requires: [calibrated_instruments, sustained_workload]
+    # Issue #584: the procedure now exists, so the command is committed. The
+    # result stays NOT_EXECUTED because no capture has been registered from a real
+    # module; a committed command is not a measurement.
+    command: python3 tools/scripts/measure_target_power.py --output runs/performance/target/module.json
+    required_fields: [power_mode, soc, jetpack, samples, memory_peak_kb, temperature_max_c, throttling]
+    budget: docs/performance/target-budget-v1.json
     result: NOT_EXECUTED
   - id: BSP-CAMERA-001
     name: head_rgbd_usb_bandwidth_calibration_timestamp_and_dropout

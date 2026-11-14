@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "evidence_class": "estimate",
+  "scope": "the combinations that run together on the target module: perception plus navigation plus motion plus dashboard",
+  "measurement": {
+    "command": "python3 tools/scripts/measure_target_power.py --output runs/performance/target/module.json",
+    "report_schema": "workbench-target-measurement-v1",
+    "bringup_step": "BSP-PERF-001",
+    "required_fields": [
+      "power_mode",
+      "identity.soc",
+      "identity.jetpack",
+      "samples",
+      "summary.memory_peak_kb",
+      "summary.temperature_max_c"
+    ],
+    "sample_interval_s": 1.0,
+    "minimum_samples": 30
+  },
+  "every_row_is_estimate": true,
+  "why_estimate": "No capture exists from a real module. Every ceiling below is derived from a documented component figure or a measured local baseline, and none of them is a measurement of the target. BSP-PERF-001 stays NOT_EXECUTED until a capture is registered.",
+  "budget": {
+    "memory_ceiling_kb": {
+      "value": 6291456,
+      "unit": "KiB",
+      "status": "ESTIMATE",
+      "basis": "8 GiB module minus the reserved carveout the JetPack L4T layout documents; the ceiling is the usable software budget, not the module size."
+    },
+    "temperature_ceiling_c": {
+      "value": 85.0,
+      "unit": "degC",
+      "status": "ESTIMATE",
+      "basis": "The module thermal spec upper bound; a sustained run above this is throttling rather than computing."
+    },
+    "throttling_counter_ceiling": {
+      "value": 0,
+      "unit": "count",
+      "status": "ESTIMATE",
+      "basis": "A sustained workload in the target power mode should not throttle. A non-zero count means the power mode is wrong or the workload is out of scope for this module."
+    },
+    "cpu_peak_percent_ceiling": {
+      "value": 80.0,
+      "unit": "percent per core",
+      "status": "ESTIMATE",
+      "basis": "Leaves headroom for the control loop, which must not queue behind perception."
+    },
+    "power_mode": {
+      "value": "the mode recorded in the capture",
+      "unit": "string",
+      "status": "ESTIMATE",
+      "basis": "Not chosen here: the power mode is a product decision and the capture records which one applied."
+    }
+  },
+  "consumed_by": "BSP-PERF-001 in bsp/validation/bringup-plan.yaml",
+  "claims": [
+    "a budget with every number marked ESTIMATE",
+    "NOT a measurement of the target module",
+    "NOT physical validation"
+  ]
+}
