@@ -1,0 +1,84 @@
+{
+  "issue": 591,
+  "human_owner": "Quchaosheng",
+  "objective": "Correct the arm64 change merged under #591: the Dockerfile forbids any non-amd64 target and pins the ROS apt source to arch=amd64, so the arm64 build job could never succeed. Replace it with an explicit not_published report that asserts the guards, and correct the deployment page to state that arm64 is not published.",
+  "decision_supported": "Does the repository claim an arm64 image it cannot build, or does it state the gap and why?",
+  "allowed_paths": [
+    ".github/workflows/container-full-stack.yml",
+    "docs/deployment/container.md",
+    "tests/unit/test_arm64_image.py",
+    "docs/task_packets/issue-591-arm64-gap-correction.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "Dockerfile",
+    "docker/apt-packages.txt",
+    ".github/rulesets/main-protection.json"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/security.yml",
+    ".github/workflows/release-image.yml",
+    ".github/workflows/colcon-motion.yml"
+  ],
+  "input_refs": [
+    "Dockerfile",
+    ".github/workflows/container-full-stack.yml",
+    "docs/deployment/container.md",
+    ".github/rulesets/main-protection.json"
+  ],
+  "outputs": [
+    ".github/workflows/container-full-stack.yml",
+    "docs/deployment/container.md",
+    "tests/unit/test_arm64_image.py",
+    "docs/task_packets/issue-591-arm64-gap-correction.json"
+  ],
+  "acceptance": [
+    "The arm64-image-build job that could never succeed is replaced by arm64-image-not-published, which builds nothing and reports an explicit not_published conclusion.",
+    "The replacement job asserts both Dockerfile guards, so it fails the moment an arm64 path is added, which is when it should become a real build.",
+    "The deployment page states that only linux/amd64 is published, names both Dockerfile lines that block arm64, and says why removing them would be worse than the gap.",
+    "The amd64 tag keeps the architecture in its name, which is the part of the original change that was correct.",
+    "No required check is added or removed by this correction; arm64-image-build was never a required check."
+  ],
+  "commands": [
+    "python3 -m pytest -q tests/unit/test_arm64_image.py",
+    "python3 -c \"import yaml; yaml.safe_load(open('x'))\" --help",
+    "python3 -m ruff check tests/unit/test_arm64_image.py",
+    "make docs",
+    "python3 tools/scripts/check_doc_references.py"
+  ],
+  "evidence": [
+    "The failing run that prompted this: the arm64 job log shows 'exec /bin/sh: exec format error' and the Dockerfile guard rejecting TARGETARCH=aarch64.",
+    "pytest tests/unit/test_arm64_image.py: 12 passed, with the job asserted to have no build step and both Dockerfile guards asserted.",
+    "The workflow YAML parses with four jobs.",
+    "check_doc_references.py: PASS, 182 pages.",
+    "A full make test comparison against the unmodified main baseline showing 15 known environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "An arm64 image would have to be built to claim it exists; publishing one needs an arm64 base digest, an arm64 ROS apt source and re-verification of every apt package, none of which is done here.",
+    "The Dockerfile guards would have to be removed to make a build pass; that would produce an unvalidated image that looks like a release artifact.",
+    "A required check would have to be added for arm64; it was never required, and a red check nobody can fix is what #539 removed.",
+    "A write outside allowed_paths is required, especially to the Dockerfile itself."
+  ],
+  "data_classification": "Repository-local workflow configuration, Markdown and Python. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic YAML and pytest; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "Reporting the gap could read as accepting it. The job asserts the two guards so it starts failing as soon as an arm64 path exists, which makes the gap visible rather than settled, and the page names what publishing would require.",
+    "The original change was merged before this correction because arm64-image-build was not a required check, so it failed without blocking. That is why the correction is a separate commit with its own evidence.",
+    "Rollback is a revert of this commit: the failing build job and the incorrect doc return. Neither is better than stating the gap, which is why this direction was chosen.",
+    "The amd64 tag rename was the correct part of the original change and is kept."
+  ]
+}

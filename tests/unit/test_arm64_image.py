@@ -31,64 +31,52 @@ def workflow() -> dict:
     return yaml.safe_load(CONTAINER.read_text(encoding="utf-8"))
 
 
-class TestTheArm64JobExists:
-    def test_the_job_is_declared(self, workflow: dict) -> None:
-        assert "arm64-image-build" in workflow["jobs"]
+class TestTheArm64GapIsRecordedHonestly:
+    """#591 asked for an arm64 build. The Dockerfile forbids it, so the job reports that.
 
-    def test_it_runs_on_a_native_arm64_runner(self, workflow: dict) -> None:
-        """The choice is recorded with its cost: qemu over a CUDA base times out."""
-        job = workflow["jobs"]["arm64-image-build"]
-        assert job["runs-on"] == "ubuntu-24.04-arm"
+    `Dockerfile:16` rejects any `TARGETARCH` other than `amd64` and `Dockerfile:69`
+    pins the ROS apt source to `[arch=amd64]`. Both are deliberate, and the base is
+    pinned by digest to its amd64 manifest. Removing those guards to "produce an arm64
+    image" would ship something nobody validated.
 
-    def test_it_does_not_cross_build(self, workflow: dict) -> None:
-        """A `platforms:` on a native arm64 runner would mean somebody re-added qemu."""
-        job = workflow["jobs"]["arm64-image-build"]
-        build = [step for step in job["steps"] if "build-push-action" in str(step.get("uses", ""))]
-        assert build, "no build-push step"
-        assert "platforms" not in (build[0].get("with") or {}), "the runner already is arm64"
+    My first version of this change built on a native arm64 runner and failed on every
+    run with `exec format error`. This version reports the gap instead.
+    """
 
-    def test_the_choice_and_its_cost_are_written_down(self) -> None:
+    def test_the_job_reports_rather_than_builds(self, workflow: dict) -> None:
+        job = workflow["jobs"]["arm64-image-not-published"]
+        # No build step: an arm64 build cannot succeed while the Dockerfile forbids it.
+        assert not any("build-push-action" in str(step.get("uses", "")) for step in job["steps"])
+
+    def test_the_job_asserts_the_two_dockerfile_guards(self) -> None:
+        """The job should be replaced by a real build the moment an arm64 path exists."""
         text = CONTAINER.read_text(encoding="utf-8")
-        assert "native arm64 runner" in text
-        assert "qemu" in text
-        assert "CUDA" in text
+        assert 'grep -q \'test "${TARGETARCH}" = "amd64"\' Dockerfile' in text
+        assert "grep -q 'arch=amd64' Dockerfile" in text
+        assert "replace this job with a real arm64 build" in text
 
-    def test_the_tag_names_the_architecture(self, workflow: dict) -> None:
+    def test_the_amd64_tag_names_its_architecture(self, workflow: dict) -> None:
         """A `latest` pull on the robot must not silently fetch amd64."""
-        job = workflow["jobs"]["arm64-image-build"]
-        build = next(step for step in job["steps"] if "build-push-action" in str(step.get("uses", "")))
-        assert "arm64" in build["with"]["tags"]
-
-    def test_the_amd64_tag_names_its_architecture_too(self, workflow: dict) -> None:
         job = workflow["jobs"]["static-image-build"]
         build = next(step for step in job["steps"] if "build-push-action" in str(step.get("uses", "")))
         assert "amd64" in build["with"]["tags"]
 
-    def test_the_architecture_is_asserted_not_assumed(self) -> None:
-        """A mislabelled image would pass every other step.
+    def test_the_doc_states_arm64_is_not_published(self) -> None:
+        text = DOC.read_text(encoding="utf-8")
+        assert "linux/arm64" in text
+        assert "未发布" in text
+        # And the reason, with both guards named.
+        assert "TARGETARCH" in text
+        assert "arch=amd64" in text
 
-        The check runs `uname -m` *inside* the built image via `--entrypoint`, so
-        the string in the file is `--entrypoint uname ... -m` rather than a shell
-        `uname -m`.
-        """
+
+class TestTheAmd64SmokeTest:
+    """The amd64 image is the one that is published, so its smoke test still matters."""
+
+    def test_it_runs_the_offline_goal_end_to_end(self) -> None:
+        """The amd64 smoke runs `local_runner.py`, which is the documented offline demo path."""
         text = CONTAINER.read_text(encoding="utf-8")
-        assert "--entrypoint uname" in text
-        assert 'test "$arch" = "aarch64"' in text
-
-
-class TestTheSmokeTest:
-    def test_it_reuses_the_existing_arm64_script(self) -> None:
-        """A second recipe would let CI and the bench check different things."""
-        text = CONTAINER.read_text(encoding="utf-8")
-        assert "check_arm64_environment.sh" in text
-        assert SMOKE_SCRIPT.is_file()
-
-    def test_it_runs_the_offline_demo_and_asserts_the_documented_result(self) -> None:
-        text = CONTAINER.read_text(encoding="utf-8")
-        assert "demo_scripted.py" in text
-        # The output is asserted, not eyeballed.
-        assert "grep -q" in text
-        assert "Traceback" in text
+        assert "local_runner.py" in text
 
     def test_it_checks_the_dashboard_starts(self) -> None:
         text = CONTAINER.read_text(encoding="utf-8")
@@ -104,8 +92,9 @@ class TestTheDocumentStatesTheArchitectures:
 
     def test_it_records_the_build_method_per_architecture(self) -> None:
         text = DOC.read_text(encoding="utf-8")
-        assert "ubuntu-24.04-arm" in text
-        assert "原生" in text
+        assert "原生 amd64 runner" in text
+        # arm64 has no build method because it has no build; the table says so.
+        assert "—" in text
 
     def test_it_explains_why_the_tag_carries_the_architecture(self) -> None:
         text = DOC.read_text(encoding="utf-8")

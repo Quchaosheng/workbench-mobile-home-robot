@@ -4,20 +4,27 @@
 
 | 架构 | 状态 | 构建方式 | 标签 |
 |---|---|---|---|
-| `linux/amd64` | **已发布**，每此变更都构建并跑 CPU smoke、SBOM 与漏洞扫描 | 原生 amd64 runner | `workbench-1:container-ci-amd64` |
-| `linux/arm64` | **已发布**，每个适用的变更都构建并跑 arm64 smoke | **原生 arm64 runner** (`ubuntu-24.04-arm`) | `workbench-1:container-ci-arm64` |
+| `linux/amd64` | **已发布**，每次变更都构建并跑 CPU smoke、SBOM 与漏洞扫描 | 原生 amd64 runner | `workbench-1:container-ci-amd64` |
+| `linux/arm64` | **未发布**，见下方说明 | — | — |
 
-产品计算单元是 Jetson Orin Nano Super，即 arm64。arm64 镜像用原生 runner 构建，不用
-`buildx` + qemu 交叉构建：基础镜像是 CUDA runtime，qemu 必须模拟每一次 apt 和 pip 步骤，
-会把几分钟的构建拖成一小时并在大层上超时；`ubuntu-24.04-arm` 是免费公共 runner，所以这个选择没有额外成本。
+此仓库的全功能开发镜像**只发布 `linux/amd64`**。
 
-**标签带架构名，这是刻意的。** 在 arm64 机器人上拉一个不带架构的 `latest`，会拿到 amd64 镜像并在启动时以
-exec-format 错误失败——那读起来像机器人坏了，而不是镜像拿错了。arm64 作业第一步就是
-`uname -m` 断言得到 `aarch64`，因为一个贴错标签的镜像会通过其余每一步。
+### arm64 为什么没有发布
 
-未发布：`linux/arm/v7`、Windows 容器。没有构建，也没有声明。
+产品计算单元是 Jetson Orin Nano Super，即 arm64，所以这是一个真实缺口，而不是不相关的事。缺口卡在 `Dockerfile` 的两处，且两处都是有意的：
 
-此仓库的全功能开发镜像只维护上述两个架构。镜像基础固定为
+- `Dockerfile:16` 拒绝任何非 `amd64` 的 `TARGETARCH`；
+- `Dockerfile:69` 把 ROS 2 apt 源固定为 `[arch=amd64]`。
+
+基础镜像按 digest 固定到它的 **amd64 manifest**（`Dockerfile:5`）。发布 arm64 需要：一个 arm64 基础镜像 digest、一个 `arch=arm64` 的 ROS 源，以及重新验证每一个 apt 包。这三件事都没做。
+
+**去掉那两处门禁来“构建出 arm64”是更糟的选择**：那会产出一个没人验证过的镜像，而它看起来像一个发布产物。所以 `.github/workflows/container-full-stack.yml` 里的 `arm64-image-not-published` 作业**不构建**，它把这个缺口报告为一个明确的 `not_published` 结论，并断言那两处门禁仍然存在——一旦有人加了 arm64 路径，这个作业就会失败，那时它就该被换成一个真正的构建。
+
+未发布：`linux/arm64`、`linux/arm/v7`、Windows 容器。没有构建，也没有声明。
+
+### 部署时如何避免拿错镜像
+
+标签带架构名（`container-ci-amd64`），因为在 arm64 机器人上拉一个不带架构的 `latest` 会拿到 amd64 镜像并在启动时以 exec-format 错误失败——那读起来像机器人坏了，而不是镜像拿错了。镜像基础固定为
 `nvidia/cuda:12.8.1-runtime-ubuntu24.04@sha256:828c4d…ca2e`，容器内安装 ROS 2 Jazzy、Gazebo Harmonic、MoveIt 2、
 TRAC-IK、ros2_control 和 MuJoCo 3.3.7。默认服务仍是无 GPU、无设备权限的只读 dashboard。
 
