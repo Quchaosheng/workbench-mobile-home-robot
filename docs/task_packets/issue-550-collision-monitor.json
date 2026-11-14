@@ -1,0 +1,81 @@
+{
+  "issue": 550,
+  "human_owner": "Quchaosheng",
+  "objective": "Add an independent speed-and-separation supervisor that consumes range data directly, reduces velocity inside a warning zone and stops inside a protective zone, treats a stale source as the protective zone, and publishes its coverage with every decision.",
+  "decision_supported": "Can the base be slowed and stopped by a layer that does not depend on the planner, and does a sensor that stopped answering read as clear space?",
+  "allowed_paths": [
+    "hardware/safety/**",
+    "tests/unit/test_collision_supervisor.py",
+    "docs/task_packets/issue-550-collision-monitor.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "hardware/mechanical/generated/analysis.json",
+    "robot/description/revision_d/README.md",
+    "hardware/mechanical/design-spec.json"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**"
+  ],
+  "input_refs": [
+    "hardware/mechanical/generated/analysis.json",
+    "hardware/safety/README.md",
+    "robot/description/revision_d/README.md",
+    "hardware/mechanical/design-spec.json"
+  ],
+  "outputs": [
+    "hardware/safety/collision_supervisor.py",
+    "tests/unit/test_collision_supervisor.py",
+    "docs/task_packets/issue-550-collision-monitor.json"
+  ],
+  "acceptance": [
+    "Warning and protective zones are configuration validated at construction; an invalid or missing zone refuses to start, and equal thresholds are refused because they make one zone unreachable.",
+    "Inside the warning zone the limit is reduced by a documented interpolation and the reduction is visible in the reason and the record fields.",
+    "Inside the protective zone a stop is requested and the limit is zero.",
+    "A stale or missing range source is the protective zone, not clear space; a reading beyond the sensor maximum is treated as unknown for the same reason.",
+    "The layer works with the planner disabled: the module imports nothing from the agent runtime, a planner or a costmap, and a test asserts that.",
+    "A false positive and a missed detection are distinct outcomes, and ground truth about the absence of an obstacle outranks the label a single reading produces.",
+    "The stopping distance includes the reaction term, and the protective zone is asserted to be at least that distance.",
+    "Sensor coverage is published with every decision as named blind regions."
+  ],
+  "commands": [
+    "python3 -m pytest -q tests/unit/test_collision_supervisor.py",
+    "python3 -m ruff check hardware/safety/collision_supervisor.py tests/unit/test_collision_supervisor.py",
+    "python3 -m ruff format --check hardware/safety/collision_supervisor.py tests/unit/test_collision_supervisor.py",
+    "make docs"
+  ],
+  "evidence": [
+    "pytest tests/unit/test_collision_supervisor.py: 29 passed.",
+    "The failure path: making a missing range read as clear fails the two stale-source tests, which is the single mistake this module exists to prevent.",
+    "The four ground-truth combinations asserted individually: near without an obstacle is false_positive, near with one is missed_detection, far with one is missed_detection, far without one is nominal.",
+    "The stopping distance arithmetic asserted: 1.2 m/s at 1.0 m/s^2 with 0.15 s reaction gives 0.90 m, and the protective zone is asserted to be at least that.",
+    "ruff check and ruff format --check clean; make docs PASS.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "A measured response would have to exist to claim the stop distance; no hardware is available, so the arithmetic is asserted and the physical result stays NOT_EXECUTED.",
+    "The layer would have to be wired into the base controller to claim it stops the robot; it publishes a limit and a request, and honouring them is the controller job.",
+    "The change would require redefining the STOP contract owned by the safety controller.",
+    "A write outside allowed_paths is required, especially to robot/control or interfaces."
+  ],
+  "data_classification": "Repository-local Python. No credentials, private data or unreviewed assets. The module reads a range value and holds no state that outlives a run.",
+  "model_policy": "Deterministic Python and pytest; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "The deceleration is a conservative floor rather than a measured wheel/floor coefficient. It is a named constant with its reason, and the protective zone is asserted to be at least the derived stopping distance, so a wrong floor fails a test only if it makes the zone too small.",
+    "The sensor covers 87 of 360 degrees, so most of the surroundings are blind. The layer publishes that rather than implying full coverage, and the blind regions travel in every record.",
+    "The two failure outcomes depend on ground truth supplied by the caller. A caller that never supplies it gets the single-reading label, which cannot distinguish a spurious close reading from a late detection; that asymmetry is stated in the docstring.",
+    "Rollback is a revert of this commit: the module disappears. Nothing imports it, so no consumer breaks."
+  ]
+}
