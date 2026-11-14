@@ -1,0 +1,25 @@
+[Unit]
+Description=Workbench CAN gateway (the only process that writes can0)
+# services.yaml: after [network.target]
+After=network.target
+# services.yaml: requires [can0]
+Requires=sys-subsystem-net-devices-can0.device
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/workbench/can-gateway
+Restart=on-failure
+RestartSec=2
+# A gateway is transport, not a safety authority. It may not clear a latch.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+# The socket is the only writable path: the gateway forwards frames and holds no
+# state a restart could resurrect as a command.
+RestrictAddressFamilies=AF_CAN AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

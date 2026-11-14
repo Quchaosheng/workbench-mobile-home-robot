@@ -1,0 +1,27 @@
+[Unit]
+Description=Workbench update agent (signed bundle, rollback slot)
+# services.yaml: after [network-online.target]
+After=network-online.target
+# services.yaml: requires [signed_update_bundle, rollback_slot]
+Requires=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+ConditionPathExists=/etc/workbench/update-agent.env
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/workbench/update-agent.env
+ExecStart=/usr/libexec/workbench/update-agent
+# services.yaml: restart no. An update agent that restarts on failure can loop a
+# half-written slot; it reports and stops, and a human re-runs it.
+Restart=no
+# It writes the inactive slot only, never the running root.
+ReadWritePaths=/var/lib/workbench/update
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

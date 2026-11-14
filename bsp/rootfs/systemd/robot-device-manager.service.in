@@ -1,0 +1,26 @@
+[Unit]
+Description=Workbench device manager (firmware compatibility gate)
+# services.yaml: after [robot-can-gateway, robot-safety-monitor]
+After=robot-can-gateway.service robot-safety-monitor.service
+# services.yaml: requires [firmware_compatibility_manifest]
+Requires=robot-can-gateway.service robot-safety-monitor.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+ConditionPathExists=/etc/workbench/firmware-compatibility.json
+
+[Service]
+Type=simple
+ExecStartPre=/usr/libexec/workbench/check-firmware-compatibility
+ExecStart=/usr/libexec/workbench/device-manager
+Restart=on-failure
+RestartSec=2
+# A firmware mismatch must inhibit motion, not retry forever. The ExecStartPre
+# exits non-zero and the unit stays failed, which is the gate the YAML declares.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_CAN AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

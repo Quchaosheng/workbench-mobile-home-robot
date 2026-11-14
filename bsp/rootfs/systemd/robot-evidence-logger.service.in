@@ -1,0 +1,25 @@
+[Unit]
+Description=Workbench evidence logger (bounded, append-only)
+# services.yaml: after [local-fs.target]
+After=local-fs.target
+# services.yaml: requires [writable_bounded_log_store]
+Requires=local-fs.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/workbench/evidence-logger
+Restart=on-failure
+RestartSec=2
+# The store is the one writable path. A logger that could rewrite history is not
+# an evidence boundary, so everything else stays read-only.
+ReadWritePaths=/var/lib/workbench/evidence
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

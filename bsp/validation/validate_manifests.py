@@ -85,6 +85,98 @@ def validate_manifests(manifest: dict, compatibility: dict, bringup: dict) -> li
     return errors
 
 
+#: Where the unit templates live, and the YAML that declares which services exist.
+SERVICES_YAML = "bsp/rootfs/services.yaml"
+SYSTEMD_DIR = "bsp/rootfs/systemd"
+
+#: YAML `restart:` value -> the systemd `Restart=` value that implements it. A
+#: service that says `on-failure` in the YAML and `always` in the unit is two
+#: different policies wearing one name (issue #577).
+RESTART_MAP = {
+    "on-failure": "on-failure",
+    "no": "no",
+    "always": "always",
+}
+
+#: systemd units that are not workbench services and may appear in `After=`
+#: without a services.yaml row.
+SYSTEMD_ORDERING_TARGETS = frozenset(
+    {"network.target", "network-online.target", "local-fs.target", "multi-user.target", "basic.target"}
+)
+
+
+def _unit_fields(unit: str) -> dict[str, list[str]]:
+    """Parse the directive lines of a systemd unit into a name -> values map."""
+    fields: dict[str, list[str]] = {}
+    for line in unit.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("["):
+            continue
+        if "=" not in stripped:
+            continue
+        name, _, value = stripped.partition("=")
+        fields.setdefault(name.strip(), []).append(value.strip())
+    return fields
+
+
+def validate_service_topology() -> list[str]:
+    """Every YAML service has a unit, and the unit does not contradict the YAML.
+
+    Issue #577: the rootfs declared six services and only the camera had a unit
+    template, so five services existed as a name in a YAML file and nothing else.
+    This check is the reason a service cannot be added without its unit.
+    """
+    errors: list[str] = []
+    document = yaml.safe_load((ROOT / SERVICES_YAML).read_text(encoding="utf-8"))
+    services = document.get("services") or {}
+    if not services:
+        return ["services.yaml declares no services"]
+
+    for name, spec in sorted(services.items()):
+        unit_path = ROOT / SYSTEMD_DIR / f"{name}.service.in"
+        if not unit_path.is_file():
+            errors.append(f"service {name!r} is declared in services.yaml with no unit template")
+            continue
+        fields = _unit_fields(unit_path.read_text(encoding="utf-8"))
+
+        declared_restart = str(spec.get("restart", "")).strip()
+        expected = RESTART_MAP.get(declared_restart)
+        if expected is None:
+            errors.append(f"service {name!r} declares restart {declared_restart!r}, which has no systemd mapping")
+        else:
+            actual = fields.get("Restart", [])
+            if actual != [expected]:
+                errors.append(
+                    f"service {name!r} declares Restart={declared_restart!r} "
+                    f"but its unit has Restart={actual or 'unset'}"
+                )
+            if expected != "no" and ("StartLimitBurst" not in fields or "StartLimitIntervalSec" not in fields):
+                errors.append(
+                    f"service {name!r} restarts but its unit declares no StartLimitBurst/StartLimitIntervalSec"
+                )
+
+        declared_after = {str(item).strip() for item in spec.get("after") or []}
+        unit_after: set[str] = set()
+        for value in fields.get("After", []):
+            unit_after.update(part.strip().removesuffix(".service") for part in value.split())
+        undeclared = {item for item in unit_after - declared_after if item not in SYSTEMD_ORDERING_TARGETS}
+        if undeclared:
+            errors.append(f"service {name!r} orders after {sorted(undeclared)}, which services.yaml does not declare")
+        missing = {item for item in declared_after - unit_after if item not in SYSTEMD_ORDERING_TARGETS}
+        if missing:
+            errors.append(f"service {name!r} declares after {sorted(missing)} but its unit does not order after it")
+
+        if spec.get("safety_authority") is True:
+            errors.append(f"service {name!r} claims safety_authority; no rootfs service may")
+
+    for unit_path in sorted((ROOT / SYSTEMD_DIR).glob("*.service.in")):
+        name = unit_path.name.removesuffix(".service.in")
+        if name not in services:
+            errors.append(f"unit {unit_path.name} has no row in services.yaml")
+
+    return errors
+
+
 def validate() -> list[str]:
     manifest = yaml.safe_load((ROOT / "bsp/board-manifest.yaml").read_text(encoding="utf-8"))
     compatibility = yaml.safe_load((ROOT / "bsp/firmware/compatibility.yaml").read_text(encoding="utf-8"))
@@ -125,6 +217,7 @@ def validate() -> list[str]:
     launcher = (ROOT / "bsp/rootfs/libexec/camera-head-launch").read_text(encoding="utf-8")
     environment_example = (ROOT / "bsp/rootfs/camera-head.env.example").read_text(encoding="utf-8")
     errors.extend(validate_camera_deployment(deployment, unit, launcher, environment_example))
+    errors.extend(validate_service_topology())
     errors.extend(validate_image_inputs())
     return errors
 

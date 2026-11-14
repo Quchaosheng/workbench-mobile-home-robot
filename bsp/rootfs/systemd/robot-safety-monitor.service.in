@@ -1,0 +1,27 @@
+[Unit]
+Description=Workbench safety monitor (read-only mirror of MCU-SAFETY)
+# services.yaml: after [robot-can-gateway]
+After=robot-can-gateway.service
+# services.yaml: requires [MCU-SAFETY]
+Requires=robot-can-gateway.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+ConditionPathExists=/etc/workbench/safety-monitor.env
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/workbench/safety-monitor.env
+ExecStart=/usr/libexec/workbench/safety-monitor
+Restart=on-failure
+RestartSec=2
+# services.yaml: mode read_only_mirror. The monitor observes the safety MCU and
+# must not become a second stop authority, so it never opens the command channel.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/run/workbench
+RestrictAddressFamilies=AF_CAN AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
