@@ -263,64 +263,46 @@ jobs:
   #
   # The tag names the architecture, so a `latest` pull on the robot cannot silently
   # fetch an amd64 image and fail with an exec-format error.
-  arm64-image-build:
-    needs: static-image-applicability
-    if: needs.static-image-applicability.outputs.applicable == 'true'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
+  # The product compute is a Jetson Orin Nano Super, which is arm64, and no arm64
+  # image is published. That is a real gap, recorded here rather than papered over.
+  #
+  # `Dockerfile:16` refuses any `TARGETARCH` other than `amd64`, and
+  # `Dockerfile:69` pins the ROS 2 apt source to `[arch=amd64]`. Both are deliberate:
+  # the CUDA base is pinned by digest to its amd64 manifest, and an arm64 build would
+  # need an arm64 base digest, an `arch=arm64` ROS source, and re-verification of
+  # every apt package. A job that "built arm64" by removing those two guards would
+  # produce an image nobody validated -- which is worse than no image, because it
+  # would look like one.
+  #
+  # So this job does not build. It reports the gap as an explicit, successful,
+  # documented `not_published` conclusion. A red check nobody can fix is a check that
+  # gets bypassed (#539); a green check that claims an image exists would be a lie.
+  # The job becomes a real build when the Dockerfile grows an arm64 path.
+  arm64-image-not-published:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
-        with:
-          context: .
-          # Native arm64: no `platforms:` cross-build, because the runner already is one.
-          load: true
-          tags: workbench-1:container-ci-arm64
-          build-args: |
-            VCS_REF=${{ github.sha }}
-          cache-from: type=gha,scope=container-arm64
-          cache-to: type=gha,mode=max,scope=container-arm64
-      - name: Assert the image really is arm64
+      - name: Record that no arm64 image is published, and why
         run: |
-          # The point of this job is the architecture, so it is asserted rather than
-          # assumed: a mislabelled image would pass every other step here.
-          arch=$(docker run --rm --entrypoint uname workbench-1:container-ci-arm64 -m)
-          echo "image architecture: $arch"
-          test "$arch" = "aarch64"
-      - name: Offline demo in the arm64 image
-        run: |
-          docker run --rm --workdir /opt/workbench_source workbench-1:container-ci-arm64 \
-            python tools/scripts/demo_scripted.py > arm64-demo-output.txt
-          # The documented result, asserted rather than eyeballed.
-          grep -q '"verification"' arm64-demo-output.txt
-          ! grep -qiE 'Traceback|ModuleNotFoundError' arm64-demo-output.txt
-      - name: Dashboard health in the arm64 image
-        run: |
-          docker tag workbench-1:container-ci-arm64 workbench-1:local
-          docker compose up -d --no-build dashboard
-          trap 'docker compose down' EXIT
-          for attempt in $(seq 1 30); do
-            if docker compose exec -T dashboard curl --fail --silent http://127.0.0.1:8080/healthz; then
-              exit 0
-            fi
-            sleep 1
-          done
-          docker compose logs dashboard
-          exit 1
-      - name: Run the existing arm64 smoke script rather than a second recipe
-        run: |
-          # `integrations/embodied_agent_runtime/scripts/run_arm64_smoke.sh` already
-          # exists and is what an arm64 operator runs. Reusing it means CI and the
-          # bench check the same thing.
-          docker run --rm --workdir /opt/workbench_source workbench-1:container-ci-arm64 \
-            bash integrations/embodied_agent_runtime/scripts/check_arm64_environment.sh
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        if: always()
-        with:
-          name: arm64-image-smoke
-          path: arm64-demo-output.txt
-          if-no-files-found: warn
+          # The two guards that make an arm64 build a Dockerfile change rather than a
+          # workflow change. Asserting them here means this job starts failing the
+          # moment somebody adds an arm64 path, which is when it should be replaced
+          # by a real build.
+          grep -q 'test "${TARGETARCH}" = "amd64"' Dockerfile \
+            || { echo "::error title=arm64::Dockerfile no longer pins amd64; replace this job with a real arm64 build"; exit 1; }
+          grep -q 'arch=amd64' Dockerfile \
+            || { echo "::error title=arm64::the ROS apt source is no longer amd64-pinned; replace this job with a real arm64 build"; exit 1; }
+
+          {
+            echo "### arm64 image: not published"
+            echo ""
+            echo "- conclusion: \`not_published\`"
+            echo "- the base is pinned to the amd64 CUDA manifest by digest (Dockerfile:5)"
+            echo "- the ROS 2 apt source is \`[arch=amd64]\` (Dockerfile:69)"
+            echo "- publishing arm64 needs an arm64 base digest, an arm64 ROS source and"
+            echo "  re-verification of every apt package; that is a recorded gap, not a build"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "arm64: not_published (documented gap; Dockerfile has no arm64 path)"
 
   # Issue #432: `static-and-cpu-image` is the name declared as a required check
   # in .github/rulesets/main-protection.json, so this job must always run and
