@@ -87,7 +87,9 @@ The demo drives the fixed tree through a virtual CAN device, so it proves the
 plumbing without an actuator. Native X5/ARM64 execution, a physical USB camera,
 ArUco detection and bidirectional SocketCAN bench traffic are verified
 separately; see `README.runtime.md` for the current status table and
-`docs/PORTABILITY.md` for the arm64 profile.
+`docs/deployment/container.md` for which architectures are published and which are
+not — the arm64 image is built and smoke-tested in CI, and the tag names the
+architecture so a pull on the robot cannot silently fetch an amd64 one.
 
 ## CI
 

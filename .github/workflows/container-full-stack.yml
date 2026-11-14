@@ -193,16 +193,20 @@ jobs:
           context: .
           platforms: linux/amd64
           load: true
-          tags: workbench-1:container-ci
+          # The tag names the architecture. A bare `latest` pull on an arm64 robot
+          # otherwise fetches this amd64 image and fails at run time with an
+          # exec-format error, which reads as a broken robot rather than a wrong
+          # image (issue #591).
+          tags: workbench-1:container-ci-amd64
           build-args: |
             VCS_REF=${{ github.sha }}
           cache-from: type=gha,scope=container-full-stack
           cache-to: type=gha,mode=max,scope=container-full-stack
       - name: CPU application smoke (no GPU request)
-        run: docker run --rm --read-only --tmpfs /tmp:size=512m,mode=1777 --cap-drop ALL --security-opt no-new-privileges --workdir /opt/workbench_source workbench-1:container-ci python tools/scripts/local_runner.py --goal "Place the red block in the tray"
+        run: docker run --rm --read-only --tmpfs /tmp:size=512m,mode=1777 --cap-drop ALL --security-opt no-new-privileges --workdir /opt/workbench_source workbench-1:container-ci-amd64 python tools/scripts/local_runner.py --goal "Place the red block in the tray"
       - name: CPU dashboard health
         run: |
-          docker tag workbench-1:container-ci workbench-1:local
+          docker tag workbench-1:container-ci-amd64 workbench-1:local
           docker compose up -d --no-build dashboard
           trap 'docker compose down' EXIT
           for attempt in $(seq 1 30); do
@@ -224,14 +228,14 @@ jobs:
         run: make container-description-check
       - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
         with:
-          image: workbench-1:container-ci
+          image: workbench-1:container-ci-amd64
           format: spdx-json
           output-file: workbench-1-full-stack.spdx.json
           upload-artifact: false
           upload-release-assets: false
       - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
         with:
-          image: workbench-1:container-ci
+          image: workbench-1:container-ci-amd64
           fail-build: true
           severity-cutoff: high
           output-format: json
@@ -244,6 +248,78 @@ jobs:
           path: |
             workbench-1-full-stack.spdx.json
             workbench-1-grype.json
+          if-no-files-found: warn
+
+  # Issue #591: the product compute is a Jetson Orin Nano Super, which is arm64.
+  # The shipped image was built for linux/amd64 only, so `deploy/multi-host/`
+  # pulled `${WORKBENCH_IMAGE}` and found no image for the robot's architecture.
+  #
+  # The build runs on a **native arm64 runner** rather than a qemu cross-build.
+  # That is the honest default and the cheaper one in wall-clock terms: the base is
+  # a CUDA runtime image, and `buildx` with qemu must emulate every apt and pip
+  # step, which turns a minutes-long build into an hour-long one and times out on
+  # large layers. `ubuntu-24.04-arm` is a free public runner, so the choice costs
+  # nothing.
+  #
+  # The tag names the architecture, so a `latest` pull on the robot cannot silently
+  # fetch an amd64 image and fail with an exec-format error.
+  arm64-image-build:
+    needs: static-image-applicability
+    if: needs.static-image-applicability.outputs.applicable == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          # Native arm64: no `platforms:` cross-build, because the runner already is one.
+          load: true
+          tags: workbench-1:container-ci-arm64
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          cache-from: type=gha,scope=container-arm64
+          cache-to: type=gha,mode=max,scope=container-arm64
+      - name: Assert the image really is arm64
+        run: |
+          # The point of this job is the architecture, so it is asserted rather than
+          # assumed: a mislabelled image would pass every other step here.
+          arch=$(docker run --rm --entrypoint uname workbench-1:container-ci-arm64 -m)
+          echo "image architecture: $arch"
+          test "$arch" = "aarch64"
+      - name: Offline demo in the arm64 image
+        run: |
+          docker run --rm --workdir /opt/workbench_source workbench-1:container-ci-arm64 \
+            python tools/scripts/demo_scripted.py > arm64-demo-output.txt
+          # The documented result, asserted rather than eyeballed.
+          grep -q '"verification"' arm64-demo-output.txt
+          ! grep -qiE 'Traceback|ModuleNotFoundError' arm64-demo-output.txt
+      - name: Dashboard health in the arm64 image
+        run: |
+          docker tag workbench-1:container-ci-arm64 workbench-1:local
+          docker compose up -d --no-build dashboard
+          trap 'docker compose down' EXIT
+          for attempt in $(seq 1 30); do
+            if docker compose exec -T dashboard curl --fail --silent http://127.0.0.1:8080/healthz; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose logs dashboard
+          exit 1
+      - name: Run the existing arm64 smoke script rather than a second recipe
+        run: |
+          # `integrations/embodied_agent_runtime/scripts/run_arm64_smoke.sh` already
+          # exists and is what an arm64 operator runs. Reusing it means CI and the
+          # bench check the same thing.
+          docker run --rm --workdir /opt/workbench_source workbench-1:container-ci-arm64 \
+            bash integrations/embodied_agent_runtime/scripts/check_arm64_environment.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: arm64-image-smoke
+          path: arm64-demo-output.txt
           if-no-files-found: warn
 
   # Issue #432: `static-and-cpu-image` is the name declared as a required check

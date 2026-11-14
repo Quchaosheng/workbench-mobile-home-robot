@@ -1,0 +1,89 @@
+{
+  "issue": 591,
+  "human_owner": "Quchaosheng",
+  "objective": "Build the arm64 image the robot actually needs on a native arm64 runner, name the architecture in the image tag so a pull cannot silently fetch amd64, smoke-test it with the existing script, and state in the deployment doc which architectures are published.",
+  "decision_supported": "Does an arm64 image exist for the Jetson, and can a deployment pull an amd64 image by mistake?",
+  "allowed_paths": [
+    ".github/workflows/container-full-stack.yml",
+    "docs/deployment/container.md",
+    "integrations/embodied_agent_runtime/README.md",
+    "tests/unit/test_arm64_image.py",
+    "docs/task_packets/issue-591-arm64-image.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "Dockerfile",
+    "docker/apt-packages.txt",
+    ".github/rulesets/main-protection.json",
+    "integrations/embodied_agent_runtime/scripts/check_arm64_environment.sh"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "bsp/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/security.yml",
+    ".github/workflows/release-image.yml",
+    ".github/workflows/colcon-motion.yml"
+  ],
+  "input_refs": [
+    ".github/workflows/container-full-stack.yml",
+    "docs/deployment/container.md",
+    "integrations/embodied_agent_runtime/scripts/check_arm64_environment.sh",
+    "integrations/embodied_agent_runtime/README.md"
+  ],
+  "outputs": [
+    ".github/workflows/container-full-stack.yml",
+    "docs/deployment/container.md",
+    "integrations/embodied_agent_runtime/README.md",
+    "tests/unit/test_arm64_image.py",
+    "docs/task_packets/issue-591-arm64-image.json"
+  ],
+  "acceptance": [
+    "A documented arm64 build path exists and runs on a native arm64 runner, with the choice and its cost recorded because a qemu cross-build of a CUDA base is slow.",
+    "The image tag names the architecture for both amd64 and arm64, so a latest pull on the robot cannot silently fetch an amd64 image.",
+    "The arm64 job asserts the built image really is aarch64, because a mislabelled image would pass every other step.",
+    "A smoke test runs the offline demo and the dashboard health check in the arm64 image, and reuses the existing check_arm64_environment.sh rather than a second recipe.",
+    "docs/deployment/container.md states which architectures are published and which are not.",
+    "The integrations README stops pointing at docs/PORTABILITY.md, which never existed, and points at the deployment page instead."
+  ],
+  "commands": [
+    "python3 -m pytest -q tests/unit/test_arm64_image.py",
+    "python3 -c \"import yaml; yaml.safe_load(open(chr(46)+chr(103)+chr(105)+chr(116)+chr(104)+chr(117)+chr(98)+chr(47)+chr(119)+chr(111)+chr(114)+chr(107)+chr(102)+chr(108)+chr(111)+chr(119)+chr(115)+chr(47)+chr(99)+chr(111)+chr(110)+chr(116)+chr(97)+chr(105)+chr(110)+chr(101)+chr(114)+chr(45)+chr(102)+chr(117)+chr(108)+chr(108)+chr(45)+chr(115)+chr(116)+chr(97)+chr(99)+chr(107)+chr(46)+chr(121)+chr(109)+chr(108)))\"",
+    "python3 -m ruff check tests/unit/test_arm64_image.py",
+    "python3 -m ruff format --check tests/unit/test_arm64_image.py",
+    "make docs",
+    "python3 tools/scripts/check_doc_references.py"
+  ],
+  "evidence": [
+    "pytest tests/unit/test_arm64_image.py: 16 passed, covering the native runner, the absent platforms key, the architecture-named tags, the entrypoint arch assertion and the documented architectures.",
+    "The workflow YAML parses with four jobs and no paths filter on any trigger.",
+    "check_doc_references.py: PASS, 182 pages, so the reference to the deployment page resolves.",
+    "make docs, ruff check and ruff format --check clean.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "The arm64 build would have to be run to claim it produces a working image; this container is amd64 with no Docker, so the job is unexecuted here and the pull request says so.",
+    "A qemu cross-build would have to be used because no arm64 runner were available; ubuntu-24.04-arm is available, so that fallback is not taken.",
+    "The existing arm64 smoke script would have to be replaced by a second recipe; it is reused instead.",
+    "A write outside allowed_paths is required, especially to the Dockerfile or to the release workflow."
+  ],
+  "data_classification": "Repository-local workflow configuration, Markdown and Python. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic YAML and pytest; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "The arm64 build is unexecuted here. A first-order risk is that the CUDA base has no arm64 manifest for this tag; that surfaces as a build failure naming the base image, and the Dockerfile is the file to change.",
+    "Renaming the amd64 tag could break a consumer that used the old name. Every reference in the workflow was updated in the same change and a test asserts the build and the run steps agree, and the tag was never published, so nothing outside CI pulled it.",
+    "A native arm64 runner is slower per core than the amd64 one, so the arm64 job may take longer. It is bounded by timeout-minutes and cached under its own scope, so it cannot evict the amd64 cache.",
+    "Rollback is a revert of this commit: the arm64 job disappears and the amd64 tag returns to its architecture-less name. Nothing else reads either."
+  ]
+}

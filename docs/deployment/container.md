@@ -1,6 +1,23 @@
 # Ubuntu 24.04 + ROS 2 Jazzy 容器部署
 
-此仓库只维护一个 `linux/amd64` 全功能开发镜像。镜像基础固定为
+## 已发布的架构
+
+| 架构 | 状态 | 构建方式 | 标签 |
+|---|---|---|---|
+| `linux/amd64` | **已发布**，每此变更都构建并跑 CPU smoke、SBOM 与漏洞扫描 | 原生 amd64 runner | `workbench-1:container-ci-amd64` |
+| `linux/arm64` | **已发布**，每个适用的变更都构建并跑 arm64 smoke | **原生 arm64 runner** (`ubuntu-24.04-arm`) | `workbench-1:container-ci-arm64` |
+
+产品计算单元是 Jetson Orin Nano Super，即 arm64。arm64 镜像用原生 runner 构建，不用
+`buildx` + qemu 交叉构建：基础镜像是 CUDA runtime，qemu 必须模拟每一次 apt 和 pip 步骤，
+会把几分钟的构建拖成一小时并在大层上超时；`ubuntu-24.04-arm` 是免费公共 runner，所以这个选择没有额外成本。
+
+**标签带架构名，这是刻意的。** 在 arm64 机器人上拉一个不带架构的 `latest`，会拿到 amd64 镜像并在启动时以
+exec-format 错误失败——那读起来像机器人坏了，而不是镜像拿错了。arm64 作业第一步就是
+`uname -m` 断言得到 `aarch64`，因为一个贴错标签的镜像会通过其余每一步。
+
+未发布：`linux/arm/v7`、Windows 容器。没有构建，也没有声明。
+
+此仓库的全功能开发镜像只维护上述两个架构。镜像基础固定为
 `nvidia/cuda:12.8.1-runtime-ubuntu24.04@sha256:828c4d…ca2e`，容器内安装 ROS 2 Jazzy、Gazebo Harmonic、MoveIt 2、
 TRAC-IK、ros2_control 和 MuJoCo 3.3.7。默认服务仍是无 GPU、无设备权限的只读 dashboard。
 
