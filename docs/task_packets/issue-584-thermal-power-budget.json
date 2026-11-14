@@ -1,0 +1,84 @@
+{
+  "issue": 584,
+  "human_owner": "Quchaosheng",
+  "objective": "Add a target measurement procedure that samples the module under the real workload and writes one checksummed artifact, a budget derived from documented figures with every row marked ESTIMATE, and the command plus required fields BSP-PERF-001 was missing.",
+  "decision_supported": "Does a measurement of the target module exist as a procedure and a budget, and does a host without the module refuse by name instead of writing an empty report?",
+  "allowed_paths": [
+    "tools/scripts/measure_target_power.py",
+    "docs/performance/**",
+    "bsp/validation/**",
+    "tests/unit/test_target_measurement.py",
+    "docs/task_packets/issue-584-thermal-power-budget.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "hardware/release/**"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/mechanical/**",
+    "hardware/pcb/**",
+    "kernel/**",
+    "bsp/rootfs/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**"
+  ],
+  "input_refs": [
+    "bsp/validation/bringup-plan.yaml",
+    "docs/performance/software-regression-gate.md",
+    "docs/performance/software-budget-policy-scripted-v1.json",
+    "tools/scripts/demo_scripted.py"
+  ],
+  "outputs": [
+    "tools/scripts/measure_target_power.py",
+    "docs/performance/target-budget-v1.json",
+    "bsp/validation/bringup-plan.yaml",
+    "tests/unit/test_target_measurement.py",
+    "docs/task_packets/issue-584-thermal-power-budget.json"
+  ],
+  "acceptance": [
+    "A target measurement script records the power mode, the clock state, per-core and GPU utilization, memory, the module temperature and the throttling counters, at a fixed interval, into a checksummed artifact with the SoC and JetPack version.",
+    "The default workload is the offline demo plus the container image the release ships, so the number is about this software rather than a synthetic loop.",
+    "A committed budget states the memory ceiling for the combinations that run together, derived from documented figures, with every number marked ESTIMATE until a capture exists.",
+    "BSP-PERF-001 gains the exact command and the required fields in bringup-plan.yaml, and its result stays NOT_EXECUTED.",
+    "A missing nvpmodel, a missing thermal zone or a missing workload is a named refusal that writes no artifact, not an empty report.",
+    "The artifact carries a sha256 sidecar, and a rewritten file fails its digest."
+  ],
+  "commands": [
+    "python3 tools/scripts/measure_target_power.py --check",
+    "python3 -m pytest -q tests/unit/test_target_measurement.py",
+    "python3 bsp/validation/validate_manifests.py",
+    "python3 -m ruff check tools/scripts/measure_target_power.py tests/unit/test_target_measurement.py",
+    "python3 -m ruff format --check tools/scripts/measure_target_power.py tests/unit/test_target_measurement.py",
+    "make docs"
+  ],
+  "evidence": [
+    "measure_target_power.py --check on this host: exit 2 with REFUSED: NVPMODEL_UNAVAILABLE, which is the real path here because the host has no NVIDIA module.",
+    "pytest tests/unit/test_target_measurement.py: 24 passed, covering the three named refusals, the refusal writing no artifact, the artifact digest, a rewritten artifact failing its digest, and every budget row being ESTIMATE.",
+    "validate_manifests.py: PASS with the BSP-PERF-001 command and fields.",
+    "make docs and check_doc_references.py: PASS.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "A capture from a real module would have to exist to claim a measured budget; none does, so every row stays ESTIMATE and BSP-PERF-001 stays NOT_EXECUTED.",
+    "The power mode would have to be chosen; it is a product decision and the artifact records whichever mode applied.",
+    "A write outside allowed_paths is required, especially to the hardware release tree or the rootfs.",
+    "A refusal would have to be turned into a zero value to make the script succeed on a host without the module."
+  ],
+  "data_classification": "Repository-local Python, JSON and YAML. The script reads /proc and sysfs; it writes no personal data and no credentials.",
+  "model_policy": "Deterministic Python and pytest; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "The budget numbers are estimates. Every row is marked ESTIMATE with a recorded basis, and the file states plainly that no capture exists, so a reader cannot mistake an estimate for a measurement.",
+    "The measurement script cannot be exercised end to end here because the module is absent. The refusals are tested, and the sampling path is exercised only for its arithmetic; the pull request says the measurement itself was not taken.",
+    "A GPU figure of None is not zero: a host without a GPU has no GPU number, and writing 0.0 would say the GPU was idle rather than absent.",
+    "Rollback is a revert of this commit: the script and the budget disappear and BSP-PERF-001 returns to having no procedure. Nothing reads the budget yet."
+  ]
+}
