@@ -1,0 +1,88 @@
+{
+  "issue": 594,
+  "human_owner": "Quchaosheng",
+  "objective": "Add a time synchronisation service to the rootfs topology, a clock plausibility check that refuses an unverified wall timestamp, a recorded reference offset for the bring-up step, and the statement that a container cannot repair a wrong host clock.",
+  "decision_supported": "Can a wall-stamped evidence record be written from a clock nobody verified, and would the repository notice?",
+  "allowed_paths": [
+    "bsp/rootfs/**",
+    "bsp/validation/**",
+    "docs/hardware/**",
+    "tests/hardware/**",
+    "docs/task_packets/issue-594-time-synchronisation.json"
+  ],
+  "read_only_paths": [
+    "AGENTS.md",
+    "docs/decisions/ADR-0011-stm32-mcu-selection.md"
+  ],
+  "forbidden": [
+    "interfaces/**",
+    "libs/**",
+    "services/**",
+    "apps/**",
+    "robot/**",
+    "firmware/**",
+    "sim/**",
+    "hardware/**",
+    "kernel/**",
+    "deploy/**",
+    "Dockerfile",
+    "compose.yaml",
+    ".github/**"
+  ],
+  "input_refs": [
+    "bsp/rootfs/services.yaml",
+    "bsp/rootfs/systemd/robot-evidence-logger.service.in",
+    "bsp/validation/bringup-plan.yaml",
+    "bsp/validation/validate_manifests.py",
+    "tests/hardware/test_service_topology.py"
+  ],
+  "outputs": [
+    "bsp/rootfs/services.yaml",
+    "bsp/rootfs/systemd/robot-time-sync.service.in",
+    "bsp/rootfs/systemd/robot-evidence-logger.service.in",
+    "bsp/rootfs/clock_check.py",
+    "docs/hardware/time-synchronisation.md",
+    "tests/hardware/test_time_sync.py",
+    "tests/hardware/test_service_topology.py",
+    "docs/task_packets/issue-594-time-synchronisation.json"
+  ],
+  "acceptance": [
+    "robot-time-sync is added to services.yaml with its ordering, restart policy and safety_authority: false, plus a unit template, and the validator fails when the YAML and the unit set disagree.",
+    "A boot-time check refuses a wall timestamp earlier than the build date, and one whose implied boot time is earlier than the build date, reporting the discrepancy rather than stamping the record.",
+    "A reference-offset check records clock_offset_seconds beside the timestamp_utc and raw_capture_hash the bring-up plan already requires.",
+    "The container deployment documentation states that a container inherits the host clock and cannot repair a wrong host time, and gives the three reasons there is no container-side fix.",
+    "The evidence logger is ordered after robot-time-sync, and the ordering test proves that a unit ordered earlier fails validation.",
+    "observed_at is not reinterpreted and no new clock id is added."
+  ],
+  "commands": [
+    "python3 bsp/validation/validate_manifests.py",
+    "python3 -m pytest -q tests/hardware/test_time_sync.py",
+    "python3 -m pytest -q tests/hardware/test_service_topology.py",
+    "python3 -m ruff check bsp/rootfs/clock_check.py tests/hardware/test_time_sync.py",
+    "python3 -m ruff format --check bsp/rootfs/clock_check.py tests/hardware/test_time_sync.py",
+    "make docs",
+    "python3 tools/scripts/check_doc_references.py"
+  ],
+  "evidence": [
+    "validate_manifests.py: PASS, with robot-time-sync in the topology.",
+    "pytest tests/hardware/test_time_sync.py: 27 passed.",
+    "pytest tests/hardware/test_service_topology.py: 38 passed, with robot-time-sync added to the named exemption set and asserted safety_authority: false.",
+    "The failure paths: disabling both clock comparisons fails three tests; removing robot-time-sync from the logger After= line fails the validator with the service named.",
+    "make docs and check_doc_references.py: PASS, 182 pages.",
+    "A full make test comparison against the unmodified main baseline showing the same pre-existing environment-blocked failures and no new ones."
+  ],
+  "stop_conditions": [
+    "The change would require reinterpreting observed_at or adding a clock id; that is a contract question for the world model owner.",
+    "A container-side time fix would have to be added; the page explains why it would hide the problem rather than fix it.",
+    "A boot would have to be performed to claim the ordering works on a device; no device is available and the evidence is container and static.",
+    "A write outside allowed_paths is required, especially to bsp/validation/bringup-plan.yaml or to the contracts."
+  ],
+  "data_classification": "Repository-local YAML, systemd unit template, Python and Markdown. No credentials, private data or unreviewed assets.",
+  "model_policy": "Deterministic Python, pytest and systemd-analyze; no model inference and no network access added by this change.",
+  "risks_and_fallbacks": [
+    "A clock refusal could be read as discarding a record. It is not: the record stays, only the timestamp is marked unusable, and the check names which condition failed so the record is still usable for what it supports.",
+    "The tolerance is one second, which is a judgement. It is a named constant with its reason, and the bring-up step records the measured offset so a tighter or looser bound is a data question rather than a guess.",
+    "robot-time-sync is exempt from ordering after the safety monitor. It opens no bus and sets only the clock, and the exemption is a named set asserted to be safety_authority: false, so a fifth cannot be added quietly.",
+    "Rollback is a revert of this commit: the service and the clock check disappear and the logger returns to ordering after local-fs only. Nothing reads the check yet."
+  ]
+}

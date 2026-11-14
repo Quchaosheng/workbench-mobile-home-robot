@@ -136,10 +136,17 @@ class TestTheSafetyMonitorGate:
         #   * `robot-can-gateway` is transport only, `safety_authority: false`;
         #   * `robot-evidence-logger` writes the log store, never the CAN bus;
         #   * `robot-update-agent` writes the inactive update slot and never the
-        #     running root, so it cannot start anything that moves.
+        #     running root, so it cannot start anything that moves;
+        #   * `robot-time-sync` sets the wall clock and opens no bus at all, and has
+        #     to be up before the evidence logger, which is itself earlier.
         #
         # The exemption is asserted below rather than assumed.
-        allowed_earlier = {"robot-can-gateway", "robot-evidence-logger", "robot-update-agent"}
+        allowed_earlier = {
+            "robot-can-gateway",
+            "robot-evidence-logger",
+            "robot-update-agent",
+            "robot-time-sync",
+        }
 
         def ordered_after(name: str) -> set[str]:
             return {
@@ -170,7 +177,12 @@ class TestTheSafetyMonitorGate:
 
     def test_the_earlier_units_cannot_enable_an_actuator(self) -> None:
         """The exemption above is only sound if none of them can move the robot."""
-        for name in ("robot-can-gateway", "robot-evidence-logger", "robot-update-agent"):
+        for name in (
+            "robot-can-gateway",
+            "robot-evidence-logger",
+            "robot-update-agent",
+            "robot-time-sync",
+        ):
             spec = services()["services"][name]
             assert spec.get("safety_authority") is False, name
             assert spec.get("mode") != "control", name

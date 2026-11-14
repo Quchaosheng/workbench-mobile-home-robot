@@ -2,6 +2,16 @@ version: "0.1"
 status: service_topology_only
 default_motion_state: inhibited
 services:
+  robot-time-sync:
+    after: [network-online.target]
+    requires: [rtc_present_or_network_time_source]
+    restart: on-failure
+    restart_limit: bounded
+    safety_authority: false
+    # Every wall-stamped evidence record depends on this service. It is ordered
+    # first so no writer can stamp a record before the clock is known, and the
+    # gates below record why (issue #594).
+    output: wall_clock_reference
   robot-can-gateway:
     after: [network.target]
     requires: [can0]
@@ -29,7 +39,9 @@ services:
     safety_authority: false
     output: validated_observation_input
   robot-evidence-logger:
-    after: [local-fs.target]
+    # A logger that starts before the clock stamps a wrong wall time on every
+    # record it writes, and nothing downstream can tell afterwards.
+    after: [local-fs.target, robot-time-sync]
     requires: [writable_bounded_log_store]
     restart: on-failure
     restart_limit: bounded
@@ -40,6 +52,7 @@ services:
     restart: "no"
     safety_authority: false
 gates:
+  wall_clock_unverified_refuses_evidence: true
   incompatible_firmware_inhibits_motion: true
   missing_safety_monitor_inhibits_motion: true
   service_restart_never_clears_safety_latch: true

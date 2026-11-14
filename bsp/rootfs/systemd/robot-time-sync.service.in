@@ -1,0 +1,32 @@
+[Unit]
+Description=Workbench wall-clock synchronisation (chrony)
+# services.yaml: after [network-online.target]
+After=network-online.target
+# services.yaml: requires [rtc_present_or_network_time_source]
+Requires=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+# A Jetson without an RTC battery boots at a plausible wrong wall time. chrony is
+# configured to step the clock once at startup rather than only slew, because a
+# constant offset is not a drift and slewing it would take hours.
+ConditionPathExists=/etc/workbench/time-sync.conf
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/workbench/time-sync.env
+ExecStartPre=/usr/libexec/workbench/check-clock-plausibility
+ExecStart=/usr/sbin/chronyd -f /etc/workbench/time-sync.conf -n
+Restart=on-failure
+RestartSec=2
+# The clock is the one thing this service may change. It touches no bus and no
+# actuator, so it is not a safety authority.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+# Setting the clock needs the capability; everything else stays dropped.
+AmbientCapabilities=CAP_SYS_TIME
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
