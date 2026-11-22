@@ -60,7 +60,7 @@ jobs:
       - name: Check bilingual documentation and repository boundaries
         run: python3 scripts/check_docs.py
 
-      - uses: ros-tooling/setup-ros@0.7.19
+      - uses: ros-tooling/setup-ros@0.7.21
         with:
           required-ros-distributions: jazzy
 
